@@ -21,7 +21,7 @@ return new class extends Migration {
             $table->text('description')->nullable();
             $table->decimal('amount', 10, 2)->default(0);
             $table->enum('status', ['active', 'inactive'])->default('active');
-            $table->enum('category', ['EPF', 'ETF', 'other'])->default('other');
+            $table->enum('category', ['EPF', 'ETF', 'other'])->nullable()->default('other');
             $table->enum('deduction_type', ['fixed', 'variable'])->default('fixed');
             $table->string('startDate')->nullable();
             $table->string('endDate')->nullable();
