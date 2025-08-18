@@ -15,7 +15,7 @@ return new class extends Migration {
             $table->string('deduction_code')->unique();
             $table->string('deduction_name');
 
-            $table->foreignId('department_id')->constrained('departments');
+            $table->foreignId('department_id')->nullable()->constrained('departments');
             $table->foreignId('company_id')->constrained('companies');  // Add this line
 
             $table->text('description')->nullable();
