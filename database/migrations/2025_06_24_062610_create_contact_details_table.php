@@ -17,7 +17,7 @@ return new class extends Migration
             $table->string('permanent_address');
             $table->string('temporary_address')->nullable();
             $table->string('email');
-            $table->string('land_line')->unique()->nullable();
+            $table->string('land_line')->nullable();
             $table->string('mobile_line')->unique();
             $table->string('gn_division')->nullable();
             $table->string('police_station')->nullable();

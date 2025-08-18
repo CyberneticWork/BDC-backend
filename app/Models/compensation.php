@@ -32,7 +32,8 @@ class compensation extends Model
         'ot_morning_rate',
         'ot_night_rate',
         'br1',
-        'br2'
+        'br2',
+        'stamp',
     ];
     public function employee()
     {

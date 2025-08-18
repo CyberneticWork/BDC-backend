@@ -22,7 +22,7 @@ return new class extends Migration {
 
             // to do list. if designation not good add enum
             $table->foreignId('designation_id')->nullable()->constrained('designations')->onDelete('set null');
-            $table->enum('day_off', ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'])->nullable();
+            $table->enum('day_off', ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'none'])->nullable()->default('none');
             $table->date('confirmation_date')->nullable();
 
             $table->boolean('probationary_period')->default(false);

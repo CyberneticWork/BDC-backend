@@ -13,8 +13,8 @@ return new class extends Migration {
         Schema::create('employees', function (Blueprint $table) {
             $table->id();
             $table->string('title');
-            $table->integer('attendance_employee_no')->unique();
-            $table->integer('epf')->unique();
+            $table->string('attendance_employee_no')->unique();
+            $table->string('epf')->unique();
             $table->string('nic')->unique();
             $table->date('dob');
             $table->enum('gender', ['male', 'female', 'other']);

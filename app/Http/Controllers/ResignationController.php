@@ -31,50 +31,74 @@ class ResignationController extends Controller
         return response()->json($resignations);
     }
 
-    public function store(Request $request)
-    {
-        $validator = Validator::make($request->all(), [
-            'employee_id' => 'required|exists:employees,id',
-            'resigning_date' => 'required|date',
-            'last_working_day' => 'required|date|after_or_equal:resigning_date',
-            'resignation_reason' => 'required|string|min:10',
-            'documents' => 'sometimes|array',
-            'documents.*' => 'file|mimes:pdf,doc,docx,jpg,png|max:2048'
-        ]);
+   // In the store method of ResignationController.php
+public function store(Request $request)
+{
+    $validator = Validator::make($request->all(), [
+        'employee_id' => 'required|exists:employees,id',
+        'resigning_date' => 'required|date',
+        'last_working_day' => 'required|date|after_or_equal:resigning_date',
+        'resignation_reason' => 'required|string|min:10',
+        'documents' => 'sometimes|array',
+        'documents.*' => 'file|mimes:pdf,doc,docx,jpg,png|max:5120' 
+    ]);
 
-        if ($validator->fails()) {
-            return response()->json($validator->errors(), 422);
-        }
+    if ($validator->fails()) {
+        return response()->json($validator->errors(), 422);
+    }
 
-        $employee = employee::findOrFail($request->employee_id);
+    // Check for duplicate resignation
+    $existingResignation = Resignation::where('employee_id', $request->employee_id)
+        ->where('status', 'pending')
+        ->first();
 
-        $resignation = Resignation::create([
-            'employee_id' => $request->employee_id,
-            'attendance_employee_no' => $employee->attendance_employee_no,
-            'employee_name' => $employee->full_name,
-            'resigning_date' => $request->resigning_date,
-            'last_working_day' => $request->last_working_day,
-            'resignation_reason' => $request->resignation_reason,
-            'status' => 'pending'
-        ]);
+    if ($existingResignation) {
+        return response()->json([
+            'message' => 'This employee already has a pending resignation request'
+        ], 422);
+    }
 
-        // Handle document uploads
-        if ($request->hasFile('documents')) {
-            foreach ($request->file('documents') as $document) {
-                $path = $document->store('employee/resignations', 'public');
-
-                ResignationDocument::create([
-                    'resignation_id' => $resignation->id,
-                    'document_name' => $document->getClientOriginalName(),
-                    'file_path' => $path,
-                    'file_type' => $document->getClientMimeType(),
-                    'file_size' => $document->getSize()
-                ]);
+    // Validate file sizes before processing
+    if ($request->hasFile('documents')) {
+        foreach ($request->file('documents') as $document) {
+            if ($document->getSize() > 5120 * 1024) {
+                return response()->json([
+                    'documents' => ['One or more files exceed the 5MB size limit']
+                ], 422);
             }
         }
-
-        return response()->json($resignation->load('documents'), 201);
     }
+
+    // Rest of your existing store method...
+    $employee = employee::findOrFail($request->employee_id);
+
+    $resignation = Resignation::create([
+        'employee_id' => $request->employee_id,
+        'attendance_employee_no' => $employee->attendance_employee_no,
+        'employee_name' => $employee->full_name,
+        'resigning_date' => $request->resigning_date,
+        'last_working_day' => $request->last_working_day,
+        'resignation_reason' => $request->resignation_reason,
+        'status' => 'pending'
+    ]);
+
+    // Handle document uploads
+    if ($request->hasFile('documents')) {
+        foreach ($request->file('documents') as $document) {
+            $path = $document->store('employee/resignations', 'public');
+
+            ResignationDocument::create([
+                'resignation_id' => $resignation->id,
+                'document_name' => $document->getClientOriginalName(),
+                'file_path' => $path,
+                'file_type' => $document->getClientMimeType(),
+                'file_size' => $document->getSize()
+            ]);
+        }
+    }
+
+    return response()->json($resignation->load('documents'), 201);
+}
 
     public function show($id)
     {

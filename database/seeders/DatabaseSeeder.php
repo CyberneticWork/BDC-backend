@@ -30,12 +30,42 @@ class DatabaseSeeder extends Seeder
     public function run(): void
     {
 
-        User::create([
-            'name' => 'Isuru Bandara',
-            'email' => 'isuru@mail.com',
-            'password' => '123456789',
-            'role' => 'admin',
-        ]);
+        $users = [
+            [
+                'name' => 'Isuru Bandara',
+                'email' => 'isuru@mail.com',
+                'password' => '123456789',
+                'role' => 'admin',
+            ],
+            [
+                'name' => 'Pawani Madhubashini',
+                'email' => 'pawani@mail.com',
+                'password' => '123456789',
+                'role' => 'admin',
+            ],
+            [
+                'name' => 'Eshan Dananjaya',
+                'email' => 'eshan@mail.com',
+                'password' => '123456789',
+                'role' => 'admin',
+            ],
+            [
+                'name' => 'Janitha Sandaruwan',
+                'email' => 'janitha@mail.com',
+                'password' => '123456789',
+                'role' => 'admin',
+            ],
+            [
+                'name' => 'Thushara Kumara',
+                'email' => 'thushara@mail.com',
+                'password' => '123456789',
+                'role' => 'admin',
+            ],
+        ];
+
+        foreach ($users as $userData) {
+            User::create($userData);
+        }
 
         employment_type::insert([
             [
@@ -71,23 +101,23 @@ class DatabaseSeeder extends Seeder
 
         $shifts = [
             ['001', 'No OT - WD', '08:00:00', '17:00:00', '08:00:00', '17:00:00', '00:00:00', false, 4.5],
-            ['002', 'Snr Mgt - FM', '08:15:00', '17:15:00', '08:15:00', '17:15:00', '00:00:00', false, 4.5],
-            ['003', 'Snr Mgt - Purchasing', '07:45:00', '16:45:00', '07:45:00', '16:45:00', '00:00:00', false, 4.5],
-            ['004', 'Office Executive - WD', '08:00:00', '17:00:00', '08:00:00', '17:00:00', '08:00:00', false, 5.0],
-            ['005', 'Office Executive - WE', '08:00:00', '13:00:00', '08:00:00', '13:00:00', '08:00:00', false, 5.0],
-            ['006', 'Production Mgr - WD', '08:00:00', '17:00:00', '07:30:00', '17:15:00', '08:00:00', false, 4.5],
-            ['007', 'Production Mgr - WE', '08:00:00', '13:00:00', '07:30:00', '17:15:00', '08:00:00', false, 5.0],
-            ['008', 'QC - WE', '08:00:00', '13:00:00', '08:00:00', '17:00:00', '08:00:00', false, 5.0],
-            ['009', 'No OT with Late - WD', '08:00:00', '17:00:00', '08:00:00', '17:00:00', '08:00:00', false, 4.5],
-            ['010', 'Production - WD', '08:00:00', '17:00:00', '07:30:00', '17:00:00', '08:00:00', false, 5.0],
-            ['011', 'Production - WE', '08:00:00', '13:00:00', '07:30:00', '17:00:00', '08:00:00', false, 5.0],
-            ['012', 'Production - Trainee', '08:00:00', '17:00:00', '08:00:00', '17:00:00', '08:00:00', false, 4.5],
-            ['013', 'No OT with Late - WE', '12:00:00', '17:00:00', '12:00:00', '17:00:00', '12:00:00', false, 5.0],
-            ['014', 'OT with Late - WE', '12:00:00', '17:00:00', '11:30:00', '17:00:00', '12:00:00', false, 5.0],
-            ['015', 'Security - WD Morning', '07:00:00', '15:00:00', '07:00:00', '19:00:00', '07:00:00', false, 4.0],
-            ['016', 'Security - WD Night', '19:00:00', '03:00:00', '07:00:00', '07:00:00', '07:00:00', true, 4.0],
-            ['017', 'Security - WE Morning', '07:00:00', '15:00:00', '07:00:00', '19:00:00', '07:00:00', false, 5.0],
-            ['018', 'Security - WE Night', '19:00:00', '00:00:00', '07:00:00', '07:00:00', '07:00:00', true, 5.0],
+            // ['002', 'Snr Mgt - FM', '08:15:00', '17:15:00', '08:15:00', '17:15:00', '00:00:00', false, 4.5],
+            // ['003', 'Snr Mgt - Purchasing', '07:45:00', '16:45:00', '07:45:00', '16:45:00', '00:00:00', false, 4.5],
+            // ['004', 'Office Executive - WD', '08:00:00', '17:00:00', '08:00:00', '17:00:00', '08:00:00', false, 5.0],
+            // ['005', 'Office Executive - WE', '08:00:00', '13:00:00', '08:00:00', '13:00:00', '08:00:00', false, 5.0],
+            // ['006', 'Production Mgr - WD', '08:00:00', '17:00:00', '07:30:00', '17:15:00', '08:00:00', false, 4.5],
+            // ['007', 'Production Mgr - WE', '08:00:00', '13:00:00', '07:30:00', '17:15:00', '08:00:00', false, 5.0],
+            // ['008', 'QC - WE', '08:00:00', '13:00:00', '08:00:00', '17:00:00', '08:00:00', false, 5.0],
+            // ['009', 'No OT with Late - WD', '08:00:00', '17:00:00', '08:00:00', '17:00:00', '08:00:00', false, 4.5],
+            // ['010', 'Production - WD', '08:00:00', '17:00:00', '07:30:00', '17:00:00', '08:00:00', false, 5.0],
+            // ['011', 'Production - WE', '08:00:00', '13:00:00', '07:30:00', '17:00:00', '08:00:00', false, 5.0],
+            // ['012', 'Production - Trainee', '08:00:00', '17:00:00', '08:00:00', '17:00:00', '08:00:00', false, 4.5],
+            // ['013', 'No OT with Late - WE', '12:00:00', '17:00:00', '12:00:00', '17:00:00', '12:00:00', false, 5.0],
+            // ['014', 'OT with Late - WE', '12:00:00', '17:00:00', '11:30:00', '17:00:00', '12:00:00', false, 5.0],
+            // ['015', 'Security - WD Morning', '07:00:00', '15:00:00', '07:00:00', '19:00:00', '07:00:00', false, 4.0],
+            // ['016', 'Security - WD Night', '19:00:00', '03:00:00', '07:00:00', '07:00:00', '07:00:00', true, 4.0],
+            // ['017', 'Security - WE Morning', '07:00:00', '15:00:00', '07:00:00', '19:00:00', '07:00:00', false, 5.0],
+            // ['018', 'Security - WE Night', '19:00:00', '00:00:00', '07:00:00', '07:00:00', '07:00:00', true, 5.0],
         ];
 
         foreach ($shifts as $shift) {
@@ -147,8 +177,8 @@ class DatabaseSeeder extends Seeder
 
         $this->call([
             EmployeeSeeder::class,
-            AllowanceSeeder::class,
-            DeductionSeeder::class,
+            // AllowanceSeeder::class,
+            // DeductionSeeder::class,
         ]);
 
         $employees = employee::all();

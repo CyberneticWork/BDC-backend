@@ -94,7 +94,7 @@ class EmployeeSeeder extends Seeder
             }
         }
 
-        // Common data for all employees
+        // // Common data for all employees
         $titles = ['Mr', 'Mrs', 'Ms', 'Dr'];
         $genders = ['male', 'female'];
         $maritalStatuses = ['single', 'married', 'divorced', 'widowed'];
@@ -102,13 +102,13 @@ class EmployeeSeeder extends Seeder
         $daysOff = ['Sunday', 'Monday', 'Saturday'];
         $designations = [1, 2, 3, 4, 5];
 
-        // Sri Lankan names for realism
+        // // Sri Lankan names for realism
         $firstNamesMale = ['Nimesh', 'Madhawa', 'Kamal', 'Arjun', 'Esala', 'Kavinda', 'Dinitha', 'Kushan', 'Saman', 'Nimal'];
         $firstNamesFemale = ['Hiruni', 'Madara', 'Achini', 'Piumi', 'Rasangi', 'Chinthani', 'Oshini', 'Shashini', 'Nethmi', 'Iresha'];
         $lastNames = ['Bandara', 'Sandaruwan', 'Dananjaya', 'Gunawardane', 'Rupasinghe', 'Wickramasinghe', 'Jayawardena', 'Dissanayake', 'Jaaliya', 'Ranaweera'];
 
-        // Generate 30 employees
-        for ($i = 1; $i <= 100; $i++) {
+        // // Generate 30 employees
+        for ($i = 1; $i <= 20; $i++) {
             $gender = $genders[array_rand($genders)];
             $title = $gender === 'male' ? $titles[0] : (rand(0, 1) ? $titles[1] : $titles[2]);
 

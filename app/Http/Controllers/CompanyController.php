@@ -15,11 +15,33 @@ class CompanyController extends Controller
 
     public function store(Request $request)
     {
-        $validated = $request->validate([
-            'name' => 'required|unique:companies,name',
+        $validator = \Validator::make($request->all(), [
+            'name' => 'required|string|max:255',
             'location' => 'nullable|string|max:255',
             'established' => 'nullable|digits:4|integer|min:1900|max:' . (date('Y')),
         ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => 'Validation failed.',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $validated = $validator->validated();
+
+        // Check for duplicate company name (not soft-deleted)
+        $exists = company::where('name', $validated['name'])
+            ->whereNull('deleted_at')
+            ->exists();
+
+        if ($exists) {
+            return response()->json([
+                'message' => 'Company with this name already exists.',
+                'errors' => ['name' => ['This company name is already in use.']]
+            ], 409);
+        }
+
         $company = company::create($validated);
         return response()->json($company, 201);
     }
@@ -27,11 +49,35 @@ class CompanyController extends Controller
     public function update(Request $request, $id)
     {
         $company = company::findOrFail($id);
-        $validated = $request->validate([
-            'name' => 'required|unique:companies,name,' . $company->id,
+
+        $validator = \Validator::make($request->all(), [
+            'name' => 'required|string|max:255',
             'location' => 'nullable|string|max:255',
             'established' => 'nullable|digits:4|integer|min:1900|max:' . (date('Y')),
         ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => 'Validation failed.',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $validated = $validator->validated();
+
+        // Check for duplicate company name (not soft-deleted, not current company)
+        $exists = company::where('name', $validated['name'])
+            ->where('id', '!=', $company->id)
+            ->whereNull('deleted_at')
+            ->exists();
+
+        if ($exists) {
+            return response()->json([
+                'message' => 'Company with this name already exists.',
+                'errors' => ['name' => ['This company name is already in use.']]
+            ], 409);
+        }
+
         $company->update($validated);
         return response()->json($company);
     }

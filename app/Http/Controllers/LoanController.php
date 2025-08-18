@@ -22,29 +22,12 @@ class LoanController extends Controller
      */
     public function store(Request $request)
     {
-        // Map and normalize employee id
-        $incomingId = $request->filled('employeeId')
-            ? $request->input('employeeId')
-            : $request->input('employee_id');
 
-        if ($incomingId !== null) {
-            $request->merge([
-                'employee_id' => (int) trim((string) $incomingId),
-            ]);
-        }
 
-        // Use model to resolve table and PK, avoids hardcoding and connection issues
-        $employeeModel = new employee();
-        $employeeTable = $employeeModel->getTable();
-        $employeeKey = $employeeModel->getKeyName();
+        // $request->merge(['attendance_employee_no' => $request->employee_id]);
 
         $validated = $request->validate([
-            'employee_id' => [
-                'required',
-                'integer',
-                // If you want to include soft-deleted employees, remove ->whereNull('deleted_at')
-                Rule::exists($employeeTable, $employeeKey)->whereNull('deleted_at'),
-            ],
+            'employee_id' => 'required',
             'loan_id' => 'required|string|unique:loans,loan_id',
             'loan_amount' => ['required', 'numeric', 'min:0'],
             'interest_rate_per_annum' => 'nullable|numeric|min:0',

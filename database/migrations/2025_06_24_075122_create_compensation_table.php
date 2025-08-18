@@ -24,8 +24,8 @@ return new class extends Migration {
             $table->boolean('active_nopay')->nullable()->default(false);
             $table->boolean('ot_morning')->nullable()->default(false);
             $table->boolean('ot_evening')->nullable()->default(false);
-            $table->decimal('ot_morning_rate', 10, 2)->nullable();
-            $table->decimal('ot_night_rate', 10, 2)->nullable();
+            $table->decimal('ot_morning_rate', 10, 2)->nullable()->default(0);
+            $table->decimal('ot_night_rate', 10, 2)->nullable()->default(0);
 
             $table->string('bank_name')->nullable();
             $table->string('branch_name')->nullable();
@@ -39,6 +39,7 @@ return new class extends Migration {
             $table->text('comments')->nullable();
             $table->boolean('secondary_emp')->nullable()->default(false);
             $table->boolean('primary_emp_basic')->nullable()->default(false);
+            $table->boolean('stamp')->nullable()->default(false);
 
             $table->softDeletes();
             $table->timestamps();
