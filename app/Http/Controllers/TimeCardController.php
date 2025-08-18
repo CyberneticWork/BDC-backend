@@ -970,11 +970,19 @@ class TimeCardController extends Controller
                 }
 
                 // Find employee by NIC and company
-                $employee = employee::where('nic', $nic)
-                    ->whereHas('organizationAssignment', function ($q) use ($companyId) {
+                $identifier = trim($nic);
+                $employeeQuery = employee::where(function ($q) use ($identifier) {
+                    // match NIC case-insensitive OR attendance_employee_no exact
+                    $q->whereRaw('LOWER(nic) = ?', [strtolower($identifier)])
+                      ->orWhere('attendance_employee_no', $identifier);
+                });
+                // keep company scoping if provided
+                if (!empty($companyId)) {
+                    $employeeQuery->whereHas('organizationAssignment', function ($q) use ($companyId) {
                         $q->where('company_id', $companyId);
-                    })
-                    ->first();
+                    });
+                }
+                $employee = $employeeQuery->first();
 
                 if (!$employee) {
                     $results['errors'][] = "Employee not found for NIC in selected company";
