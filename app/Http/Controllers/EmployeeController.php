@@ -229,6 +229,7 @@ class EmployeeController extends Controller
                 'ot_night_rate' => 'nullable|numeric',
                 'budgetaryReliefAllowance2015' => 'required|boolean',
                 'budgetaryReliefAllowance2016' => 'required|boolean',
+                'stamp' => 'required|boolean',
             ]);
 
             $organizationValidator = Validator::make($organization, [
@@ -444,6 +445,7 @@ class EmployeeController extends Controller
                 'ot_night_rate' => $compensation['ot_night_rate'],
                 'br1' => $compensation['budgetaryReliefAllowance2015'],
                 'br2' => $compensation['budgetaryReliefAllowance2016'],
+                'stamp' => $compensation['stamp'],
             ]);
 
             DB::commit();
