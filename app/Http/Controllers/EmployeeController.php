@@ -502,6 +502,8 @@ class EmployeeController extends Controller
      */
     public function update(Request $request, $id)
     {
+        return response()->json($request->all(),200);
+
         $validator = Validator::make($request->all(), [
             'profile_picture' => 'nullable|image|max:2048',
             'personal' => 'required|json',
