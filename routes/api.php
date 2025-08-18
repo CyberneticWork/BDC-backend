@@ -44,6 +44,7 @@ Route::post('/register', [AuthController::class, 'register']);
 Route::apiResource('users', UserController::class);
 Route::apiResource('shifts', ShiftController::class);
 Route::apiResource('employees', EmployeeController::class);
+Route::post('employes/post/update', [EmployeeController::class,'update']);
 Route::get('/emp/table', [EmployeeController::class, 'getEmployeesForTable']);
 Route::get('/emp/search', [EmployeeController::class, 'search']);
 Route::apiResource('loans', LoanController::class);
