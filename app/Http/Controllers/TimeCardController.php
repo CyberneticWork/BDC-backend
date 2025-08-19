@@ -339,15 +339,18 @@ class TimeCardController extends Controller
                     $ot_time = $morning_ot + $afternoon_ot;
                 }
                 
-                $over_time = over_time::create([
-                    'employee_id' => $validated['employee_id'],
-                    'shift_code' => $shift_code,
-                    'time_cards_id' => $timeCard->id,
-                    'ot_hours' => $ot_time,
-                    'morning_ot' => $morning_ot,
-                    'afternoon_ot' => $afternoon_ot,
-                    'status' => 'pending'
-                ]);
+                // Only create OT record if minimum thresholds are met (60 minutes = 1 hour)
+                if ($morning_ot >= 1.0 || $afternoon_ot >= 1.0) {
+                    $over_time = over_time::create([
+                        'employee_id' => $validated['employee_id'],
+                        'shift_code' => $shift_code,
+                        'time_cards_id' => $timeCard->id,
+                        'ot_hours' => $ot_time,
+                        'morning_ot' => $morning_ot,
+                        'afternoon_ot' => $afternoon_ot,
+                        'status' => 'pending'
+                    ]);
+                }
             } else {
                 // Same day scenario - regular OT calculation
                 // Find the last IN record for this employee on the same day
@@ -387,15 +390,18 @@ class TimeCardController extends Controller
                     $ot_time = $morning_ot + $afternoon_ot;
                 }
                 
-                $over_time = over_time::create([
-                    'employee_id' => $validated['employee_id'],
-                    'shift_code' => $shift_code,
-                    'time_cards_id' => $timeCard->id,
-                    'ot_hours' => $ot_time,
-                    'morning_ot' => $morning_ot,
-                    'afternoon_ot' => $afternoon_ot,
-                    'status' => 'pending'
-                ]);
+                // Only create OT record if minimum thresholds are met (60 minutes = 1 hour)
+                if ($morning_ot >= 1.0 || $afternoon_ot >= 1.0) {
+                    $over_time = over_time::create([
+                        'employee_id' => $validated['employee_id'],
+                        'shift_code' => $shift_code,
+                        'time_cards_id' => $timeCard->id,
+                        'ot_hours' => $ot_time,
+                        'morning_ot' => $morning_ot,
+                        'afternoon_ot' => $afternoon_ot,
+                        'status' => 'pending'
+                    ]);
+                }
             }
         }
 
@@ -653,15 +659,18 @@ class TimeCardController extends Controller
                     $ot_time = $morning_ot + $afternoon_ot;
                 }
                 
-                $over_time = over_time::create([
-                    'employee_id' => $validated['employee_id'],
-                    'shift_code' => $shift_code,
-                    'time_cards_id' => $timeCard->id,
-                    'ot_hours' => $ot_time,
-                    'morning_ot' => $morning_ot,
-                    'afternoon_ot' => $afternoon_ot,
-                    'status' => 'pending'
-                ]);
+                // Only create OT record if minimum thresholds are met (60 minutes = 1 hour)
+                if ($morning_ot >= 1.0 || $afternoon_ot >= 1.0) {
+                    $over_time = over_time::create([
+                        'employee_id' => $employee->id,
+                        'shift_code' => $shift_code,
+                        'time_cards_id' => $timeCard->id,
+                        'ot_hours' => $ot_time,
+                        'morning_ot' => $morning_ot,
+                        'afternoon_ot' => $afternoon_ot,
+                        'status' => 'pending'
+                    ]);
+                }
             } else {
                 // Same day scenario - regular OT calculation
                 // Find the last IN record for this employee on the same day
@@ -701,15 +710,18 @@ class TimeCardController extends Controller
                     $ot_time = $morning_ot + $afternoon_ot;
                 }
                 
-                $over_time = over_time::create([
-                    'employee_id' => $validated['employee_id'],
-                    'shift_code' => $shift_code,
-                    'time_cards_id' => $timeCard->id,
-                    'ot_hours' => $ot_time,
-                    'morning_ot' => $morning_ot,
-                    'afternoon_ot' => $afternoon_ot,
-                    'status' => 'pending'
-                ]);
+                // Only create OT record if minimum thresholds are met (60 minutes = 1 hour)
+                if ($morning_ot >= 1.0 || $afternoon_ot >= 1.0) {
+                    $over_time = over_time::create([
+                        'employee_id' => $employee->id,
+                        'shift_code' => $shift_code,
+                        'time_cards_id' => $timeCard->id,
+                        'ot_hours' => $ot_time,
+                        'morning_ot' => $morning_ot,
+                        'afternoon_ot' => $afternoon_ot,
+                        'status' => 'pending'
+                    ]);
+                }
             }
         }
         // END OF NEW OT CALCULATION CODE
@@ -1253,15 +1265,18 @@ class TimeCardController extends Controller
                                     $ot_time = $morning_ot + $afternoon_ot;
                                 }
                                 
-                                $over_time = over_time::create([
-                                    'employee_id' => $employee->id,
-                                    'shift_code' => $shift_code,
-                                    'time_cards_id' => $timeCard->id,
-                                    'ot_hours' => $ot_time,
-                                    'morning_ot' => $morning_ot,
-                                    'afternoon_ot' => $afternoon_ot,
-                                    'status' => 'pending'
-                                ]);
+                                // Only create OT record if minimum thresholds are met (60 minutes = 1 hour)
+                                if ($morning_ot >= 1.0 || $afternoon_ot >= 1.0) {
+                                    $over_time = over_time::create([
+                                        'employee_id' => $employee->id,
+                                        'shift_code' => $shift_code,
+                                        'time_cards_id' => $timeCard->id,
+                                        'ot_hours' => $ot_time,
+                                        'morning_ot' => $morning_ot,
+                                        'afternoon_ot' => $afternoon_ot,
+                                        'status' => 'pending'
+                                    ]);
+                                }
                             } else {
                                 // Same day scenario - regular OT calculation
                                 // Find the last IN record for this employee on the same day
@@ -1301,15 +1316,18 @@ class TimeCardController extends Controller
                                     $ot_time = $morning_ot + $afternoon_ot;
                                 }
                                 
-                                $over_time = over_time::create([
-                                    'employee_id' => $employee->id,
-                                    'shift_code' => $shift_code,
-                                    'time_cards_id' => $timeCard->id,
-                                    'ot_hours' => $ot_time,
-                                    'morning_ot' => $morning_ot,
-                                    'afternoon_ot' => $afternoon_ot,
-                                    'status' => 'pending'
-                                ]);
+                                // Only create OT record if minimum thresholds are met (60 minutes = 1 hour)
+                                if ($morning_ot >= 1.0 || $afternoon_ot >= 1.0) {
+                                    $over_time = over_time::create([
+                                        'employee_id' => $employee->id,
+                                        'shift_code' => $shift_code,
+                                        'time_cards_id' => $timeCard->id,
+                                        'ot_hours' => $ot_time,
+                                        'morning_ot' => $morning_ot,
+                                        'afternoon_ot' => $afternoon_ot,
+                                        'status' => 'pending'
+                                    ]);
+                                }
                             }
                         }
                         // END OF NEW OT CALCULATION CODE
