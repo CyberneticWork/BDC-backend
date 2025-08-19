@@ -87,6 +87,8 @@ class OvertimeController extends Controller
             $overtime->status = 'approved';
         } else if ($request->status == 'rejected') {
             $overtime->status = 'rejected';
+        } else if ($request->status == 'pending') {
+            $overtime->status = 'pending';
         } else {
             return response()->json(['message' => 'Invalid status'], 400);
         }
