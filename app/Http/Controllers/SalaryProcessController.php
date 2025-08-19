@@ -279,6 +279,8 @@ class SalaryProcessController extends Controller
             comp.br2,
             comp.ot_morning_rate,
             comp.ot_night_rate,
+            comp.stamp,            -- ADDED: include stamp from compensation table
+
 
             -- BR status
             CASE
@@ -384,7 +386,8 @@ class SalaryProcessController extends Controller
         comp.ot_evening, comp.ot_morning_rate,
         comp.ot_night_rate,  comp.enable_epf_etf,
         lo.installment_count, lo.installment_amount,
-        c.id, oa.department_id
+        c.id, oa.department_id,
+        comp.stamp                -- ADDED: group by stamp
 ";
 
         // Prepare parameters
@@ -408,6 +411,10 @@ class SalaryProcessController extends Controller
             $employeeData = (array) $result;
             $employeeData['allowances'] = $allowances;
             $employeeData['deductions'] = $deductions;
+
+            // Map stamp: return 25 when stamp = 1, otherwise 0
+            $stampValue = ($result->stamp == 1) ? 25 : 0;
+            $employeeData['stamp'] = $stampValue;
 
             // Calculate salary components
             $basicSalary = (float) $employeeData['basic_salary'];
@@ -494,6 +501,10 @@ class SalaryProcessController extends Controller
             $totalDeductions = $totalFixedDeductions + $installmentAmount + $epfEmployeeDeduction;
             $netSalary = $grossSalary - $totalDeductions;
 
+            // Subtract stamp fee (25) when stamp is active
+            if ($stampValue) {
+                $netSalary -= $stampValue;
+            }
 
 
             // Add calculated fields to response
@@ -515,6 +526,7 @@ class SalaryProcessController extends Controller
                 'loan_installment' => $installmentAmount,
                 'gross_salary' => $grossSalary,
                 'total_deductions' => $totalDeductions,
+                'stamp' => $stampValue,
                 'net_salary' => $netSalary
             ];
 
