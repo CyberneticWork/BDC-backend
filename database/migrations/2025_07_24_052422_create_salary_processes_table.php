@@ -14,7 +14,7 @@ return new class extends Migration {
             $table->id();
 
             $table->integer('employee_id');
-            $table->integer('employee_no');
+            $table->string('employee_no');
             $table->string('full_name');
             $table->string('company_name');
             $table->string('department_name');
@@ -29,6 +29,7 @@ return new class extends Migration {
             $table->boolean('br1')->default(false);
             $table->boolean('br2')->default(false);
             $table->string('br_status');
+            $table->boolean('stamp')->nullable()->default(false);
             $table->decimal('total_loan_amount', 12, 2)->default(0);
             $table->integer('installment_count')->nullable();
             $table->decimal('installment_amount', 12, 2)->nullable();

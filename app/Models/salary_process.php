@@ -26,6 +26,7 @@ class salary_process extends Model
         'br1',
         'br2',
         'br_status',
+        'stamp',
         'total_loan_amount',
         'installment_count',
         'installment_amount',

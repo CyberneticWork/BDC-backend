@@ -601,7 +601,7 @@ class SalaryProcessController extends Controller
     {
         $validated = $request->validate([
             'data' => 'required|array',
-            'data.*.emp_no' => 'required|integer',
+            'data.*.emp_no' => 'required|string',
             'data.*.full_name' => 'required|string',
             'month' => 'sometimes|integer|between:1,12',
             'year' => 'sometimes|integer',
