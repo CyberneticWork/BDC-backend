@@ -27,7 +27,7 @@ class DeductionController extends Controller
     {
         //validate the request data
         $request->validate([
-            'department_id' => 'required|exists:departments,id',
+            'department_id' => 'nullable|exists:departments,id',
             'company_id' => 'required|exists:companies,id',  // Add this line
             'deduction_code' => 'required|string|max:255|unique:deductions,deduction_code',
             'deduction_name' => 'required|string|max:255',
@@ -58,7 +58,7 @@ class DeductionController extends Controller
     {
         // Logic to update a specific deduction
         $validator = Validator::make($request->all(), [
-            'department_id' => 'required|exists:departments,id',
+            'department_id' => 'nullable|exists:departments,id',
             'company_id' => 'required|exists:companies,id',  // Add this line
             'deduction_name' => 'required|string|max:255',
             'description' => 'nullable|string',

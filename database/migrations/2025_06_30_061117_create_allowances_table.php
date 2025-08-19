@@ -16,10 +16,10 @@ return new class extends Migration {
             $table->string('allowance_name');
 
             $table->foreignId('company_id')->constrained('companies');
-            $table->foreignId('department_id')->constrained('departments');
+            $table->foreignId('department_id')->nullable()->constrained('departments');
 
             $table->enum('status', ['active', 'inactive'])->default('active');
-            $table->enum('category', ['travel', 'bonus', 'performance', 'health', 'other'])->default('other');
+            $table->enum('category', ['travel', 'bonus', 'performance', 'health', 'other'])->nullable()->default('other');
             $table->enum('allowance_type', ['fixed', 'variable'])->default('fixed');
 
             $table->decimal('amount', 50, 2)->default(0.00);

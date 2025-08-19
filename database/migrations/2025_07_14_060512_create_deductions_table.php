@@ -15,13 +15,13 @@ return new class extends Migration {
             $table->string('deduction_code')->unique();
             $table->string('deduction_name');
 
-            $table->foreignId('department_id')->constrained('departments');
+            $table->foreignId('department_id')->nullable()->constrained('departments');
             $table->foreignId('company_id')->constrained('companies');  // Add this line
 
             $table->text('description')->nullable();
             $table->decimal('amount', 10, 2)->default(0);
             $table->enum('status', ['active', 'inactive'])->default('active');
-            $table->enum('category', ['EPF', 'ETF', 'other'])->default('other');
+            $table->enum('category', ['EPF', 'ETF', 'other'])->nullable()->default('other');
             $table->enum('deduction_type', ['fixed', 'variable'])->default('fixed');
             $table->string('startDate')->nullable();
             $table->string('endDate')->nullable();
