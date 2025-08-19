@@ -17,6 +17,7 @@ class OvertimeController extends Controller
     {
         $overtimes = over_time::with([
                 'employee.compensation',
+                'employee.organizationAssignment.company',
                 'shift',
                 'timeCard'
             ])
@@ -47,6 +48,9 @@ class OvertimeController extends Controller
                 
                 $shift = $overtime->shift;
                 
+                // Get company information
+                $company = $overtime->employee->organizationAssignment->company ?? null;
+                
                 // For date display, prioritize the actual_date for cross-day scenarios
                 // This is the date when the shift actually started (IN record date)
                 $displayDate = ($outTimeCard && $outTimeCard->actual_date) 
@@ -58,6 +62,9 @@ class OvertimeController extends Controller
                     'employee_id' => $overtime->employee_id,
                     'employee_name' => $overtime->employee->full_name ?? null,
                     'employee_no' => $overtime->employee->attendance_employee_no ?? null,
+                    // Add company information for filtering
+                    'company_id' => $company ? $company->id : null,
+                    'company_name' => $company ? $company->name : null,
                     'date' => $displayDate, // Use the appropriate date for display
                     'in_date' => $inTimeCard ? $inTimeCard->date : null, // Keep the actual IN date 
                     'out_date' => $outTimeCard ? $outTimeCard->date : null, // Keep the actual OUT date
