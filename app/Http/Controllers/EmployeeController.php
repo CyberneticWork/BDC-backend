@@ -448,6 +448,16 @@ class EmployeeController extends Controller
                 'stamp' => $compensation['stamp'],
             ]);
 
+            // Add default roster
+            $employee->rosters()->create([
+                'roster_id' => $employee->id,
+                'shift_code' => 1,
+                'company_id' => $organization['company'],
+                'employee_id' => $employee->id,
+                'is_reccurring' => true,
+                'reccurence_pattern' => 'annualy',
+            ]);
+
             DB::commit();
 
             return response()->json([
@@ -922,7 +932,7 @@ class EmployeeController extends Controller
         $employee = employee::with(['organizationAssignment.department'])
             ->where(function ($q) use ($identifier) {
                 $q->whereRaw('LOWER(nic) = ?', [strtolower($identifier)])
-                  ->orWhere('attendance_employee_no', $identifier);
+                    ->orWhere('attendance_employee_no', $identifier);
             })
             ->first();
 
