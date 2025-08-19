@@ -44,7 +44,11 @@ class time_card extends Model
                 $entry = trim($row[4]);
                 $status = trim($row[5]);
 
-                $employee = employee::where('nic', $nic)->first();
+                $identifier = trim($nic);
+                $employee = employee::where(function ($q) use ($identifier) {
+                    $q->whereRaw('LOWER(nic) = ?', [strtolower($identifier)])
+                      ->orWhere('attendance_employee_no', $identifier);
+                })->first();
                 if (!$employee) {
                     $results['errors'][] = "Row $index: Employee not found for NIC $nic";
                     continue;

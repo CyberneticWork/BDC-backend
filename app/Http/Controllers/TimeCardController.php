@@ -144,12 +144,70 @@ class TimeCardController extends Controller
         $actual_date = null;
 
         if ($status === 'OUT') {
-            // Find last IN record for this employee
-            $lastInCard = time_card::where('employee_id', $employee->id)
-                ->where('status', 'IN')
-                ->orderBy('date', 'desc')
-                ->orderBy('time', 'desc')
-                ->first();
+            // Special handling for early morning OUT records (likely from previous day shift)
+            $morningOutRecord = Carbon::parse($validated['time'])->hour < 12;
+            
+            if ($morningOutRecord) {
+                // For early morning OUT records, first check for unpaired IN from previous day
+                $previousDayIN = time_card::where('employee_id', $employee->id)
+                    ->where('status', 'IN')
+                    ->where('date', '<', $validated['date'])
+                    ->whereNotExists(function($query) {
+                        $query->select(DB::raw(1))
+                              ->from('time_cards as tc')
+                              ->whereRaw('tc.actual_date = time_cards.date')
+                              ->where('tc.status', 'OUT');
+                    })
+                    ->orderBy('date', 'desc')
+                    ->orderBy('time', 'desc')
+                    ->first();
+                    
+                if ($previousDayIN) {
+                    $lastInCard = $previousDayIN;
+                } else {
+                    // If no unpaired IN from previous day, try same day
+                    $lastInCard = time_card::where('employee_id', $employee->id)
+                        ->where('date', $validated['date'])
+                        ->where('status', 'IN')
+                        ->where('time', '<', $validated['time']) // Only IN records before this OUT time
+                        ->orderBy('time', 'desc')
+                        ->first();
+                        
+                    // If no same-day IN before this OUT time, look for any previous IN
+                    if (!$lastInCard) {
+                        $lastInCard = time_card::where('employee_id', $employee->id)
+                            ->where('status', 'IN')
+                            ->where(function($query) use ($validated) {
+                                $query->where('date', '<', $validated['date'])
+                                      ->orWhere(function($q) use ($validated) {
+                                          $q->where('date', $validated['date'])
+                                            ->where('time', '<', $validated['time']);
+                                      });
+                            })
+                            ->orderBy('date', 'desc')
+                            ->orderBy('time', 'desc')
+                            ->first();
+                    }
+                }
+            } else {
+                // For afternoon/evening OUT records, use existing logic
+                // First try to find an IN record from the SAME date
+                $lastInCard = time_card::where('employee_id', $employee->id)
+                    ->where('date', $validated['date'])
+                    ->where('status', 'IN')
+                    ->orderBy('time', 'desc')
+                    ->first();
+                
+                // If no same-day IN record, look for the most recent IN record BEFORE this date
+                if (!$lastInCard) {
+                    $lastInCard = time_card::where('employee_id', $employee->id)
+                        ->where('status', 'IN')
+                        ->where('date', '<', $validated['date'])
+                        ->orderBy('date', 'desc')
+                        ->orderBy('time', 'desc')
+                        ->first();
+                }
+            }
 
             if ($lastInCard) {
                 $lastInDate = Carbon::parse($lastInCard->date);
@@ -596,7 +654,7 @@ class TimeCardController extends Controller
                 }
                 
                 $over_time = over_time::create([
-                    'employee_id' => $employee->id,
+                    'employee_id' => $validated['employee_id'],
                     'shift_code' => $shift_code,
                     'time_cards_id' => $timeCard->id,
                     'ot_hours' => $ot_time,
@@ -644,7 +702,7 @@ class TimeCardController extends Controller
                 }
                 
                 $over_time = over_time::create([
-                    'employee_id' => $employee->id,
+                    'employee_id' => $validated['employee_id'],
                     'shift_code' => $shift_code,
                     'time_cards_id' => $timeCard->id,
                     'ot_hours' => $ot_time,
@@ -912,11 +970,19 @@ class TimeCardController extends Controller
                 }
 
                 // Find employee by NIC and company
-                $employee = employee::where('nic', $nic)
-                    ->whereHas('organizationAssignment', function ($q) use ($companyId) {
+                $identifier = trim($nic);
+                $employeeQuery = employee::where(function ($q) use ($identifier) {
+                    // match NIC case-insensitive OR attendance_employee_no exact
+                    $q->whereRaw('LOWER(nic) = ?', [strtolower($identifier)])
+                      ->orWhere('attendance_employee_no', $identifier);
+                });
+                // keep company scoping if provided
+                if (!empty($companyId)) {
+                    $employeeQuery->whereHas('organizationAssignment', function ($q) use ($companyId) {
                         $q->where('company_id', $companyId);
-                    })
-                    ->first();
+                    });
+                }
+                $employee = $employeeQuery->first();
 
                 if (!$employee) {
                     $results['errors'][] = "Employee not found for NIC in selected company";
@@ -996,12 +1062,70 @@ class TimeCardController extends Controller
                     $statusUpper = strtoupper($status);
 
                     if ($statusUpper === 'OUT') {
-                        // Find last IN record for this employee
-                        $lastInCard = time_card::where('employee_id', $employee->id)
-                            ->where('status', 'IN')
-                            ->orderBy('date', 'desc')
-                            ->orderBy('time', 'desc')
-                            ->first();
+                        // Special handling for early morning OUT records (likely from previous day shift)
+                        $morningOutRecord = Carbon::parse($time)->hour < 12;
+                        
+                        if ($morningOutRecord) {
+                            // For early morning OUT records, first check for unpaired IN from previous day
+                            $previousDayIN = time_card::where('employee_id', $employee->id)
+                                ->where('status', 'IN')
+                                ->where('date', '<', $date)
+                                ->whereNotExists(function($query) {
+                                    $query->select(DB::raw(1))
+                                          ->from('time_cards as tc')
+                                          ->whereRaw('tc.actual_date = time_cards.date')
+                                          ->where('tc.status', 'OUT');
+                                })
+                                ->orderBy('date', 'desc')
+                                ->orderBy('time', 'desc')
+                                ->first();
+                                
+                            if ($previousDayIN) {
+                                $lastInCard = $previousDayIN;
+                            } else {
+                                // If no unpaired IN from previous day, try same day
+                                $lastInCard = time_card::where('employee_id', $employee->id)
+                                    ->where('date', $date)
+                                    ->where('status', 'IN')
+                                    ->where('time', '<', $time) // Only IN records before this OUT time
+                                    ->orderBy('time', 'desc')
+                                    ->first();
+                                    
+                                // If no same-day IN before this OUT time, look for any previous IN
+                                if (!$lastInCard) {
+                                    $lastInCard = time_card::where('employee_id', $employee->id)
+                                        ->where('status', 'IN')
+                                        ->where(function($query) use ($date, $time) {
+                                            $query->where('date', '<', $date)
+                                                  ->orWhere(function($q) use ($date, $time) {
+                                                      $q->where('date', $date)
+                                                        ->where('time', '<', $time);
+                                                  });
+                                        })
+                                        ->orderBy('date', 'desc')
+                                        ->orderBy('time', 'desc')
+                                        ->first();
+                                }
+                            }
+                        } else {
+                            // For afternoon/evening OUT records, use existing logic
+                            // First try to find an IN record from the SAME date
+                            $lastInCard = time_card::where('employee_id', $employee->id)
+                                ->where('date', $date)
+                                ->where('status', 'IN')
+                                ->orderBy('time', 'desc')
+                                ->first();
+                            
+                            // If no same-day IN record, look for the most recent IN record BEFORE this date
+                            if (!$lastInCard) {
+                                $lastInCard = time_card::where('employee_id', $employee->id)
+                                    ->where('status', 'IN')
+                                    ->where('date', '<', $date)
+                                    ->orderBy('date', 'desc')
+                                    ->orderBy('time', 'desc')
+                                    ->first();
+                            }
+                        }
 
                         if ($lastInCard) {
                             $lastInDate = Carbon::parse($lastInCard->date);

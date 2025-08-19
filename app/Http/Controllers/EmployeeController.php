@@ -916,10 +916,14 @@ class EmployeeController extends Controller
     }
 
 
-    public function getByNic($nic)
+    public function getByNic($identifier)
     {
+        // Try matching NIC (case-insensitive) OR attendance_employee_no (exact)
         $employee = employee::with(['organizationAssignment.department'])
-            ->whereRaw('LOWER(nic) = ?', [strtolower($nic)])
+            ->where(function ($q) use ($identifier) {
+                $q->whereRaw('LOWER(nic) = ?', [strtolower($identifier)])
+                  ->orWhere('attendance_employee_no', $identifier);
+            })
             ->first();
 
         if (!$employee) {
@@ -930,6 +934,7 @@ class EmployeeController extends Controller
             'id' => $employee->id,
             'attendance_employee_no' => $employee->attendance_employee_no,
             'full_name' => $employee->full_name,
+            'nic' => $employee->nic,
             'department' => $employee->organizationAssignment && $employee->organizationAssignment->department
                 ? $employee->organizationAssignment->department->name
                 : null,
