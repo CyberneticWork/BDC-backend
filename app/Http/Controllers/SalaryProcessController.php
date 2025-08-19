@@ -438,13 +438,14 @@ class SalaryProcessController extends Controller
             $installmentAmount = (float) ($employeeData['installment_amount'] ?? 0);
 
             // 1. Handle Increment (if applicable)
+            // increment_value is now a decimal absolute amount — add directly to basic salary
             if (
-                $employeeData['increment_active'] &&
-                $employeeData['increment_effected_date'] &&
+                !empty($employeeData['increment_active']) &&
+                !empty($employeeData['increment_effected_date']) &&
                 strtotime($employeeData['increment_effected_date']) <= strtotime($endDate)
             ) {
-                $incrementPercent = (float) rtrim($employeeData['increment_value'], '%');
-                $basicSalary = $basicSalary * (1 + ($incrementPercent / 100));
+                $incrementValue = (float) $employeeData['increment_value'];
+                $basicSalary += $incrementValue;
             }
 
             // 2. Calculate No-Pay Deduction using actual working days
