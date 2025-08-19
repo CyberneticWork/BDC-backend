@@ -240,7 +240,7 @@ class DatabaseSeeder extends Seeder
             compensation::create([
                 'employee_id' => $employee->id,
                 'basic_salary' => $baseSalary,
-                'increment_value' => $isEligibleForIncrement ? rand(5, 15) . '%' : null,
+                'increment_value' => $isEligibleForIncrement ? rand(5, 15) : null,
                 'increment_effected_date' => $isEligibleForIncrement ? Carbon::now()->subMonths(rand(1, 11))->format('Y-m-d') : null,
 
                 'enable_epf_etf' => rand(0, 1),
