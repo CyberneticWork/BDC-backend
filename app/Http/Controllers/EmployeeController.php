@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use App\Models\contact_detail;
 use Illuminate\Support\Facades\DB;
 use App\Models\organization_assignment;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 
@@ -450,7 +451,7 @@ class EmployeeController extends Controller
 
             // Add default roster
             $employee->rosters()->create([
-                'roster_id' => $employee->id,
+                'roster_id' => Carbon::now()->timestamp,
                 'shift_code' => 1,
                 'company_id' => $organization['company'],
                 'employee_id' => $employee->id,
