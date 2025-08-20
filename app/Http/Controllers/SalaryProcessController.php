@@ -279,6 +279,8 @@ class SalaryProcessController extends Controller
             comp.br2,
             comp.ot_morning_rate,
             comp.ot_night_rate,
+            comp.stamp,            -- ADDED: include stamp from compensation table
+
 
             -- BR status
             CASE
@@ -384,7 +386,8 @@ class SalaryProcessController extends Controller
         comp.ot_evening, comp.ot_morning_rate,
         comp.ot_night_rate,  comp.enable_epf_etf,
         lo.installment_count, lo.installment_amount,
-        c.id, oa.department_id
+        c.id, oa.department_id,
+        comp.stamp                -- ADDED: group by stamp
 ";
 
         // Prepare parameters
@@ -409,6 +412,10 @@ class SalaryProcessController extends Controller
             $employeeData['allowances'] = $allowances;
             $employeeData['deductions'] = $deductions;
 
+            // Map stamp: return 25 when stamp = 1, otherwise 0
+            $stampValue = ($result->stamp == 1) ? 25 : 0;
+            $employeeData['stamp'] = $stampValue;
+
             // Calculate salary components
             $basicSalary = (float) $employeeData['basic_salary'];
 
@@ -431,13 +438,14 @@ class SalaryProcessController extends Controller
             $installmentAmount = (float) ($employeeData['installment_amount'] ?? 0);
 
             // 1. Handle Increment (if applicable)
+            // increment_value is now a decimal absolute amount — add directly to basic salary
             if (
-                $employeeData['increment_active'] &&
-                $employeeData['increment_effected_date'] &&
+                !empty($employeeData['increment_active']) &&
+                !empty($employeeData['increment_effected_date']) &&
                 strtotime($employeeData['increment_effected_date']) <= strtotime($endDate)
             ) {
-                $incrementPercent = (float) rtrim($employeeData['increment_value'], '%');
-                $basicSalary = $basicSalary * (1 + ($incrementPercent / 100));
+                $incrementValue = (float) $employeeData['increment_value'];
+                $basicSalary += $incrementValue;
             }
 
             // 2. Calculate No-Pay Deduction using actual working days
@@ -494,6 +502,10 @@ class SalaryProcessController extends Controller
             $totalDeductions = $totalFixedDeductions + $installmentAmount + $epfEmployeeDeduction;
             $netSalary = $grossSalary - $totalDeductions;
 
+            // Subtract stamp fee (25) when stamp is active
+            if ($stampValue) {
+                $netSalary -= $stampValue;
+            }
 
 
             // Add calculated fields to response
@@ -515,6 +527,7 @@ class SalaryProcessController extends Controller
                 'loan_installment' => $installmentAmount,
                 'gross_salary' => $grossSalary,
                 'total_deductions' => $totalDeductions,
+                'stamp' => $stampValue,
                 'net_salary' => $netSalary
             ];
 
@@ -589,7 +602,7 @@ class SalaryProcessController extends Controller
     {
         $validated = $request->validate([
             'data' => 'required|array',
-            'data.*.emp_no' => 'required|integer',
+            'data.*.emp_no' => 'required|string',
             'data.*.full_name' => 'required|string',
             'month' => 'sometimes|integer|between:1,12',
             'year' => 'sometimes|integer',

@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use App\Models\contact_detail;
 use Illuminate\Support\Facades\DB;
 use App\Models\organization_assignment;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 
@@ -446,6 +447,16 @@ class EmployeeController extends Controller
                 'br1' => $compensation['budgetaryReliefAllowance2015'],
                 'br2' => $compensation['budgetaryReliefAllowance2016'],
                 'stamp' => $compensation['stamp'],
+            ]);
+
+            // Add default roster
+            $employee->rosters()->create([
+                'roster_id' => Carbon::now()->timestamp,
+                'shift_code' => 1,
+                'company_id' => $organization['company'],
+                'employee_id' => $employee->id,
+                'is_reccurring' => true,
+                'reccurence_pattern' => 'annualy',
             ]);
 
             DB::commit();
@@ -922,7 +933,7 @@ class EmployeeController extends Controller
         $employee = employee::with(['organizationAssignment.department'])
             ->where(function ($q) use ($identifier) {
                 $q->whereRaw('LOWER(nic) = ?', [strtolower($identifier)])
-                  ->orWhere('attendance_employee_no', $identifier);
+                    ->orWhere('attendance_employee_no', $identifier);
             })
             ->first();
 
