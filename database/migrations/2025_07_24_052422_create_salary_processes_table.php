@@ -40,7 +40,7 @@ return new class extends Migration {
             $table->string('month');
             $table->string('year');
 
-            $table->enum('status', ['pending', 'processed', 'issued'])->default('pending');
+            $table->enum('status', ['pending', 'processed', 'issued', 'hold'])->default('pending');
             $table->softDeletes();
             $table->timestamps();
         });
