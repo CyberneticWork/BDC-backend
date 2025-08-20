@@ -37,6 +37,12 @@ class NopayController extends Controller
             $query->where('status', $request->status);
         }
 
+        if ($request->has('company_id')) {
+            $query->whereHas('employee.organizationAssignment', function($q) use ($request) {
+                $q->where('company_id', $request->company_id);
+            });
+        }
+
         if ($request->has('search')) {
             $search = $request->search;
             $query->whereHas('employee', function($q) use ($search) {
@@ -153,6 +159,7 @@ class NopayController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'date' => 'required|date',
+            'company_id' => 'sometimes|exists:companies,id',
             'status' => 'sometimes|in:Pending,Approved,Rejected',
         ]);
 
@@ -164,13 +171,22 @@ class NopayController extends Controller
         $status = $request->status ?? 'Pending';
         $carbonDate = Carbon::parse($date);
 
-        // Get all active employees
-        $employees = employee::where('is_active', '1')->get();
+        // Build employee query and optionally filter by company
+        $employeesQuery = employee::where('is_active', '1');
+
+        if ($request->filled('company_id')) {
+            $companyId = $request->company_id;
+            $employeesQuery->whereHas('organizationAssignment', function ($q) use ($companyId) {
+                $q->where('company_id', $companyId);
+            });
+        }
+
+        $employees = $employeesQuery->with(['organizationAssignment', 'compensation'])->get();
 
         $generatedRecords = [];
 
         foreach ($employees as $employee) {
-            // Skip if employee has compensation.nopay_active set to false
+            // Skip if employee has compensation.active_nopay set to false
             if ($employee->compensation && $employee->compensation->active_nopay === false) {
                 continue;
             }
@@ -311,6 +327,12 @@ class NopayController extends Controller
 
         if ($request->has('status')) {
             $query->where('status', $request->status);
+        }
+
+        if ($request->has('company_id')) {
+            $query->whereHas('employee.organizationAssignment', function($q) use ($request) {
+                $q->where('company_id', $request->company_id);
+            });
         }
 
         $totalRecords = $query->count();

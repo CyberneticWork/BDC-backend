@@ -229,6 +229,7 @@ class EmployeeController extends Controller
                 'ot_night_rate' => 'nullable|numeric',
                 'budgetaryReliefAllowance2015' => 'required|boolean',
                 'budgetaryReliefAllowance2016' => 'required|boolean',
+                'stamp' => 'required|boolean',
             ]);
 
             $organizationValidator = Validator::make($organization, [
@@ -444,6 +445,7 @@ class EmployeeController extends Controller
                 'ot_night_rate' => $compensation['ot_night_rate'],
                 'br1' => $compensation['budgetaryReliefAllowance2015'],
                 'br2' => $compensation['budgetaryReliefAllowance2016'],
+                'stamp' => $compensation['stamp'],
             ]);
 
             DB::commit();
@@ -498,7 +500,7 @@ class EmployeeController extends Controller
     /**
      * Update the specified resource in storage.
      */
-    public function update(Request $request, $id)
+    public function update(Request $request)
     {
         $validator = Validator::make($request->all(), [
             'profile_picture' => 'nullable|image|max:2048',
@@ -515,8 +517,8 @@ class EmployeeController extends Controller
         $compensation = json_decode($request->input('compensation'), true);
         $organization = json_decode($request->input('organization'), true);
 
-        // Get the existing employee
-        $employee = Employee::findOrFail($id);
+        // Find the existing employee
+        $employee = Employee::findOrFail($personal['id']);
 
         // Validate the decoded arrays
         $validator->after(function ($validator) use ($personal, $address, $compensation, $organization, $employee) {
@@ -598,7 +600,6 @@ class EmployeeController extends Controller
                 'emergencyContact.contactTel' => 'required|string|max:20',
             ]);
 
-            // Validate compensation data
             $compensationValidator = Validator::make($compensation, [
                 'basicSalary' => 'required|numeric',
                 'incrementValue' => 'nullable|numeric',
@@ -622,9 +623,9 @@ class EmployeeController extends Controller
                 'ot_night_rate' => 'nullable|numeric',
                 'budgetaryReliefAllowance2015' => 'required|boolean',
                 'budgetaryReliefAllowance2016' => 'required|boolean',
+                'stamp' => 'required|boolean',
             ]);
 
-            // Validate organization data
             $organizationValidator = Validator::make($organization, [
                 'company' => 'required|string',
                 'department' => 'nullable|string',
@@ -685,14 +686,15 @@ class EmployeeController extends Controller
         DB::beginTransaction();
 
         try {
-            // Handle profile picture update
             $profilePicturePath = $employee->profile_photo_path;
             if ($request->hasFile('profile_picture')) {
                 // Delete old profile picture if exists
                 if ($profilePicturePath && Storage::disk('public')->exists($profilePicturePath)) {
                     Storage::disk('public')->delete($profilePicturePath);
                 }
+
                 $profilePicturePath = $request->file('profile_picture')->store('employee/profile_pictures', 'public');
+                $personal['profile_picture_path'] = $profilePicturePath;
             }
 
             // Update spouse record
@@ -708,24 +710,23 @@ class EmployeeController extends Controller
             // Update organization assignment
             $employee->organizationAssignment()->update([
                 'company_id' => $organization['company'],
-                'department_id' => $organization['department'] ?? null,
-                'sub_department_id' => $organization['subDepartment'] ?? null,
+                'department_id' => !empty($organization['department']) ? $organization['department'] : null,
+                'sub_department_id' => !empty($organization['subDepartment']) ? $organization['subDepartment'] : null,
                 'designation_id' => $organization['designation'],
                 'current_supervisor' => $organization['currentSupervisor'] ?? null,
                 'date_of_joining' => $organization['dateOfJoined'],
                 'day_off' => $organization['dayOff'],
-                'confirmation_date' => $organization['confirmationDate'] ?? null,
+                'confirmation_date' => empty($organization['confirmationDate']) ? null : $organization['confirmationDate'],
                 'probationary_period' => $organization['probationPeriod'],
                 'training_period' => $organization['trainingPeriod'],
                 'contract_period' => $organization['contractPeriod'],
-                'probationary_period_from' => $organization['probationFrom'] ?? null,
-                'probationary_period_to' => $organization['probationTo'] ?? null,
-                'training_period_from' => $organization['trainingFrom'] ?? null,
-                'training_period_to' => $organization['trainingTo'] ?? null,
-                'contract_period_from' => $organization['contractFrom'] ?? null,
-                'contract_period_to' => $organization['contractTo'] ?? null,
-                'date_of_resigning' => $organization['resignationDate'] ?? null,
-                'resignation_approved' => $organization['resignationApproved'],
+                'probationary_period_from' => empty($organization['probationFrom']) ? null : $organization['probationFrom'],
+                'probationary_period_to' => empty($organization['probationTo']) ? null : $organization['probationTo'],
+                'training_period_from' => empty($organization['trainingFrom']) ? null : $organization['trainingFrom'],
+                'training_period_to' => empty($organization['trainingTo']) ? null : $organization['trainingTo'],
+                'contract_period_from' => empty($organization['contractFrom']) ? null : $organization['contractFrom'],
+                'contract_period_to' => empty($organization['contractTo']) ? null : $organization['contractTo'],
+                'date_of_resigning' => empty($organization['confirmationDate']) ? null : $organization['confirmationDate'],
                 'is_active' => $organization['currentStatus'],
             ]);
 
@@ -743,22 +744,59 @@ class EmployeeController extends Controller
                 'full_name' => $personal['fullName'],
                 'display_name' => $personal['displayName'],
                 'marital_status' => strtolower($personal['maritalStatus']),
+                'is_active' => true,
                 'employment_type_id' => $personal['employmentStatus'],
                 'profile_photo_path' => $profilePicturePath,
             ]);
 
-            // Handle children updates
-            $employee->children()->delete(); // Delete existing children
+            // Handle children records
             if (isset($personal['children']) && is_array($personal['children'])) {
                 foreach ($personal['children'] as $child) {
-                    if (!empty($child['name'])) {
-                        $employee->children()->create([
-                            'name' => $child['name'],
-                            'age' => (int) $child['age'],
-                            'dob' => $child['dob'],
-                            'nic' => $child['nic'] ?? null,
-                        ]);
+                    if (empty($child['name'])) {
+                        continue;
                     }
+
+                    if (!empty($child['nic'])) {
+                        $existingChild = children::where('nic', $child['nic'])->first();
+
+                        if ($existingChild) {
+                            $existingChild->update([
+                                'employee_id' => $employee->id,
+                                'name' => $child['name'],
+                                'age' => (int) $child['age'],
+                                'dob' => $child['dob']
+                            ]);
+                            continue;
+                        }
+                    }
+
+                    children::create([
+                        'employee_id' => $employee->id,
+                        'name' => $child['name'],
+                        'age' => (int) $child['age'],
+                        'dob' => $child['dob'],
+                        'nic' => empty($child['nic'] ?? null) ? null : $child['nic'],
+                    ]);
+                }
+            }
+
+            // Handle document uploads if any
+            if ($request->hasFile('documents')) {
+                // Get the documents metadata from the request
+                $documentsMeta = $request->input('documents');
+
+                foreach ($request->file('documents') as $index => $document) {
+                    $path = $document->store('employee/documents', 'public');
+
+                    // Extract the document type (e.g., "nid") from the metadata
+                    $documentType = $documentsMeta[$index]['type'] ?? 'unknown'; // Fallback to 'unknown' if not provided
+
+                    documents::create([
+                        'employee_id' => $employee->id,
+                        'document_type' => $documentType,
+                        'document_path' => $path,
+                        'document_name' => $document->getClientOriginalName(),
+                    ]);
                 }
             }
 
@@ -784,12 +822,12 @@ class EmployeeController extends Controller
             $employee->compensation()->update([
                 'basic_salary' => $compensation['basicSalary'],
                 'increment_value' => $compensation['incrementValue'] ?? null,
-                'increment_effected_date' => $compensation['incrementEffectiveFrom'] ?? null,
-                'bank_name' => $compensation['bankName'],
-                'branch_name' => $compensation['branchName'],
-                'bank_code' => $compensation['bankCode'],
-                'branch_code' => $compensation['branchCode'],
-                'bank_account_no' => $compensation['bankAccountNo'],
+                'increment_effected_date' => empty($organization['incrementEffectiveFrom']) ? null : $organization['incrementEffectiveFrom'],
+                'bank_name' => $compensation['bankName'] ?? null,
+                'branch_name' => $compensation['branchName'] ?? null,
+                'bank_code' => $compensation['bankCode'] ?? null,
+                'branch_code' => $compensation['branchCode'] ?? null,
+                'bank_account_no' => $compensation['bankAccountNo'] ?? null,
                 'comments' => $compensation['comments'] ?? null,
                 'secondary_emp' => $compensation['secondaryEmp'],
                 'primary_emp_basic' => $compensation['primaryEmploymentBasic'],
@@ -800,23 +838,12 @@ class EmployeeController extends Controller
                 'active_nopay' => $compensation['nopayActive'],
                 'ot_morning' => $compensation['morningOt'],
                 'ot_evening' => $compensation['eveningOt'],
-                'ot_morning_rate' => $compensation['ot_morning_rate'],
-                'ot_night_rate' => $compensation['ot_night_rate'],
+                'ot_morning_rate' => $compensation['ot_morning_rate'] ?? null,
+                'ot_night_rate' => $compensation['ot_night_rate'] ?? null,
                 'br1' => $compensation['budgetaryReliefAllowance2015'],
                 'br2' => $compensation['budgetaryReliefAllowance2016'],
+                'stamp' => $compensation['stamp'],
             ]);
-
-            // Handle document uploads
-            if ($request->hasFile('documents')) {
-                foreach ($request->file('documents') as $index => $document) {
-                    $path = $document->store('employee/documents', 'public');
-                    $employee->documents()->create([
-                        'document_type' => $request->input('documents')[$index]['type'] ?? 'unknown',
-                        'document_path' => $path,
-                        'document_name' => $document->getClientOriginalName(),
-                    ]);
-                }
-            }
 
             DB::commit();
 
@@ -827,6 +854,12 @@ class EmployeeController extends Controller
 
         } catch (\Exception $e) {
             DB::rollBack();
+
+            // Delete the new profile picture if it was uploaded but update failed
+            if ($request->hasFile('profile_picture') && $profilePicturePath && Storage::disk('public')->exists($profilePicturePath)) {
+                Storage::disk('public')->delete($profilePicturePath);
+            }
+
             return response()->json([
                 'message' => 'Employee update failed',
                 'error' => $e->getMessage(),

@@ -24,8 +24,8 @@ class AllowancesController extends Controller
             'allowance_code' => 'required|unique:allowances,allowance_code',
             'allowance_name' => 'required|string|max:255',
             'status' => 'required|in:active,inactive',
-            'category' => 'required|in:travel,bonus,performance,health,other',
-            'allowance_type' => 'required|in:fixed,variable',
+            'category' => 'nullable|in:travel,bonus,performance,health,other',
+            'allowance_type' => 'nullable|in:fixed,variable',
             'company_id' => 'required|exists:companies,id',
             'amount' => 'required|numeric|min:0',
             'department_id' => [
@@ -108,9 +108,9 @@ class AllowancesController extends Controller
             'allowance_code' => ['required', Rule::unique('allowances')->ignore($allowance->id)],
             'allowance_name' => 'required|string|max:255',
             'status' => 'required|in:active,inactive',
-            'category' => 'required|in:travel,bonus,performance,health,other',
+            'category' => 'nullable|in:travel,bonus,performance,health,other',
             'allowance_type' => 'required|in:fixed,variable',
-            'company_id' => 'required|exists:companies,id',
+            'company_id' => 'nullable|exists:companies,id',
             'amount' => 'required|numeric|min:0',
             'department_id' => [
                 'nullable',

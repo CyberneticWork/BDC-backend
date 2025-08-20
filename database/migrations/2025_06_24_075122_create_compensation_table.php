@@ -39,6 +39,7 @@ return new class extends Migration {
             $table->text('comments')->nullable();
             $table->boolean('secondary_emp')->nullable()->default(false);
             $table->boolean('primary_emp_basic')->nullable()->default(false);
+            $table->boolean('stamp')->nullable()->default(false);
 
             $table->softDeletes();
             $table->timestamps();
