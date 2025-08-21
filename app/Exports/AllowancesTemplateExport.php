@@ -35,7 +35,7 @@ class AllowancesTemplateExport implements FromArray, WithHeadings, WithTitle, Wi
             'allowance_code',
             'allowance_name',
             'status',
-            'category',
+           
             'allowance_type',
             'company_id',
             'department_id',

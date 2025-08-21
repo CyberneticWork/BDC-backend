@@ -37,7 +37,6 @@ class DeductionTemplateExport implements FromArray, WithHeadings, WithTitle, Wit
             'description',
             'amount',
             'status',
-            'category',
             'deduction_type',
             'company_id',
             'department_id',

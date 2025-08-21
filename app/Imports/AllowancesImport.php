@@ -55,7 +55,7 @@ class AllowancesImport implements ToCollection, WithHeadingRow
                 'allowance_code' => 'required',  // Removed unique validation since we're handling it above
                 'allowance_name' => 'required|string|max:255',
                 'status' => 'required|in:active,inactive',
-                'category' => 'required|in:travel,bonus,performance,health,other',
+              
                 'allowance_type' => 'required|in:fixed,variable',
                 'company_id' => 'required|exists:companies,id',
                 'amount' => 'required|numeric|min:0',
@@ -125,7 +125,7 @@ class AllowancesImport implements ToCollection, WithHeadingRow
             'allowance_code' => ['allowance_code', 'code', 'allowance code'],
             'allowance_name' => ['allowance_name', 'name', 'allowance name'],
             'status' => ['status'],
-            'category' => ['category'],
+            
             'allowance_type' => ['allowance_type', 'type', 'allowance type'],
             'company_id' => ['company_id', 'company', 'company id'],
             'department_id' => ['department_id', 'department', 'department id'],
