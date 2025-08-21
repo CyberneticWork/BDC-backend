@@ -2,8 +2,10 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\SalaryProcessAudit;
 use App\Models\salary_process;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 
 class SalaryController extends Controller
@@ -66,6 +68,9 @@ class SalaryController extends Controller
             // Find the salary record
             $salaryRecord = salary_process::findOrFail($id);
             
+            // Store the original values for audit tracking
+            $originalData = $salaryRecord->toArray();
+            
             // Get the current data for calculations
             $basicSalary = (float) $request->basic_salary;
             
@@ -95,11 +100,12 @@ class SalaryController extends Controller
             $noPayDeduction = $request->approved_no_pay_days * $perDaySalary;
             $adjustedBasic = $basicSalary - $noPayDeduction;
             
-            // Get allowances total from the original record (preserve them)
-            $allowances = is_string($salaryRecord->allowances) 
-                ? json_decode($salaryRecord->allowances, true) 
-                : ($salaryRecord->allowances ?? []);
-            
+            // Accept allowances as array or JSON string; normalize to array
+            $allowances = $request->allowances ?? [];
+            if (is_string($allowances)) {
+                $decoded = json_decode($allowances, true);
+                $allowances = is_array($decoded) ? $decoded : [];
+            }
             $totalAllowances = 0;
             if (is_array($allowances)) {
                 foreach ($allowances as $allowance) {
@@ -115,11 +121,12 @@ class SalaryController extends Controller
             $epfEmployerContribution = $request->enable_epf_etf ? $epfEtfBase * 0.12 : 0;
             $etfEmployerContribution = $request->enable_epf_etf ? $epfEtfBase * 0.03 : 0;
             
-            // Get deductions total from the original record (preserve them)
-            $deductions = is_string($salaryRecord->deductions) 
-                ? json_decode($salaryRecord->deductions, true) 
-                : ($salaryRecord->deductions ?? []);
-            
+            // Process deductions from the request
+            $deductions = $request->deductions ?? [];
+            if (is_string($deductions)) {
+                $decoded = json_decode($deductions, true);
+                $deductions = is_array($decoded) ? $decoded : [];
+            }
             $totalFixedDeductions = 0;
             if (is_array($deductions)) {
                 foreach ($deductions as $deduction) {
@@ -161,19 +168,19 @@ class SalaryController extends Controller
                 'net_salary' => $netSalary
             ];
             
-            // Update the salary record with all fields
-            $salaryRecord->update([
+            // Prepare updated data
+            $updatedData = [
                 'basic_salary' => $request->basic_salary,
-                'increment_active' => (bool)$request->increment_active, // Cast to boolean
+                'increment_active' => (bool)$request->increment_active,
                 'increment_value' => $request->increment_value,
                 'increment_effected_date' => $request->increment_effected_date,
                 'ot_morning' => $request->ot_morning,
                 'ot_evening' => $request->ot_evening,
-                'enable_epf_etf' => (bool)$request->enable_epf_etf, // Cast to boolean
-                'br1' => (bool)$request->br1, // Cast to boolean
-                'br2' => (bool)$request->br2, // Cast to boolean
+                'enable_epf_etf' => (bool)$request->enable_epf_etf,
+                'br1' => (bool)$request->br1,
+                'br2' => (bool)$request->br2,
                 'br_status' => $brStatus,
-                'stamp' => (bool)$request->stamp, // Cast to boolean
+                'stamp' => (bool)$request->stamp,
                 'total_loan_amount' => $request->total_loan_amount,
                 'installment_count' => $request->installment_count,
                 'installment_amount' => $request->installment_amount,
@@ -181,8 +188,119 @@ class SalaryController extends Controller
                 'status' => $request->status,
                 'month' => $request->month,
                 'year' => $request->year,
-                'salary_breakdown' => $updatedSalaryBreakdown
-            ]);
+                'salary_breakdown' => $updatedSalaryBreakdown,
+                // Store arrays directly; model casts to JSON
+                'allowances' => $allowances,
+                'deductions' => $deductions,
+            ];
+            
+            // Update the salary record
+            $salaryRecord->update($updatedData);
+            
+            // Track changes for audit log - only fields directly edited by the user
+            $changes = [];
+
+
+            // Check for basic user inputs that may have changed
+            $trackableFields = [
+                'basic_salary', 'increment_active', 'increment_value', 'increment_effected_date',
+                'ot_morning', 'ot_evening', 'enable_epf_etf', 'br1', 'br2', 'stamp',
+                'total_loan_amount', 'installment_count', 'installment_amount',
+                'approved_no_pay_days', 'status', 'month', 'year'
+            ];
+
+            foreach ($trackableFields as $field) {
+                // Skip if field isn't in the request
+                if (!$request->has($field)) {
+                    continue;
+                }
+                
+                // Convert value to comparable format (booleans need special handling)
+                $requestValue = $request->input($field);
+                if (in_array($field, ['increment_active', 'enable_epf_etf', 'br1', 'br2', 'stamp'])) {
+                    $requestValue = (bool)$requestValue;
+                    $originalValue = (bool)($originalData[$field] ?? false);
+                } else {
+                    $originalValue = $originalData[$field] ?? null;
+                    
+                    // Handle numeric conversions for proper comparison
+                    if (is_numeric($requestValue) && is_numeric($originalValue)) {
+                        $requestValue = (string)$requestValue; // Convert to string to avoid float precision issues
+                        $originalValue = (string)$originalValue;
+                    }
+                }
+                
+                // Only track if value actually changed
+                if ($originalValue != $requestValue) {
+                    $changes[$field] = [
+                        'from' => $originalValue,
+                        'to' => $requestValue
+                    ];
+                }
+            }
+
+            // Track allowances changes if present
+            if ($request->has('allowances')) {
+                // Simple change indicator for allowances to avoid deep comparison
+                $origAllowancesJson = json_encode($originalData['allowances'] ?? []);
+                $newAllowancesJson = json_encode($allowances);
+                
+                if ($origAllowancesJson !== $newAllowancesJson) {
+                    $changes['allowances'] = [
+                        'changed' => true,
+                        'summary' => 'Allowances were modified'
+                    ];
+                }
+            }
+
+            // Track deductions changes if present
+            if ($request->has('deductions')) {
+                // Simple change indicator for deductions to avoid deep comparison
+                $origDeductionsJson = json_encode($originalData['deductions'] ?? []);
+                $newDeductionsJson = json_encode($deductions);
+                
+                if ($origDeductionsJson !== $newDeductionsJson) {
+                    $changes['deductions'] = [
+                        'changed' => true,
+                        'summary' => 'Deductions were modified'
+                    ];
+                }
+            }
+
+            // Include net salary change for easy reference, but only if tracked fields changed
+            if (!empty($changes) && 
+                (isset($originalData['salary_breakdown']['net_salary']) || isset($updatedSalaryBreakdown['net_salary']))) {
+                $changes['net_salary'] = [
+                    'from' => $originalData['salary_breakdown']['net_salary'] ?? 0,
+                    'to' => $updatedSalaryBreakdown['net_salary']
+                ];
+            }
+            
+            // In the update method, add this before creating the audit record:
+            if (Auth::check()) {
+                $userId = Auth::id();
+                $userName = Auth::user()->name;
+            } else if ($request->has('user_id')) {
+                // Get user info from request payload if Auth isn't available
+                $userId = $request->user_id;
+                // Look up the user name if possible
+                $user = \App\Models\User::find($userId);
+                $userName = $user ? $user->name : 'Unknown User';
+            } else {
+                $userId = null;
+                $userName = 'System (Not Authenticated)';
+            }
+
+            // Create audit record if there were changes
+            if (!empty($changes)) {
+                SalaryProcessAudit::create([
+                    'salary_process_id' => $id,
+                    'user_id' => $userId,
+                    'user_name' => $userName,
+                    'action' => 'update',
+                    'changes' => $changes
+                ]);
+            }
 
             return response()->json([
                 'message' => 'Salary record updated successfully',
@@ -198,11 +316,67 @@ class SalaryController extends Controller
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy(string $id)
+    public function destroy(Request $request, string $id)
     {
-        $salary = salary_process::findOrFail($id);
-        $salary->delete();
-        return response()->json($salary, 200);
+        try {
+            $salary = salary_process::findOrFail($id);
+            
+            // Get user info for audit trail
+            if (Auth::check()) {
+                $userId = Auth::id();
+                $userName = Auth::user()->name;
+            } else if ($request->has('user_id')) {
+                // Get user info from request payload if Auth isn't available
+                $userId = $request->user_id;
+                // Look up the user name if possible
+                $user = \App\Models\User::find($userId);
+                $userName = $user ? $user->name : 'Unknown User';
+            } else {
+                $userId = null;
+                $userName = 'System (Not Authenticated)';
+            }
+
+            // Create audit record for deletion
+            SalaryProcessAudit::create([
+                'salary_process_id' => $id,
+                'user_id' => $userId,
+                'user_name' => $userName,
+                'action' => 'delete',
+                'changes' => ['deleted' => true]
+            ]);
+            
+            $salary->delete();
+            return response()->json(['message' => 'Salary record deleted successfully'], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Error deleting salary record: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get audit logs for a salary process
+     */
+    public function getAuditLogs(string $id)
+    {
+        try {
+            $salaryRecord = salary_process::findOrFail($id);
+            
+            $auditLogs = SalaryProcessAudit::where('salary_process_id', $id)
+                ->orderBy('created_at', 'desc')
+                ->get();
+            
+            return response()->json([
+                'salary_id' => $id,
+                'employee_name' => $salaryRecord->full_name,
+                'employee_no' => $salaryRecord->employee_no,
+                'audit_logs' => $auditLogs
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Error retrieving audit logs: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     public function salaryCSV(Request $request)
