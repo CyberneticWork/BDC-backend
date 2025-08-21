@@ -6,8 +6,10 @@ use Illuminate\Http\Request;
 use App\Models\leave_master;
 use App\Models\employee;
 use Illuminate\Support\Facades\Validator;
-
-
+use App\Mail\LeaveApprovedMail;
+use App\Mail\LeaveRejectedMail;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Log;
 
 class LeaveMasterController extends Controller
 {
@@ -16,7 +18,7 @@ class LeaveMasterController extends Controller
      */
     public function index()
     {
-        $leaveMasters = leave_master::with('employee', )->get();
+        $leaveMasters = leave_master::with('employee')->get();
         return response()->json($leaveMasters);
     }
 
@@ -33,6 +35,7 @@ class LeaveMasterController extends Controller
             'leave_from' => 'nullable|date',
             'leave_to' => 'nullable|date|after_or_equal:leave_from',
             'period' => 'nullable|string|max:255',
+            'is_half_day' => 'nullable|boolean',
             'cancel_from' => 'nullable|date',
             'cancel_to' => 'nullable|date|after_or_equal:cancel_from',
             'reason' => 'nullable|string|max:1000',
@@ -43,14 +46,32 @@ class LeaveMasterController extends Controller
             return response()->json($validator->errors(), 422);
         }
 
-        $leaveMaster = leave_master::create($request->all());
+        $data = $request->all();
+
+        // Calculate leave_duration based on available data
+        if (isset($data['leave_from']) && isset($data['leave_to'])) {
+            // Calculate days between leave_from and leave_to (inclusive)
+            $from = new \DateTime($data['leave_from']);
+            $to = new \DateTime($data['leave_to']);
+            $interval = $from->diff($to);
+            $data['leave_duration'] = $interval->days + 1; // +1 to include both start and end dates
+        } elseif (isset($data['leave_date'])) {
+            // Single day leave
+            $data['leave_duration'] = 1;
+        }
+
+        // If is_half_day is true, divide the duration by 2
+        if (isset($data['is_half_day']) && $data['is_half_day']) {
+            $data['leave_duration'] = $data['leave_duration'] > 0 ? $data['leave_duration'] / 2 : 0.5;
+        }
+
+        $leaveMaster = leave_master::create($data);
         return response()->json($leaveMaster, 201);
     }
 
     /**
      * Display the specified resource.
      */
-
     public function show(string $id)
     {
         $leaveMaster = leave_master::where("employee_id", $id)->get();
@@ -70,6 +91,7 @@ class LeaveMasterController extends Controller
             'leave_from' => 'sometimes|date',
             'leave_to' => 'sometimes|date|after_or_equal:leave_from',
             'period' => 'nullable|string|max:255',
+            'is_half_day' => 'nullable|boolean',
             'cancel_from' => 'nullable|date',
             'cancel_to' => 'nullable|date|after_or_equal:cancel_from',
             'reason' => 'nullable|string|max:1000',
@@ -81,8 +103,100 @@ class LeaveMasterController extends Controller
         }
 
         $leaveMaster = leave_master::findOrFail($id);
-        $leaveMaster->update($request->all());
+        $data = $request->all();
+
+        // Calculate leave_duration based on available data
+        if (isset($data['leave_from']) && isset($data['leave_to'])) {
+            // Calculate days between leave_from and leave_to (inclusive)
+            $from = new \DateTime($data['leave_from']);
+            $to = new \DateTime($data['leave_to']);
+            $interval = $from->diff($to);
+            $data['leave_duration'] = $interval->days + 1; // +1 to include both start and end dates
+        } elseif (isset($data['leave_date']) && !isset($data['leave_duration'])) {
+            // Single day leave
+            $data['leave_duration'] = 1;
+        }
+
+        // If is_half_day is true, divide the duration by 2
+        if (isset($data['is_half_day']) && $data['is_half_day']) {
+            $data['leave_duration'] = isset($data['leave_duration']) && $data['leave_duration'] > 0
+                ? $data['leave_duration'] / 2
+                : 0.5;
+        }
+
+        $leaveMaster->update($data);
         return response()->json($leaveMaster);
+    }
+
+    /**
+     * Update leave status and send email notification
+     */
+    public function updateStatus(Request $request, $id)
+    {
+        $validator = Validator::make($request->all(), [
+            'status' => 'required|in:Pending,Approved,HR_Approved,Rejected',
+            'rejection_reason' => 'nullable|string|max:1000'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json($validator->errors(), 422);
+        }
+
+        $leaveMaster = leave_master::with('employee.contactDetail')->findOrFail($id);
+        $oldStatus = $leaveMaster->status;
+
+        $leaveMaster->update([
+            'status' => $request->status,
+            'rejection_reason' => $request->rejection_reason
+        ]);
+
+        // Send email only if status changed
+        if ($oldStatus !== $request->status) {
+            $this->sendStatusEmail($leaveMaster, $request->status, $request->rejection_reason);
+        }
+
+        return response()->json([
+            'message' => 'Leave status updated successfully',
+            'leave' => $leaveMaster
+        ]);
+    }
+
+    /**
+     * Send email notification based on leave status
+     */
+    private function sendStatusEmail($leave, $status, $rejectionReason = null)
+    {
+        $employee = $leave->employee;
+
+        // Check if employee has contact details and email
+        if (!$employee->contactDetail || !$employee->contactDetail->email) {
+            Log::warning('Cannot send email notification: Employee contact details missing', [
+                'employee_id' => $employee->id,
+                'leave_id' => $leave->id
+            ]);
+            return;
+        }
+
+        try {
+            if ($status === 'Approved' || $status === 'HR_Approved') {
+                Mail::to($employee->contactDetail->email)->send(new LeaveApprovedMail($leave, $employee));
+            } elseif ($status === 'Rejected') {
+                Mail::to($employee->contactDetail->email)->send(new LeaveRejectedMail($leave, $employee, $rejectionReason));
+            }
+
+            Log::info('Leave status email sent successfully', [
+                'employee_id' => $employee->id,
+                'leave_id' => $leave->id,
+                'status' => $status,
+                'email' => $employee->contactDetail->email
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Failed to send leave status email', [
+                'employee_id' => $employee->id,
+                'leave_id' => $leave->id,
+                'error' => $e->getMessage()
+            ]);
+        }
     }
 
     /**
@@ -96,33 +210,48 @@ class LeaveMasterController extends Controller
     }
 
     //return annual/casual/special leave record counts for a specific employee
+    //return annual/casual/special leave record counts for a specific employee with half-day support
     public function getLeaveRecordCountsByEmployee($employeeId)
     {
         $leaveCounts = leave_master::where('employee_id', $employeeId)
-            ->selectRaw('leave_type, COUNT(*) as count')
+            ->selectRaw('
+            leave_type,
+            SUM(CASE WHEN is_half_day = 1 THEN 0 ELSE COALESCE(leave_duration, 1) END) as full_days,
+            SUM(CASE WHEN is_half_day = 1 THEN COALESCE(leave_duration, 0.5) ELSE 0 END) as half_days,
+            SUM(CASE WHEN status = "Rejected" AND is_half_day = 1 THEN COALESCE(leave_duration, 0.5) ELSE 0 END) as rejected_half_days,
+            SUM(CASE WHEN status = "Rejected" AND is_half_day = 0 THEN COALESCE(leave_duration, 1) ELSE 0 END) as rejected_full_days
+        ')
             ->groupBy('leave_type')
             ->get();
 
         return response()->json($leaveCounts);
     }
 
-    // Get leave recodes that the ststus = 'Pending'
+    // Get leave records that the status = 'Pending'
     public function getPendingLeaveRecords()
     {
-        $pendingLeaves = leave_master::where('status', 'Pending')->get();
+        $pendingLeaves = leave_master::with('employee')->where('status', 'Pending')->get();
         return response()->json($pendingLeaves);
     }
 
-    // Get leave recodes that the ststus = 'Approved'
+    // Get leave records that the status = 'Approved'
     public function getApprovedLeaveRecords()
     {
-        $approvedLeaves = leave_master::where('status', 'Approved')->get();
+        $approvedLeaves = leave_master::with('employee')->where('status', 'Approved')->get();
         return response()->json($approvedLeaves);
     }
-    // Get leave recodes that the ststus = 'HR_Approved'
-    // public function getHRApprovedLeaveRecords()
-    // {
-    //     $hrApprovedLeaves = leave_master::where('status', 'HR_Approved')->get();
-    //     return response()->json($hrApprovedLeaves);
-    // }
+
+    // Get leave records that the status = 'HR_Approved'
+    public function getHRApprovedLeaveRecords()
+    {
+        $hrApprovedLeaves = leave_master::with('employee')->where('status', 'HR_Approved')->get();
+        return response()->json($hrApprovedLeaves);
+    }
+
+    // Get leave records that the status = 'Rejected'
+    public function getRejectedLeaveRecords()
+    {
+        $rejectedLeaves = leave_master::with('employee')->where('status', 'Rejected')->get();
+        return response()->json($rejectedLeaves);
+    }
 }
