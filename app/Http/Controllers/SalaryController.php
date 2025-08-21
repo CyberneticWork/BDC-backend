@@ -2,8 +2,10 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\SalaryProcessAudit;
 use App\Models\salary_process;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 
 class SalaryController extends Controller
@@ -65,6 +67,9 @@ class SalaryController extends Controller
         try {
             // Find the salary record
             $salaryRecord = salary_process::findOrFail($id);
+            
+            // Store the original values for audit tracking
+            $originalData = $salaryRecord->toArray();
             
             // Get the current data for calculations
             $basicSalary = (float) $request->basic_salary;
@@ -161,19 +166,19 @@ class SalaryController extends Controller
                 'net_salary' => $netSalary
             ];
             
-            // Update the salary record with all fields
-            $salaryRecord->update([
+            // Prepare updated data
+            $updatedData = [
                 'basic_salary' => $request->basic_salary,
-                'increment_active' => (bool)$request->increment_active, // Cast to boolean
+                'increment_active' => (bool)$request->increment_active,
                 'increment_value' => $request->increment_value,
                 'increment_effected_date' => $request->increment_effected_date,
                 'ot_morning' => $request->ot_morning,
                 'ot_evening' => $request->ot_evening,
-                'enable_epf_etf' => (bool)$request->enable_epf_etf, // Cast to boolean
-                'br1' => (bool)$request->br1, // Cast to boolean
-                'br2' => (bool)$request->br2, // Cast to boolean
+                'enable_epf_etf' => (bool)$request->enable_epf_etf,
+                'br1' => (bool)$request->br1,
+                'br2' => (bool)$request->br2,
                 'br_status' => $brStatus,
-                'stamp' => (bool)$request->stamp, // Cast to boolean
+                'stamp' => (bool)$request->stamp,
                 'total_loan_amount' => $request->total_loan_amount,
                 'installment_count' => $request->installment_count,
                 'installment_amount' => $request->installment_amount,
@@ -182,7 +187,62 @@ class SalaryController extends Controller
                 'month' => $request->month,
                 'year' => $request->year,
                 'salary_breakdown' => $updatedSalaryBreakdown
-            ]);
+            ];
+            
+            // Update the salary record
+            $salaryRecord->update($updatedData);
+            
+            // Track changes for audit log
+            $changes = [];
+            foreach ($updatedData as $key => $newValue) {
+                // Skip arrays/objects for simpler comparison
+                if (is_array($newValue) || is_object($newValue)) {
+                    continue;
+                }
+                
+                // Check if the field existed in original data and has changed
+                if (isset($originalData[$key]) && $originalData[$key] != $newValue) {
+                    $changes[$key] = [
+                        'from' => $originalData[$key],
+                        'to' => $newValue
+                    ];
+                }
+            }
+            
+            // For salary_breakdown, just note that it changed rather than storing the whole object
+            if (json_encode($originalData['salary_breakdown'] ?? null) !== json_encode($updatedSalaryBreakdown)) {
+                $changes['salary_breakdown'] = [
+                    'changed' => true,
+                    'from_net_salary' => $originalData['salary_breakdown']['net_salary'] ?? 0,
+                    'to_net_salary' => $updatedSalaryBreakdown['net_salary']
+                ];
+            }
+            
+            // In the update method, add this before creating the audit record:
+            if (Auth::check()) {
+                $userId = Auth::id();
+                $userName = Auth::user()->name;
+            } else if ($request->has('user_id')) {
+                // Get user info from request payload if Auth isn't available
+                $userId = $request->user_id;
+                // Look up the user name if possible
+                $user = \App\Models\User::find($userId);
+                $userName = $user ? $user->name : 'Unknown User';
+            } else {
+                $userId = null;
+                $userName = 'System (Not Authenticated)';
+            }
+
+            // Create audit record if there were changes
+            if (!empty($changes)) {
+                SalaryProcessAudit::create([
+                    'salary_process_id' => $id,
+                    'user_id' => $userId,
+                    'user_name' => $userName,
+                    'action' => 'update',
+                    'changes' => $changes
+                ]);
+            }
 
             return response()->json([
                 'message' => 'Salary record updated successfully',
@@ -198,11 +258,67 @@ class SalaryController extends Controller
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy(string $id)
+    public function destroy(Request $request, string $id)
     {
-        $salary = salary_process::findOrFail($id);
-        $salary->delete();
-        return response()->json($salary, 200);
+        try {
+            $salary = salary_process::findOrFail($id);
+            
+            // Get user info for audit trail
+            if (Auth::check()) {
+                $userId = Auth::id();
+                $userName = Auth::user()->name;
+            } else if ($request->has('user_id')) {
+                // Get user info from request payload if Auth isn't available
+                $userId = $request->user_id;
+                // Look up the user name if possible
+                $user = \App\Models\User::find($userId);
+                $userName = $user ? $user->name : 'Unknown User';
+            } else {
+                $userId = null;
+                $userName = 'System (Not Authenticated)';
+            }
+
+            // Create audit record for deletion
+            SalaryProcessAudit::create([
+                'salary_process_id' => $id,
+                'user_id' => $userId,
+                'user_name' => $userName,
+                'action' => 'delete',
+                'changes' => ['deleted' => true]
+            ]);
+            
+            $salary->delete();
+            return response()->json(['message' => 'Salary record deleted successfully'], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Error deleting salary record: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get audit logs for a salary process
+     */
+    public function getAuditLogs(string $id)
+    {
+        try {
+            $salaryRecord = salary_process::findOrFail($id);
+            
+            $auditLogs = SalaryProcessAudit::where('salary_process_id', $id)
+                ->orderBy('created_at', 'desc')
+                ->get();
+            
+            return response()->json([
+                'salary_id' => $id,
+                'employee_name' => $salaryRecord->full_name,
+                'employee_no' => $salaryRecord->employee_no,
+                'audit_logs' => $auditLogs
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Error retrieving audit logs: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     public function salaryCSV(Request $request)
