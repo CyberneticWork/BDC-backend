@@ -100,11 +100,12 @@ class SalaryController extends Controller
             $noPayDeduction = $request->approved_no_pay_days * $perDaySalary;
             $adjustedBasic = $basicSalary - $noPayDeduction;
             
-            // Get allowances total from the original record (preserve them)
-            $allowances = is_string($salaryRecord->allowances) 
-                ? json_decode($salaryRecord->allowances, true) 
-                : ($salaryRecord->allowances ?? []);
-            
+            // Accept allowances as array or JSON string; normalize to array
+            $allowances = $request->allowances ?? [];
+            if (is_string($allowances)) {
+                $decoded = json_decode($allowances, true);
+                $allowances = is_array($decoded) ? $decoded : [];
+            }
             $totalAllowances = 0;
             if (is_array($allowances)) {
                 foreach ($allowances as $allowance) {
@@ -120,11 +121,12 @@ class SalaryController extends Controller
             $epfEmployerContribution = $request->enable_epf_etf ? $epfEtfBase * 0.12 : 0;
             $etfEmployerContribution = $request->enable_epf_etf ? $epfEtfBase * 0.03 : 0;
             
-            // Get deductions total from the original record (preserve them)
-            $deductions = is_string($salaryRecord->deductions) 
-                ? json_decode($salaryRecord->deductions, true) 
-                : ($salaryRecord->deductions ?? []);
-            
+            // Process deductions from the request
+            $deductions = $request->deductions ?? [];
+            if (is_string($deductions)) {
+                $decoded = json_decode($deductions, true);
+                $deductions = is_array($decoded) ? $decoded : [];
+            }
             $totalFixedDeductions = 0;
             if (is_array($deductions)) {
                 foreach ($deductions as $deduction) {
@@ -186,7 +188,10 @@ class SalaryController extends Controller
                 'status' => $request->status,
                 'month' => $request->month,
                 'year' => $request->year,
-                'salary_breakdown' => $updatedSalaryBreakdown
+                'salary_breakdown' => $updatedSalaryBreakdown,
+                // Store arrays directly; model casts to JSON
+                'allowances' => $allowances,
+                'deductions' => $deductions,
             ];
             
             // Update the salary record
