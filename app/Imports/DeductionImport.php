@@ -50,11 +50,11 @@ class DeductionImport implements ToCollection, WithHeadingRow
                 'description' => 'nullable|string',
                 'amount' => 'required|numeric|min:0',
                 'status' => 'required|in:active,inactive',
-                'category' => 'required|in:EPF,ETF,other',
+              
                 'deduction_type' => 'required|in:fixed,variable',
                 'company_id' => 'required|exists:companies,id',
                 'department_id' => [
-                    'required',
+                    'nullable',
                     'exists:departments,id',
                     Rule::exists('departments', 'id')->where(function ($query) use ($normalizedRow) {
                         $query->where('company_id', $normalizedRow['company_id']);
@@ -107,7 +107,7 @@ class DeductionImport implements ToCollection, WithHeadingRow
             'description' => ['description'],
             'amount' => ['amount'],
             'status' => ['status'],
-            'category' => ['category'],
+          
             'deduction_type' => ['deduction_type', 'type', 'deduction type'],
             'company_id' => ['company_id', 'company', 'company id'],
             'department_id' => ['department_id', 'department', 'department id'],
