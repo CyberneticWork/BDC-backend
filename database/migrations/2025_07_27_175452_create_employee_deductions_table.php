@@ -12,12 +12,13 @@ return new class extends Migration {
     {
         Schema::create('employee_deductions', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('employee_id')->constrained('employees')->cascadeOnDelete();
+            $table->foreignId('employee_id')->nullable()->constrained('employees')->cascadeOnDelete();
+            $table->foreignId('attendance_employee_no')->nullable()->constrained('employees')->cascadeOnDelete();
             $table->foreignId('deduction_id')->constrained('deductions')->cascadeOnDelete();
             $table->decimal('custom_amount', 10, 2)->nullable();
             $table->boolean('is_active')->default(true);
 
-           $table->unique(['employee_id', 'deduction_id']);
+            $table->unique(['employee_id', 'deduction_id']);
 
             $table->timestamps();
             $table->softDeletes();

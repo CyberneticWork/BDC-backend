@@ -9,6 +9,7 @@ class employee_allowances extends Model
 
     protected $fillable = [
         'employee_id',
+        'attendance_employee_no',
         'allowance_id',
         'custom_amount',
         'is_active',

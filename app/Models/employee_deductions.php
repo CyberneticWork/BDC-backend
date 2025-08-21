@@ -8,6 +8,7 @@ class employee_deductions extends Model
 {
     protected $fillable = [
         'employee_id',
+        'attendance_employee_no',
         'deduction_id',
         'custom_amount',
         'is_active',

@@ -766,6 +766,7 @@ class SalaryProcessController extends Controller
         $employees = employee::whereIn('id', $request->selectedEmployees)
             ->get([
                 'id',
+                'attendance_employee_no',
                 'nic',
                 'full_name',
             ]);
