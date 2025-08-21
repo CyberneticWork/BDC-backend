@@ -122,8 +122,7 @@ class EmployeeSeeder extends Seeder
             $hasSpouse = $maritalStatus === 'married' && rand(0, 1);
 
             // Create spouse if needed
-            $spouseId = null;
-            if ($hasSpouse) {
+
                 $spouseGender = $gender === 'male' ? 'wife' : 'husband';
                 $spouseTitle = $gender === 'male' ? $titles[1] : $titles[0];
                 $spouseFirstName = $gender === 'male' ? $firstNamesFemale[array_rand($firstNamesFemale)] : $firstNamesMale[array_rand($firstNamesMale)];
@@ -141,7 +140,7 @@ class EmployeeSeeder extends Seeder
                 ]);
 
                 $spouseId = $spouse->id;
-            }
+
 
             // Random company, department, sub-department assignment
             $companyId = rand(1, 4);
