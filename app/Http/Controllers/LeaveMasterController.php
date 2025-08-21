@@ -35,6 +35,7 @@ class LeaveMasterController extends Controller
             'leave_from' => 'nullable|date',
             'leave_to' => 'nullable|date|after_or_equal:leave_from',
             'period' => 'nullable|string|max:255',
+            'is_half_day' => 'nullable|boolean',
             'cancel_from' => 'nullable|date',
             'cancel_to' => 'nullable|date|after_or_equal:cancel_from',
             'reason' => 'nullable|string|max:1000',
@@ -45,7 +46,26 @@ class LeaveMasterController extends Controller
             return response()->json($validator->errors(), 422);
         }
 
-        $leaveMaster = leave_master::create($request->all());
+        $data = $request->all();
+
+        // Calculate leave_duration based on available data
+        if (isset($data['leave_from']) && isset($data['leave_to'])) {
+            // Calculate days between leave_from and leave_to (inclusive)
+            $from = new \DateTime($data['leave_from']);
+            $to = new \DateTime($data['leave_to']);
+            $interval = $from->diff($to);
+            $data['leave_duration'] = $interval->days + 1; // +1 to include both start and end dates
+        } elseif (isset($data['leave_date'])) {
+            // Single day leave
+            $data['leave_duration'] = 1;
+        }
+
+        // If is_half_day is true, divide the duration by 2
+        if (isset($data['is_half_day']) && $data['is_half_day']) {
+            $data['leave_duration'] = $data['leave_duration'] > 0 ? $data['leave_duration'] / 2 : 0.5;
+        }
+
+        $leaveMaster = leave_master::create($data);
         return response()->json($leaveMaster, 201);
     }
 
@@ -71,6 +91,7 @@ class LeaveMasterController extends Controller
             'leave_from' => 'sometimes|date',
             'leave_to' => 'sometimes|date|after_or_equal:leave_from',
             'period' => 'nullable|string|max:255',
+            'is_half_day' => 'nullable|boolean',
             'cancel_from' => 'nullable|date',
             'cancel_to' => 'nullable|date|after_or_equal:cancel_from',
             'reason' => 'nullable|string|max:1000',
@@ -82,7 +103,28 @@ class LeaveMasterController extends Controller
         }
 
         $leaveMaster = leave_master::findOrFail($id);
-        $leaveMaster->update($request->all());
+        $data = $request->all();
+
+        // Calculate leave_duration based on available data
+        if (isset($data['leave_from']) && isset($data['leave_to'])) {
+            // Calculate days between leave_from and leave_to (inclusive)
+            $from = new \DateTime($data['leave_from']);
+            $to = new \DateTime($data['leave_to']);
+            $interval = $from->diff($to);
+            $data['leave_duration'] = $interval->days + 1; // +1 to include both start and end dates
+        } elseif (isset($data['leave_date']) && !isset($data['leave_duration'])) {
+            // Single day leave
+            $data['leave_duration'] = 1;
+        }
+
+        // If is_half_day is true, divide the duration by 2
+        if (isset($data['is_half_day']) && $data['is_half_day']) {
+            $data['leave_duration'] = isset($data['leave_duration']) && $data['leave_duration'] > 0
+                ? $data['leave_duration'] / 2
+                : 0.5;
+        }
+
+        $leaveMaster->update($data);
         return response()->json($leaveMaster);
     }
 
@@ -168,10 +210,17 @@ class LeaveMasterController extends Controller
     }
 
     //return annual/casual/special leave record counts for a specific employee
+    //return annual/casual/special leave record counts for a specific employee with half-day support
     public function getLeaveRecordCountsByEmployee($employeeId)
     {
         $leaveCounts = leave_master::where('employee_id', $employeeId)
-            ->selectRaw('leave_type, COUNT(*) as count')
+            ->selectRaw('
+            leave_type,
+            SUM(CASE WHEN is_half_day = 1 THEN 0 ELSE COALESCE(leave_duration, 1) END) as full_days,
+            SUM(CASE WHEN is_half_day = 1 THEN COALESCE(leave_duration, 0.5) ELSE 0 END) as half_days,
+            SUM(CASE WHEN status = "Rejected" AND is_half_day = 1 THEN COALESCE(leave_duration, 0.5) ELSE 0 END) as rejected_half_days,
+            SUM(CASE WHEN status = "Rejected" AND is_half_day = 0 THEN COALESCE(leave_duration, 1) ELSE 0 END) as rejected_full_days
+        ')
             ->groupBy('leave_type')
             ->get();
 

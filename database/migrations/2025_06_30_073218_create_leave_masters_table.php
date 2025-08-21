@@ -20,10 +20,11 @@ return new class extends Migration {
             $table->date('leave_from')->nullable();
             $table->date('leave_to')->nullable();
             $table->string('period')->nullable();
-
             $table->text('reason')->nullable();
             $table->integer('count')->nullable()->default(1);
             $table->enum('status', ['Pending', 'Approved', 'HR_Approved', 'Rejected'])->default('Pending');
+            $table->boolean('is_half_day')->default(false);
+            $table->decimal('leave_duration', 5, 2)->default(1.00);
 
             $table->softDeletes();
             $table->timestamps();
