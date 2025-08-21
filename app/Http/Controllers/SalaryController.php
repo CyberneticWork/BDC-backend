@@ -197,29 +197,82 @@ class SalaryController extends Controller
             // Update the salary record
             $salaryRecord->update($updatedData);
             
-            // Track changes for audit log
+            // Track changes for audit log - only fields directly edited by the user
             $changes = [];
-            foreach ($updatedData as $key => $newValue) {
-                // Skip arrays/objects for simpler comparison
-                if (is_array($newValue) || is_object($newValue)) {
+
+
+            // Check for basic user inputs that may have changed
+            $trackableFields = [
+                'basic_salary', 'increment_active', 'increment_value', 'increment_effected_date',
+                'ot_morning', 'ot_evening', 'enable_epf_etf', 'br1', 'br2', 'stamp',
+                'total_loan_amount', 'installment_count', 'installment_amount',
+                'approved_no_pay_days', 'status', 'month', 'year'
+            ];
+
+            foreach ($trackableFields as $field) {
+                // Skip if field isn't in the request
+                if (!$request->has($field)) {
                     continue;
                 }
                 
-                // Check if the field existed in original data and has changed
-                if (isset($originalData[$key]) && $originalData[$key] != $newValue) {
-                    $changes[$key] = [
-                        'from' => $originalData[$key],
-                        'to' => $newValue
+                // Convert value to comparable format (booleans need special handling)
+                $requestValue = $request->input($field);
+                if (in_array($field, ['increment_active', 'enable_epf_etf', 'br1', 'br2', 'stamp'])) {
+                    $requestValue = (bool)$requestValue;
+                    $originalValue = (bool)($originalData[$field] ?? false);
+                } else {
+                    $originalValue = $originalData[$field] ?? null;
+                    
+                    // Handle numeric conversions for proper comparison
+                    if (is_numeric($requestValue) && is_numeric($originalValue)) {
+                        $requestValue = (string)$requestValue; // Convert to string to avoid float precision issues
+                        $originalValue = (string)$originalValue;
+                    }
+                }
+                
+                // Only track if value actually changed
+                if ($originalValue != $requestValue) {
+                    $changes[$field] = [
+                        'from' => $originalValue,
+                        'to' => $requestValue
                     ];
                 }
             }
-            
-            // For salary_breakdown, just note that it changed rather than storing the whole object
-            if (json_encode($originalData['salary_breakdown'] ?? null) !== json_encode($updatedSalaryBreakdown)) {
-                $changes['salary_breakdown'] = [
-                    'changed' => true,
-                    'from_net_salary' => $originalData['salary_breakdown']['net_salary'] ?? 0,
-                    'to_net_salary' => $updatedSalaryBreakdown['net_salary']
+
+            // Track allowances changes if present
+            if ($request->has('allowances')) {
+                // Simple change indicator for allowances to avoid deep comparison
+                $origAllowancesJson = json_encode($originalData['allowances'] ?? []);
+                $newAllowancesJson = json_encode($allowances);
+                
+                if ($origAllowancesJson !== $newAllowancesJson) {
+                    $changes['allowances'] = [
+                        'changed' => true,
+                        'summary' => 'Allowances were modified'
+                    ];
+                }
+            }
+
+            // Track deductions changes if present
+            if ($request->has('deductions')) {
+                // Simple change indicator for deductions to avoid deep comparison
+                $origDeductionsJson = json_encode($originalData['deductions'] ?? []);
+                $newDeductionsJson = json_encode($deductions);
+                
+                if ($origDeductionsJson !== $newDeductionsJson) {
+                    $changes['deductions'] = [
+                        'changed' => true,
+                        'summary' => 'Deductions were modified'
+                    ];
+                }
+            }
+
+            // Include net salary change for easy reference, but only if tracked fields changed
+            if (!empty($changes) && 
+                (isset($originalData['salary_breakdown']['net_salary']) || isset($updatedSalaryBreakdown['net_salary']))) {
+                $changes['net_salary'] = [
+                    'from' => $originalData['salary_breakdown']['net_salary'] ?? 0,
+                    'to' => $updatedSalaryBreakdown['net_salary']
                 ];
             }
             
