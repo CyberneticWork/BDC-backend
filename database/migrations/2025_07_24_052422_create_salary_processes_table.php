@@ -17,7 +17,7 @@ return new class extends Migration {
             $table->string('employee_no');
             $table->string('full_name');
             $table->string('company_name');
-            $table->string('department_name');
+            $table->string('department_name')->nullable();
             $table->string('sub_department_name')->nullable();
             $table->decimal('basic_salary', 12, 2);
             $table->boolean('increment_active')->default(false);
