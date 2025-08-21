@@ -102,7 +102,7 @@ class LeaveMasterController extends Controller
 
         $leaveMaster = leave_master::with('employee.contactDetail')->findOrFail($id);
         $oldStatus = $leaveMaster->status;
-        
+
         $leaveMaster->update([
             'status' => $request->status,
             'rejection_reason' => $request->rejection_reason
@@ -141,7 +141,7 @@ class LeaveMasterController extends Controller
             } elseif ($status === 'Rejected') {
                 Mail::to($employee->contactDetail->email)->send(new LeaveRejectedMail($leave, $employee, $rejectionReason));
             }
-            
+
             Log::info('Leave status email sent successfully', [
                 'employee_id' => $employee->id,
                 'leave_id' => $leave->id,

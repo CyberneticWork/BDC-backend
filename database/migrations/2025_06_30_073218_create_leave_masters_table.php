@@ -22,6 +22,7 @@ return new class extends Migration {
             $table->string('period')->nullable();
 
             $table->text('reason')->nullable();
+            $table->integer('count')->nullable()->default(1);
             $table->enum('status', ['Pending', 'Approved', 'HR_Approved', 'Rejected'])->default('Pending');
 
             $table->softDeletes();
