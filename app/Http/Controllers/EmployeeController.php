@@ -108,10 +108,6 @@ class EmployeeController extends Controller
      */
     public function store(Request $request)
     {
-        // return response()->json([
-        //     'data' => $request->all(),
-        // ], 410);
-
         $validator = Validator::make($request->all(), [
             'profile_picture' => 'nullable|image|max:2048',
             'personal' => 'required|json',
@@ -257,6 +253,55 @@ class EmployeeController extends Controller
                 'dayOff' => 'nullable|string'
             ]);
 
+            // Add custom validation for NIC uniqueness
+            $employeeNic = strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $personal['nicNumber']));
+            $spouseNic = strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $personal['spouseNic']));
+
+            if ($employeeNic === $spouseNic) {
+                $validator->errors()->add("personal.spouseNic", "Spouse NIC cannot be the same as employee NIC.");
+            }
+
+            // Validate Employee DOB vs Age
+            // if (isset($personal['dob'])) {
+            //     $employeeDob = Carbon::parse($personal['dob']);
+            //     $employeeAge = $employeeDob->diffInYears(Carbon::now());
+
+            // You can add age validation here if you have an employee age field
+            // For example, if you had an 'age' field in personal data:
+            // if (isset($personal['age']) && $personal['age'] != $employeeAge) {
+            //     $validator->errors()->add("personal.age", "Entered Age does not match Date of Birth.");
+            // }
+            // }
+
+            // Validate Spouse DOB vs Age
+            if (isset($personal['spouseDob']) && isset($personal['spouseAge'])) {
+                $spouseDob = Carbon::parse($personal['spouseDob']);
+                $calculatedSpouseAge = $spouseDob->diffInYears(Carbon::now());
+
+                $calculatedSpouseAge = (int) floor($calculatedSpouseAge);
+
+                if ($personal['spouseAge'] != $calculatedSpouseAge) {
+                    $validator->errors()->add("personal.spouseAge", "Entered Spouse Age does not match Date of Birth.");
+                }
+            }
+
+            /// Validate Children DOB vs Age for each child
+            if (isset($personal['children']) && is_array($personal['children'])) {
+                foreach ($personal['children'] as $index => $child) {
+                    if (!empty($child['name']) && isset($child['dob']) && isset($child['age'])) {
+                        $childDob = Carbon::parse($child['dob']);
+                        $calculatedChildAge = $childDob->diffInYears(Carbon::now());
+
+                        // Use floor() to get the completed years
+                        $calculatedChildAge = (int) floor($calculatedChildAge);
+
+                        if ($child['age'] != $calculatedChildAge) {
+                            $validator->errors()->add("personal.children.$index.age", "Entered Age for child '{$child['name']}' does not match Date of Birth.");
+                        }
+                    }
+                }
+            }
+
             // Add errors to main validator
             foreach ($personalValidator->errors()->toArray() as $key => $messages) {
                 foreach ($messages as $message) {
@@ -282,8 +327,6 @@ class EmployeeController extends Controller
                 }
             }
         });
-
-
 
         if ($validator->fails()) {
             return response()->json([
