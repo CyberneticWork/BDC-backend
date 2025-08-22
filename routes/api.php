@@ -67,8 +67,8 @@ Route::post('/salary/process/mark-issued', [SalaryProcessController::class, 'mar
 Route::post('/salary/process/fetchExcelData', [SalaryProcessController::class, 'fetchExcelData']);
 Route::post('/salary/process/importExcelData', [SalaryProcessController::class, 'importExcelData']);
 Route::get('/salary/update/status', [SalaryProcessController::class, 'updateSlaryStatus']);
-Route::get('/salary/process/csv', [SalaryController::class, 'salaryCSV']);
-Route::apiResource('salary', SalaryController::class);
+// Route::apiResource('salary', SalaryController::class);
+// Route::get('salary/{id}/audit', [SalaryController::class, 'getAuditLogs']);
 
 
 Route::get('/Leave-Master/{employeeId}/counts', [LeaveMasterController::class, 'getLeaveRecordCountsByEmployee']);
@@ -144,3 +144,9 @@ Route::post('/deductions/import', [DeductionController::class, 'import']);
 Route::get('/loans/employee-by-number/{number}', [LoanController::class, 'getEmployeeByNumber']);
 
 Route::get('/test/{id}', [ResignationController::class, 'testFunction']);
+
+Route::middleware('auth:sanctum')->group(function () {
+    Route::apiResource('salary', SalaryController::class);
+    Route::get('salary/{id}/audit', [SalaryController::class, 'getAuditLogs']);
+    Route::get('/salary/process/csv', [SalaryController::class, 'salaryCSV']);
+});

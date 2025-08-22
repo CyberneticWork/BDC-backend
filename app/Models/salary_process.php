@@ -41,8 +41,9 @@ class salary_process extends Model
 
     protected $casts = [
         'increment_active' => 'boolean',
-        'ot_morning' => 'boolean',
-        'ot_evening' => 'boolean',
+        // OT values are decimals
+        'ot_morning' => 'decimal:2',
+        'ot_evening' => 'decimal:2',
         'enable_epf_etf' => 'boolean',
         'br1' => 'boolean',
         'br2' => 'boolean',
