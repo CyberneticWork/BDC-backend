@@ -10,22 +10,43 @@ use Illuminate\Support\Facades\Validator;
 class RosterController extends Controller
 {
     // Controller methods for managing rosters will go here
-    // For example, methods to create, update, delete, and view rosters
 
     public function index()
     {
-        // Logic to list all rosters
-        $rosters = roster::all(); // Assuming you have a Roster model
-        return response()->json($rosters);
+        // Eager load to avoid N+1
+        $rosters = roster::with(['company', 'department', 'subDepartment', 'employee'])->get();
+
+        $data = $rosters->map(function ($r) {
+            return [
+                'id' => $r->id,
+                'roster_id' => $r->roster_id,
+                'shift_code' => $r->shift_code,
+                'company_id' => $r->company_id,
+                'company_name' => $r->company?->name,
+                'department_id' => $r->department_id,
+                'department_name' => $r->department?->name,
+                'sub_department_id' => $r->sub_department_id,
+                'sub_department_name' => $r->subDepartment?->name,
+                'employee_id' => $r->employee_id,
+                'employee_name' => $r->employee?->full_name
+                    ?? $r->employee?->name_with_initials
+                    ?? null,
+                'date_from' => $r->date_from,
+                'date_to' => $r->date_to,
+            ];
+        });
+
+        return response()->json($data, 200);
     }
 
     public function show($id)
     {
         $roster = roster::find($id);
-        if (!$roster) {
+        if (! $roster) {
             return response()->json(['message' => 'Roster not found'], 404);
         }
-        return response()->json($roster);
+
+        return response()->json($roster, 200);
     }
 
     public function store(Request $request)
@@ -35,7 +56,7 @@ class RosterController extends Controller
             return $this->storeBulk($request);
         }
 
-        // Original single entry logic
+        // Single entry validation
         $validator = Validator::make($request->all(), [
             'roster_id' => 'required|integer',
             'shift_code' => 'required|exists:shifts,id',
@@ -56,16 +77,16 @@ class RosterController extends Controller
 
         $data = $validator->validated();
 
-        // If roster_id not provided, generate one
-        if (!isset($data['roster_id'])) {
+        if (! isset($data['roster_id'])) {
             $data['roster_id'] = roster::max('roster_id') + 1;
         }
 
         $roster = roster::create($data);
+
         return response()->json($roster, 201);
     }
 
-    protected function isJsonArray($request)
+    protected function isJsonArray(Request $request)
     {
         $content = $request->getContent();
         if (empty($content)) {
@@ -80,11 +101,10 @@ class RosterController extends Controller
     {
         $entries = json_decode($request->getContent(), true);
 
-        if (!is_array($entries)) {
+        if (! is_array($entries)) {
             return response()->json(['error' => 'Invalid bulk data format. Expected JSON array.'], 400);
         }
 
-        // Validate all entries
         $validatedEntries = [];
         $errors = [];
         $rosterId = null;
@@ -111,7 +131,6 @@ class RosterController extends Controller
 
             $validated = $validator->validated();
 
-            // Ensure all entries have the same roster_id
             if ($rosterId === null) {
                 $rosterId = $validated['roster_id'];
             } elseif ($validated['roster_id'] !== $rosterId) {
@@ -122,11 +141,10 @@ class RosterController extends Controller
             $validatedEntries[] = $validated;
         }
 
-        if (!empty($errors)) {
+        if (! empty($errors)) {
             return response()->json(['errors' => $errors], 422);
         }
 
-        // Insert all valid entries in a transaction
         DB::beginTransaction();
         try {
             roster::insert($validatedEntries);
@@ -135,22 +153,21 @@ class RosterController extends Controller
             return response()->json([
                 'message' => 'Bulk roster entries created successfully',
                 'roster_id' => $rosterId,
-                'count' => count($validatedEntries)
+                'count' => count($validatedEntries),
             ], 201);
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json([
                 'error' => 'Failed to create bulk roster entries',
-                'message' => $e->getMessage()
+                'message' => $e->getMessage(),
             ], 500);
         }
     }
 
     public function update(Request $request, $id)
     {
-        // Logic to update an existing roster
         $roster = roster::find($id);
-        if (!$roster) {
+        if (! $roster) {
             return response()->json(['message' => 'Roster not found'], 404);
         }
 
@@ -166,24 +183,26 @@ class RosterController extends Controller
             'date_from' => 'nullable|date',
             'date_to' => 'nullable|date',
         ]);
+
         if ($validator->fails()) {
             return response()->json(['errors' => $validator->errors()], 422);
         }
 
         $roster->update($validator->validated());
-        return response()->json($roster);
+
+        return response()->json($roster, 200);
     }
 
     public function destroy($id)
     {
-        // Logic to delete a roster
         $roster = roster::find($id);
-        if (!$roster) {
+        if (! $roster) {
             return response()->json(['message' => 'Roster not found'], 404);
         }
 
         $roster->delete();
-        return response()->json(['message' => 'Roster deleted successfully']);
+
+        return response()->json(['message' => 'Roster deleted successfully'], 200);
     }
 
     public function search(Request $request)
@@ -203,7 +222,6 @@ class RosterController extends Controller
 
         $query = roster::with(['company', 'department', 'subDepartment', 'employee']);
 
-        // Apply date filters if provided
         if ($request->filled('date_from') || $request->filled('date_to')) {
             $query->where(function ($q) use ($request) {
                 $dateFrom = $request->date_from;
@@ -216,13 +234,12 @@ class RosterController extends Controller
                             $query->where('date_from', '<=', $dateFrom)
                                 ->where('date_to', '>=', $dateTo);
                         });
-                } else if ($dateFrom) {
+                } elseif ($dateFrom) {
                     $q->where('date_from', '>=', $dateFrom);
                 }
             });
         }
 
-        // Apply organization filters if provided
         if ($request->filled('company_id')) {
             $query->where('company_id', $request->company_id);
         }
@@ -235,7 +252,6 @@ class RosterController extends Controller
             $query->where('sub_department_id', $request->sub_department_id);
         }
 
-        // Apply employee filter if provided
         if ($request->filled('employee_id')) {
             $query->where('employee_id', $request->employee_id);
         }
@@ -251,43 +267,42 @@ class RosterController extends Controller
                         'recurrence_pattern' => $roster->recurrence_pattern,
                         'notes' => $roster->notes,
                         'date_from' => $roster->date_from,
-                        'date_to' => $roster->date_to
+                        'date_to' => $roster->date_to,
                     ],
                     'organization_details' => [
                         'company' => $roster->company ? [
                             'id' => $roster->company->id,
-                            'name' => $roster->company->name
+                            'name' => $roster->company->name,
                         ] : null,
                         'department' => $roster->department ? [
                             'id' => $roster->department->id,
-                            'name' => $roster->department->name
+                            'name' => $roster->department->name,
                         ] : null,
                         'sub_department' => $roster->subDepartment ? [
                             'id' => $roster->subDepartment->id,
-                            'name' => $roster->subDepartment->name
-                        ] : null
+                            'name' => $roster->subDepartment->name,
+                        ] : null,
                     ],
                     'employee_details' => $roster->employee ? [
                         'id' => $roster->employee->id,
-                        'name' => $roster->employee->name_with_initials,
-                        'full_name' => $roster->employee->full_name,
-                        'epf' => $roster->employee->epf,
-                        'attendance_no' => $roster->employee->attendance_employee_no
-                    ] : null
+                        'name' => $roster->employee->name_with_initials ?? null,
+                        'full_name' => $roster->employee->full_name ?? null,
+                        'epf' => $roster->employee->epf ?? null,
+                        'attendance_no' => $roster->employee->attendance_employee_no ?? null,
+                    ] : null,
                 ];
             });
 
             return response()->json([
                 'status' => 'success',
                 'count' => $rosters->count(),
-                'data' => $rosters
-            ]);
-
+                'data' => $rosters,
+            ], 200);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Error retrieving roster data',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
