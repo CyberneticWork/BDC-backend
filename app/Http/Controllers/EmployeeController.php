@@ -555,371 +555,395 @@ class EmployeeController extends Controller
      * Update the specified resource in storage.
      */
     public function update(Request $request)
-    {
-        $validator = Validator::make($request->all(), [
-            'profile_picture' => 'nullable|image|max:2048',
-            'personal' => 'required|json',
-            'address' => 'required|json',
-            'compensation' => 'required|json',
-            'organization' => 'required|json',
-            'documents.*' => 'nullable|file|max:5120'
+{
+    $validator = Validator::make($request->all(), [
+        'profile_picture' => 'nullable|image|max:2048',
+        'personal' => 'required|json',
+        'address' => 'required|json',
+        'compensation' => 'required|json',
+        'organization' => 'required|json',
+        'documents.*' => 'nullable|file|max:5120'
+    ]);
+
+    // Decode JSON data
+    $personal = json_decode($request->input('personal'), true);
+    $address = json_decode($request->input('address'), true);
+    $compensation = json_decode($request->input('compensation'), true);
+    $organization = json_decode($request->input('organization'), true);
+
+    // Find the existing employee
+    $employee = Employee::findOrFail($personal['id']);
+
+    // Validate the decoded arrays
+    $validator->after(function ($validator) use ($personal, $address, $compensation, $organization, $employee) {
+        // Validate personal data
+        $personalValidator = Validator::make($personal, [
+            'title' => 'required|string|max:10',
+            'attendanceEmpNo' => 'required|string|max:50|unique:employees,attendance_employee_no,' . $employee->id,
+            'epfNo' => 'required|string|max:50|unique:employees,epf,' . $employee->id,
+            'nicNumber' => [
+                'required',
+                'string',
+                'max:13',
+                function ($attribute, $value, $fail) {
+                    $nic = strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $value));
+                    if (!(preg_match('/^[0-9]{9}[VX]$/', $nic) || preg_match('/^[0-9]{12}$/', $nic))) {
+                        $fail('The ' . $attribute . ' is not a valid Sri Lankan NIC number.');
+                    }
+                    if (strlen($nic) === 12) {
+                        $year = substr($nic, 0, 4);
+                        if ($year < 1900 || $year > date('Y')) {
+                            $fail('The ' . $attribute . ' has an invalid year.');
+                        }
+                    }
+                },
+            ],
+            'dob' => 'required|date',
+            'gender' => 'required|in:Male,Female,Other',
+            'religion' => 'nullable|string|max:50',
+            'countryOfBirth' => 'nullable|string|max:100',
+            'employmentStatus' => 'required',
+            'nameWithInitial' => 'required|string|max:100',
+            'fullName' => 'required|string|max:100',
+            'displayName' => 'required|string|max:100',
+            'maritalStatus' => 'required|in:Single,Married,Divorced,Widowed',
+            'relationshipType' => 'required|string|max:20',
+            'spouseTitle' => 'required|string|max:20',
+            'spouseName' => 'required|string|max:100',
+            'spouseAge' => 'required|numeric|min:18|max:100',
+            'spouseDob' => 'required|date',
+            'spouseNic' => [
+                'required',
+                'string',
+                'max:13',
+                function ($attribute, $value, $fail) {
+                    $nic = strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $value));
+                    if (!(preg_match('/^[0-9]{9}[VX]$/', $nic) || preg_match('/^[0-9]{12}$/', $nic))) {
+                        $fail('The ' . $attribute . ' is not a valid Sri Lankan NIC number.');
+                    }
+                    if (strlen($nic) === 12) {
+                        $year = substr($nic, 0, 4);
+                        if ($year < 1900 || $year > date('Y')) {
+                            $fail('The ' . $attribute . ' has an invalid year.');
+                        }
+                    }
+                },
+            ],
+            'children' => 'nullable|array',
+            'children.*.name' => 'nullable|string|max:100',
+            'children.*.age' => 'required_if:children.*.name,!=,null|nullable|integer|min:0|max:100',
+            'children.*.dob' => 'required_if:children.*.name,!=,null|nullable|date',
+            'children.*.nic' => 'nullable|string|max:20',
         ]);
 
-        // Decode JSON data
-        $personal = json_decode($request->input('personal'), true);
-        $address = json_decode($request->input('address'), true);
-        $compensation = json_decode($request->input('compensation'), true);
-        $organization = json_decode($request->input('organization'), true);
+        // Validate address data
+        $addressValidator = Validator::make($address, [
+            'permanentAddress' => 'required|string|max:255',
+            'temporaryAddress' => 'nullable|string|max:255',
+            'email' => 'required|email',
+            'landLine' => 'nullable|string|max:20',
+            'mobileLine' => 'required|string|max:20',
+            'gnDivision' => 'nullable|string|max:100',
+            'policeStation' => 'nullable|string|max:100',
+            'district' => 'required|string|max:100',
+            'province' => 'required|string|max:100',
+            'electoralDivision' => 'nullable|string|max:100',
+            'emergencyContact.relationship' => 'required|string|max:50',
+            'emergencyContact.contactName' => 'required|string|max:100',
+            'emergencyContact.contactAddress' => 'required|string|max:255',
+            'emergencyContact.contactTel' => 'required|string|max:20',
+        ]);
 
-        // Find the existing employee
-        $employee = Employee::findOrFail($personal['id']);
+        $compensationValidator = Validator::make($compensation, [
+            'basicSalary' => 'required|numeric',
+            'incrementValue' => 'nullable|numeric',
+            'incrementEffectiveFrom' => 'nullable|date',
+            'bankName' => 'required|string|max:100',
+            'branchName' => 'required|string|max:100',
+            'bankCode' => 'required|string|max:50',
+            'branchCode' => 'required|string|max:50',
+            'bankAccountNo' => 'required|string|max:50',
+            'comments' => 'nullable|string|max:255',
+            'secondaryEmp' => 'required|boolean',
+            'primaryEmploymentBasic' => 'required|boolean',
+            'enableEpfEtf' => 'required|boolean',
+            'otActive' => 'required|boolean',
+            'earlyDeduction' => 'required|boolean',
+            'incrementActive' => 'required|boolean',
+            'nopayActive' => 'required|boolean',
+            'morningOt' => 'required|boolean',
+            'eveningOt' => 'required|boolean',
+            'ot_morning_rate' => 'nullable|numeric',
+            'ot_night_rate' => 'nullable|numeric',
+            'budgetaryReliefAllowance2015' => 'required|boolean',
+            'budgetaryReliefAllowance2016' => 'required|boolean',
+            'stamp' => 'required|boolean',
+        ]);
 
-        // Validate the decoded arrays
-        $validator->after(function ($validator) use ($personal, $address, $compensation, $organization, $employee) {
-            // Validate personal data
-            $personalValidator = Validator::make($personal, [
-                'title' => 'required|string|max:10',
-                'attendanceEmpNo' => 'required|string|max:50|unique:employees,attendance_employee_no,' . $employee->id,
-                'epfNo' => 'required|string|max:50|unique:employees,epf,' . $employee->id,
-                'nicNumber' => [
-                    'required',
-                    'string',
-                    'max:13',
-                    function ($attribute, $value, $fail) {
-                        $nic = strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $value));
-                        if (!(preg_match('/^[0-9]{9}[VX]$/', $nic) || preg_match('/^[0-9]{12}$/', $nic))) {
-                            $fail('The ' . $attribute . ' is not a valid Sri Lankan NIC number.');
-                        }
-                        if (strlen($nic) === 12) {
-                            $year = substr($nic, 0, 4);
-                            if ($year < 1900 || $year > date('Y')) {
-                                $fail('The ' . $attribute . ' has an invalid year.');
-                            }
-                        }
-                    },
-                ],
-                'dob' => 'required|date',
-                'gender' => 'required|in:Male,Female,Other',
-                'religion' => 'nullable|string|max:50',
-                'countryOfBirth' => 'nullable|string|max:100',
-                'employmentStatus' => 'required',
-                'nameWithInitial' => 'required|string|max:100',
-                'fullName' => 'required|string|max:100',
-                'displayName' => 'required|string|max:100',
-                'maritalStatus' => 'required|in:Single,Married,Divorced,Widowed',
-                'relationshipType' => 'required|string|max:20',
-                'spouseTitle' => 'required|string|max:20',
-                'spouseName' => 'required|string|max:100',
-                'spouseAge' => 'required|numeric|min:18|max:100',
-                'spouseDob' => 'required|date',
-                'spouseNic' => [
-                    'required',
-                    'string',
-                    'max:13',
-                    function ($attribute, $value, $fail) {
-                        $nic = strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $value));
-                        if (!(preg_match('/^[0-9]{9}[VX]$/', $nic) || preg_match('/^[0-9]{12}$/', $nic))) {
-                            $fail('The ' . $attribute . ' is not a valid Sri Lankan NIC number.');
-                        }
-                        if (strlen($nic) === 12) {
-                            $year = substr($nic, 0, 4);
-                            if ($year < 1900 || $year > date('Y')) {
-                                $fail('The ' . $attribute . ' has an invalid year.');
-                            }
-                        }
-                    },
-                ],
-                'children' => 'nullable|array',
-                'children.*.name' => 'nullable|string|max:100',
-                'children.*.age' => 'required_if:children.*.name,!=,null|nullable|integer|min:0|max:100',
-                'children.*.dob' => 'required_if:children.*.name,!=,null|nullable|date',
-                'children.*.nic' => 'nullable|string|max:20',
-            ]);
+        $organizationValidator = Validator::make($organization, [
+            'company' => 'required|string',
+            'department' => 'nullable|string',
+            'subDepartment' => 'nullable|string',
+            'currentSupervisor' => 'nullable|string|max:100',
+            'dateOfJoined' => 'required|date',
+            'designation' => 'required|string|max:100',
+            'probationPeriod' => 'required|boolean',
+            'trainingPeriod' => 'required|boolean',
+            'contractPeriod' => 'required|boolean',
+            'probationFrom' => 'nullable|date',
+            'probationTo' => 'nullable|date',
+            'trainingFrom' => 'nullable|date',
+            'trainingTo' => 'nullable|date',
+            'contractFrom' => 'nullable|date',
+            'contractTo' => 'nullable|date|after_or_equal:contractFrom',
+            'confirmationDate' => 'nullable|date',
+            'resignationDate' => 'nullable|date',
+            'resignationLetter' => 'nullable',
+            'resignationApproved' => 'required|boolean',
+            'currentStatus' => 'required|boolean',
+            'dayOff' => 'nullable|string'
+        ]);
 
-            // Validate address data
-            $addressValidator = Validator::make($address, [
-                'permanentAddress' => 'required|string|max:255',
-                'temporaryAddress' => 'nullable|string|max:255',
-                'email' => 'required|email',
-                'landLine' => 'nullable|string|max:20',
-                'mobileLine' => 'required|string|max:20',
-                'gnDivision' => 'nullable|string|max:100',
-                'policeStation' => 'nullable|string|max:100',
-                'district' => 'required|string|max:100',
-                'province' => 'required|string|max:100',
-                'electoralDivision' => 'nullable|string|max:100',
-                'emergencyContact.relationship' => 'required|string|max:50',
-                'emergencyContact.contactName' => 'required|string|max:100',
-                'emergencyContact.contactAddress' => 'required|string|max:255',
-                'emergencyContact.contactTel' => 'required|string|max:20',
-            ]);
+        // Add custom validation for NIC uniqueness
+        $employeeNic = strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $personal['nicNumber']));
+        $spouseNic = strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $personal['spouseNic']));
 
-            $compensationValidator = Validator::make($compensation, [
-                'basicSalary' => 'required|numeric',
-                'incrementValue' => 'nullable|numeric',
-                'incrementEffectiveFrom' => 'nullable|date',
-                'bankName' => 'required|string|max:100',
-                'branchName' => 'required|string|max:100',
-                'bankCode' => 'required|string|max:50',
-                'branchCode' => 'required|string|max:50',
-                'bankAccountNo' => 'required|string|max:50',
-                'comments' => 'nullable|string|max:255',
-                'secondaryEmp' => 'required|boolean',
-                'primaryEmploymentBasic' => 'required|boolean',
-                'enableEpfEtf' => 'required|boolean',
-                'otActive' => 'required|boolean',
-                'earlyDeduction' => 'required|boolean',
-                'incrementActive' => 'required|boolean',
-                'nopayActive' => 'required|boolean',
-                'morningOt' => 'required|boolean',
-                'eveningOt' => 'required|boolean',
-                'ot_morning_rate' => 'nullable|numeric',
-                'ot_night_rate' => 'nullable|numeric',
-                'budgetaryReliefAllowance2015' => 'required|boolean',
-                'budgetaryReliefAllowance2016' => 'required|boolean',
-                'stamp' => 'required|boolean',
-            ]);
-
-            $organizationValidator = Validator::make($organization, [
-                'company' => 'required|string',
-                'department' => 'nullable|string',
-                'subDepartment' => 'nullable|string',
-                'currentSupervisor' => 'nullable|string|max:100',
-                'dateOfJoined' => 'required|date',
-                'designation' => 'required|string|max:100',
-                'probationPeriod' => 'required|boolean',
-                'trainingPeriod' => 'required|boolean',
-                'contractPeriod' => 'required|boolean',
-                'probationFrom' => 'nullable|date',
-                'probationTo' => 'nullable|date',
-                'trainingFrom' => 'nullable|date',
-                'trainingTo' => 'nullable|date',
-                'contractFrom' => 'nullable|date',
-                'contractTo' => 'nullable|date|after_or_equal:contractFrom',
-                'confirmationDate' => 'nullable|date',
-                'resignationDate' => 'nullable|date',
-                'resignationLetter' => 'nullable',
-                'resignationApproved' => 'required|boolean',
-                'currentStatus' => 'required|boolean',
-                'dayOff' => 'nullable|string'
-            ]);
-
-            // Add errors to main validator
-            foreach ($personalValidator->errors()->toArray() as $key => $messages) {
-                foreach ($messages as $message) {
-                    $validator->errors()->add("personal.$key", $message);
-                }
-            }
-
-            foreach ($addressValidator->errors()->toArray() as $key => $messages) {
-                foreach ($messages as $message) {
-                    $validator->errors()->add("address.$key", $message);
-                }
-            }
-
-            foreach ($compensationValidator->errors()->toArray() as $key => $messages) {
-                foreach ($messages as $message) {
-                    $validator->errors()->add("compensation.$key", $message);
-                }
-            }
-
-            foreach ($organizationValidator->errors()->toArray() as $key => $messages) {
-                foreach ($messages as $message) {
-                    $validator->errors()->add("organization.$key", $message);
-                }
-            }
-        });
-
-        if ($validator->fails()) {
-            return response()->json([
-                'message' => 'Validation failed',
-                'errors' => $validator->errors()
-            ], 422);
+        if ($employeeNic === $spouseNic) {
+            $validator->errors()->add("personal.spouseNic", "Spouse NIC cannot be the same as employee NIC.");
         }
 
-        DB::beginTransaction();
+        // Validate Spouse DOB vs Age
+        if (isset($personal['spouseDob']) && isset($personal['spouseAge'])) {
+            $spouseDob = Carbon::parse($personal['spouseDob']);
+            $calculatedSpouseAge = $spouseDob->diffInYears(Carbon::now());
+            $calculatedSpouseAge = (int) floor($calculatedSpouseAge);
 
-        try {
-            $profilePicturePath = $employee->profile_photo_path;
-            if ($request->hasFile('profile_picture')) {
-                // Delete old profile picture if exists
-                if ($profilePicturePath && Storage::disk('public')->exists($profilePicturePath)) {
-                    Storage::disk('public')->delete($profilePicturePath);
-                }
-
-                $profilePicturePath = $request->file('profile_picture')->store('employee/profile_pictures', 'public');
-                $personal['profile_picture_path'] = $profilePicturePath;
+            if ($personal['spouseAge'] != $calculatedSpouseAge) {
+                $validator->errors()->add("personal.spouseAge", "Entered Spouse Age does not match Date of Birth.");
             }
+        }
 
-            // Update spouse record
-            $employee->spouse()->update([
-                'type' => $personal['relationshipType'],
-                'title' => $personal['spouseTitle'],
-                'name' => $personal['spouseName'],
-                'nic' => $personal['spouseNic'],
-                'age' => $personal['spouseAge'],
-                'dob' => $personal['spouseDob'],
-            ]);
+        /// Validate Children DOB vs Age for each child
+        if (isset($personal['children']) && is_array($personal['children'])) {
+            foreach ($personal['children'] as $index => $child) {
+                if (!empty($child['name']) && isset($child['dob']) && isset($child['age'])) {
+                    $childDob = Carbon::parse($child['dob']);
+                    $calculatedChildAge = $childDob->diffInYears(Carbon::now());
+                    $calculatedChildAge = (int) floor($calculatedChildAge);
 
-            // Update organization assignment
-            $employee->organizationAssignment()->update([
-                'company_id' => $organization['company'],
-                'department_id' => !empty($organization['department']) ? $organization['department'] : null,
-                'sub_department_id' => !empty($organization['subDepartment']) ? $organization['subDepartment'] : null,
-                'designation_id' => $organization['designation'],
-                'current_supervisor' => $organization['currentSupervisor'] ?? null,
-                'date_of_joining' => $organization['dateOfJoined'],
-                'day_off' => $organization['dayOff'],
-                'confirmation_date' => empty($organization['confirmationDate']) ? null : $organization['confirmationDate'],
-                'probationary_period' => $organization['probationPeriod'],
-                'training_period' => $organization['trainingPeriod'],
-                'contract_period' => $organization['contractPeriod'],
-                'probationary_period_from' => empty($organization['probationFrom']) ? null : $organization['probationFrom'],
-                'probationary_period_to' => empty($organization['probationTo']) ? null : $organization['probationTo'],
-                'training_period_from' => empty($organization['trainingFrom']) ? null : $organization['trainingFrom'],
-                'training_period_to' => empty($organization['trainingTo']) ? null : $organization['trainingTo'],
-                'contract_period_from' => empty($organization['contractFrom']) ? null : $organization['contractFrom'],
-                'contract_period_to' => empty($organization['contractTo']) ? null : $organization['contractTo'],
-                'date_of_resigning' => empty($organization['confirmationDate']) ? null : $organization['confirmationDate'],
-                'is_active' => $organization['currentStatus'],
-            ]);
-
-            // Update employee record
-            $employee->update([
-                'title' => $personal['title'],
-                'attendance_employee_no' => $personal['attendanceEmpNo'],
-                'epf' => $personal['epfNo'],
-                'nic' => $personal['nicNumber'],
-                'dob' => $personal['dob'],
-                'gender' => strtolower($personal['gender']),
-                'religion' => $personal['religion'] ?? null,
-                'country_of_birth' => $personal['countryOfBirth'] ?? null,
-                'name_with_initials' => $personal['nameWithInitial'],
-                'full_name' => $personal['fullName'],
-                'display_name' => $personal['displayName'],
-                'marital_status' => strtolower($personal['maritalStatus']),
-                'is_active' => true,
-                'employment_type_id' => $personal['employmentStatus'],
-                'profile_photo_path' => $profilePicturePath,
-            ]);
-
-            // Handle children records
-            if (isset($personal['children']) && is_array($personal['children'])) {
-                foreach ($personal['children'] as $child) {
-                    if (empty($child['name'])) {
-                        continue;
+                    if ($child['age'] != $calculatedChildAge) {
+                        $validator->errors()->add("personal.children.$index.age", "Entered Age for child '{$child['name']}' does not match Date of Birth.");
                     }
-
-                    if (!empty($child['nic'])) {
-                        $existingChild = children::where('nic', $child['nic'])->first();
-
-                        if ($existingChild) {
-                            $existingChild->update([
-                                'employee_id' => $employee->id,
-                                'name' => $child['name'],
-                                'age' => (int) $child['age'],
-                                'dob' => $child['dob']
-                            ]);
-                            continue;
-                        }
-                    }
-
-                    children::create([
-                        'employee_id' => $employee->id,
-                        'name' => $child['name'],
-                        'age' => (int) $child['age'],
-                        'dob' => $child['dob'],
-                        'nic' => empty($child['nic'] ?? null) ? null : $child['nic'],
-                    ]);
                 }
             }
+        }
 
-            // Handle document uploads if any
-            if ($request->hasFile('documents')) {
-                // Get the documents metadata from the request
-                $documentsMeta = $request->input('documents');
-
-                foreach ($request->file('documents') as $index => $document) {
-                    $path = $document->store('employee/documents', 'public');
-
-                    // Extract the document type (e.g., "nid") from the metadata
-                    $documentType = $documentsMeta[$index]['type'] ?? 'unknown'; // Fallback to 'unknown' if not provided
-
-                    documents::create([
-                        'employee_id' => $employee->id,
-                        'document_type' => $documentType,
-                        'document_path' => $path,
-                        'document_name' => $document->getClientOriginalName(),
-                    ]);
-                }
+        // Add errors to main validator
+        foreach ($personalValidator->errors()->toArray() as $key => $messages) {
+            foreach ($messages as $message) {
+                $validator->errors()->add("personal.$key", $message);
             }
+        }
 
-            // Update contact details
-            $employee->contactDetail()->update([
-                'permanent_address' => $address['permanentAddress'],
-                'temporary_address' => $address['temporaryAddress'] ?? null,
-                'email' => $address['email'],
-                'land_line' => $address['landLine'] ?? null,
-                'mobile_line' => $address['mobileLine'] ?? null,
-                'gn_division' => $address['gnDivision'] ?? null,
-                'police_station' => $address['policeStation'] ?? null,
-                'district' => $address['district'],
-                'province' => $address['province'],
-                'electoral_division' => $address['electoralDivision'] ?? null,
-                'emg_relationship' => $address['emergencyContact']['relationship'],
-                'emg_name' => $address['emergencyContact']['contactName'],
-                'emg_address' => $address['emergencyContact']['contactAddress'],
-                'emg_tel' => $address['emergencyContact']['contactTel'],
-            ]);
+        foreach ($addressValidator->errors()->toArray() as $key => $messages) {
+            foreach ($messages as $message) {
+                $validator->errors()->add("address.$key", $message);
+            }
+        }
 
-            // Update compensation record
-            $employee->compensation()->update([
-                'basic_salary' => $compensation['basicSalary'],
-                'increment_value' => $compensation['incrementValue'] ?? null,
-                'increment_effected_date' => empty($organization['incrementEffectiveFrom']) ? null : $organization['incrementEffectiveFrom'],
-                'bank_name' => $compensation['bankName'] ?? null,
-                'branch_name' => $compensation['branchName'] ?? null,
-                'bank_code' => $compensation['bankCode'] ?? null,
-                'branch_code' => $compensation['branchCode'] ?? null,
-                'bank_account_no' => $compensation['bankAccountNo'] ?? null,
-                'comments' => $compensation['comments'] ?? null,
-                'secondary_emp' => $compensation['secondaryEmp'],
-                'primary_emp_basic' => $compensation['primaryEmploymentBasic'],
-                'enable_epf_etf' => $compensation['enableEpfEtf'],
-                'ot_active' => $compensation['otActive'],
-                'early_deduction' => $compensation['earlyDeduction'],
-                'increment_active' => $compensation['incrementActive'],
-                'active_nopay' => $compensation['nopayActive'],
-                'ot_morning' => $compensation['morningOt'],
-                'ot_evening' => $compensation['eveningOt'],
-                'ot_morning_rate' => $compensation['ot_morning_rate'] ?? null,
-                'ot_night_rate' => $compensation['ot_night_rate'] ?? null,
-                'br1' => $compensation['budgetaryReliefAllowance2015'],
-                'br2' => $compensation['budgetaryReliefAllowance2016'],
-                'stamp' => $compensation['stamp'],
-            ]);
+        foreach ($compensationValidator->errors()->toArray() as $key => $messages) {
+            foreach ($messages as $message) {
+                $validator->errors()->add("compensation.$key", $message);
+            }
+        }
 
-            DB::commit();
+        foreach ($organizationValidator->errors()->toArray() as $key => $messages) {
+            foreach ($messages as $message) {
+                $validator->errors()->add("organization.$key", $message);
+            }
+        }
+    });
 
-            return response()->json([
-                'message' => 'Employee updated successfully',
-                'employee_id' => $employee->id
-            ], 200);
+    if ($validator->fails()) {
+        return response()->json([
+            'message' => 'Validation failed',
+            'errors' => $validator->errors()
+        ], 422);
+    }
 
-        } catch (\Exception $e) {
-            DB::rollBack();
+    DB::beginTransaction();
 
-            // Delete the new profile picture if it was uploaded but update failed
-            if ($request->hasFile('profile_picture') && $profilePicturePath && Storage::disk('public')->exists($profilePicturePath)) {
+    try {
+        $profilePicturePath = $employee->profile_photo_path;
+        if ($request->hasFile('profile_picture')) {
+            // Delete old profile picture if exists
+            if ($profilePicturePath && Storage::disk('public')->exists($profilePicturePath)) {
                 Storage::disk('public')->delete($profilePicturePath);
             }
 
-            return response()->json([
-                'message' => 'Employee update failed',
-                'error' => $e->getMessage(),
-            ], 500);
+            $profilePicturePath = $request->file('profile_picture')->store('employee/profile_pictures', 'public');
+            $personal['profile_picture_path'] = $profilePicturePath;
         }
+
+        // Update spouse record
+        $employee->spouse()->update([
+            'type' => $personal['relationshipType'],
+            'title' => $personal['spouseTitle'],
+            'name' => $personal['spouseName'],
+            'nic' => $personal['spouseNic'],
+            'age' => $personal['spouseAge'],
+            'dob' => $personal['spouseDob'],
+        ]);
+
+        // Update organization assignment
+        $employee->organizationAssignment()->update([
+            'company_id' => $organization['company'],
+            'department_id' => !empty($organization['department']) ? $organization['department'] : null,
+            'sub_department_id' => !empty($organization['subDepartment']) ? $organization['subDepartment'] : null,
+            'designation_id' => $organization['designation'],
+            'current_supervisor' => $organization['currentSupervisor'] ?? null,
+            'date_of_joining' => $organization['dateOfJoined'],
+            'day_off' => $organization['dayOff'],
+            'confirmation_date' => empty($organization['confirmationDate']) ? null : $organization['confirmationDate'],
+            'probationary_period' => $organization['probationPeriod'],
+            'training_period' => $organization['trainingPeriod'],
+            'contract_period' => $organization['contractPeriod'],
+            'probationary_period_from' => empty($organization['probationFrom']) ? null : $organization['probationFrom'],
+            'probationary_period_to' => empty($organization['probationTo']) ? null : $organization['probationTo'],
+            'training_period_from' => empty($organization['trainingFrom']) ? null : $organization['trainingFrom'],
+            'training_period_to' => empty($organization['trainingTo']) ? null : $organization['trainingTo'],
+            'contract_period_from' => empty($organization['contractFrom']) ? null : $organization['contractFrom'],
+            'contract_period_to' => empty($organization['contractTo']) ? null : $organization['contractTo'],
+            'date_of_resigning' => empty($organization['confirmationDate']) ? null : $organization['confirmationDate'],
+            'is_active' => $organization['currentStatus'],
+        ]);
+
+        // Update employee record
+        $employee->update([
+            'title' => $personal['title'],
+            'attendance_employee_no' => $personal['attendanceEmpNo'],
+            'epf' => $personal['epfNo'],
+            'nic' => $personal['nicNumber'],
+            'dob' => $personal['dob'],
+            'gender' => strtolower($personal['gender']),
+            'religion' => $personal['religion'] ?? null,
+            'country_of_birth' => $personal['countryOfBirth'] ?? null,
+            'name_with_initials' => $personal['nameWithInitial'],
+            'full_name' => $personal['fullName'],
+            'display_name' => $personal['displayName'],
+            'marital_status' => strtolower($personal['maritalStatus']),
+            'is_active' => true,
+            'employment_type_id' => $personal['employmentStatus'],
+            'profile_photo_path' => $profilePicturePath,
+        ]);
+
+        // Handle children records
+        if (isset($personal['children']) && is_array($personal['children'])) {
+            // First delete existing children
+            $employee->children()->delete();
+
+            // Then create new children records
+            foreach ($personal['children'] as $child) {
+                if (empty($child['name'])) {
+                    continue;
+                }
+
+                children::create([
+                    'employee_id' => $employee->id,
+                    'name' => $child['name'],
+                    'age' => (int) $child['age'],
+                    'dob' => $child['dob'],
+                    'nic' => empty($child['nic'] ?? null) ? null : $child['nic'],
+                ]);
+            }
+        }
+
+        // Handle document uploads if any
+        if ($request->hasFile('documents')) {
+            // Get the documents metadata from the request
+            $documentsMeta = $request->input('documents');
+
+            foreach ($request->file('documents') as $index => $document) {
+                $path = $document->store('employee/documents', 'public');
+
+                // Extract the document type (e.g., "nid") from the metadata
+                $documentType = $documentsMeta[$index]['type'] ?? 'unknown';
+
+                documents::create([
+                    'employee_id' => $employee->id,
+                    'document_type' => $documentType,
+                    'document_path' => $path,
+                    'document_name' => $document->getClientOriginalName(),
+                ]);
+            }
+        }
+
+        // Update contact details
+        $employee->contactDetail()->update([
+            'permanent_address' => $address['permanentAddress'],
+            'temporary_address' => $address['temporaryAddress'] ?? null,
+            'email' => $address['email'],
+            'land_line' => $address['landLine'] ?? null,
+            'mobile_line' => $address['mobileLine'] ?? null,
+            'gn_division' => $address['gnDivision'] ?? null,
+            'police_station' => $address['policeStation'] ?? null,
+            'district' => $address['district'],
+            'province' => $address['province'],
+            'electoral_division' => $address['electoralDivision'] ?? null,
+            'emg_relationship' => $address['emergencyContact']['relationship'],
+            'emg_name' => $address['emergencyContact']['contactName'],
+            'emg_address' => $address['emergencyContact']['contactAddress'],
+            'emg_tel' => $address['emergencyContact']['contactTel'],
+        ]);
+
+        // Update compensation record
+        $employee->compensation()->update([
+            'basic_salary' => $compensation['basicSalary'],
+            'increment_value' => $compensation['incrementValue'] ?? null,
+            'increment_effected_date' => empty($compensation['incrementEffectiveFrom']) ? null : $compensation['incrementEffectiveFrom'],
+            'bank_name' => $compensation['bankName'] ?? null,
+            'branch_name' => $compensation['branchName'] ?? null,
+            'bank_code' => $compensation['bankCode'] ?? null,
+            'branch_code' => $compensation['branchCode'] ?? null,
+            'bank_account_no' => $compensation['bankAccountNo'] ?? null,
+            'comments' => $compensation['comments'] ?? null,
+            'secondary_emp' => $compensation['secondaryEmp'],
+            'primary_emp_basic' => $compensation['primaryEmploymentBasic'],
+            'enable_epf_etf' => $compensation['enableEpfEtf'],
+            'ot_active' => $compensation['otActive'],
+            'early_deduction' => $compensation['earlyDeduction'],
+            'increment_active' => $compensation['incrementActive'],
+            'active_nopay' => $compensation['nopayActive'],
+            'ot_morning' => $compensation['morningOt'],
+            'ot_evening' => $compensation['eveningOt'],
+            'ot_morning_rate' => $compensation['ot_morning_rate'] ?? null,
+            'ot_night_rate' => $compensation['ot_night_rate'] ?? null,
+            'br1' => $compensation['budgetaryReliefAllowance2015'],
+            'br2' => $compensation['budgetaryReliefAllowance2016'],
+            'stamp' => $compensation['stamp'],
+        ]);
+
+        DB::commit();
+
+        return response()->json([
+            'message' => 'Employee updated successfully',
+            'employee_id' => $employee->id
+        ], 200);
+
+    } catch (\Exception $e) {
+        DB::rollBack();
+
+        // Delete the new profile picture if it was uploaded but update failed
+        if ($request->hasFile('profile_picture') && $profilePicturePath && Storage::disk('public')->exists($profilePicturePath)) {
+            Storage::disk('public')->delete($profilePicturePath);
+        }
+
+        return response()->json([
+            'message' => 'Employee update failed',
+            'error' => $e->getMessage(),
+        ], 500);
     }
+}
 
     /**
      * Remove the specified resource from storage.
