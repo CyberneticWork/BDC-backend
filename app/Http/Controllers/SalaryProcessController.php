@@ -82,13 +82,35 @@ class SalaryProcessController extends Controller
 
                     // Reduce installment_count by 1 in loans table if exists
                     if ($installmentCount !== null) {
-                        $newInstallmentCount = max(0, $installmentCount - 1);
-                        loans::where('employee_id', $process->employee_id)
+                        // Fetch active loan to track when it completes
+                        $loan = loans::where('employee_id', $process->employee_id)
                             ->where('status', 'active')
-                            ->update([
-                                'installment_count' => $newInstallmentCount,
-                                'status' => $newInstallmentCount == 0 ? 'completed' : 'active'
-                            ]);
+                            ->first();
+
+                        if ($loan) {
+                            $prevCount = (int) ($loan->installment_count ?? 0);
+                            $newInstallmentCount = max(0, $prevCount - 1);
+
+                            $loan->installment_count = $newInstallmentCount;
+                            $loan->status = $newInstallmentCount == 0 ? 'completed' : 'active';
+                            $loan->save();
+
+                            // When loan completes, log to completed_loans
+                            if ($newInstallmentCount == 0) {
+                                DB::table('completed_loans')->insert([
+                                    'employee_id' => $loan->employee_id,
+                                    'loan_id' => $loan->id,
+                                    'loan_amount' => $loan->loan_amount,
+                                    'interest_rate_per_annum' => $loan->interest_rate_per_annum,
+                                    'with_interest' => $loan->with_interest,
+                                    // store the count at completion (before it hits 0)
+                                    'installment_count' => $prevCount,
+                                    'end_date' => now()->toDateString(),
+                                    'created_at' => now(),
+                                    'updated_at' => now(),
+                                ]);
+                            }
+                        }
                     }
                 }
 
@@ -740,15 +762,33 @@ class SalaryProcessController extends Controller
 
                 // Reduce installment_count by 1 in loans table
                 if ($installmentCount !== null) {
-                    $newInstallmentCount = max(0, $installmentCount - 1);
-
-                    loans::where('employee_id', $process->employee_id)
+                    // Fetch active loan
+                    $loan = loans::where('employee_id', $process->employee_id)
                         ->where('status', 'active')
-                        ->update([
-                            'installment_count' => $newInstallmentCount,
-                            // If installment count reaches 0, mark as completed
-                            'status' => $newInstallmentCount == 0 ? 'completed' : 'active'
-                        ]);
+                        ->first();
+
+                    if ($loan) {
+                        $prevCount = (int) ($loan->installment_count ?? 0);
+                        $newInstallmentCount = max(0, $prevCount - 1);
+
+                        $loan->installment_count = $newInstallmentCount;
+                        $loan->status = $newInstallmentCount == 0 ? 'completed' : 'active';
+                        $loan->save();
+
+                        if ($newInstallmentCount == 0) {
+                            DB::table('completed_loans')->insert([
+                                'employee_id' => $loan->employee_id,
+                                'loan_id' => $loan->id,
+                                'loan_amount' => $loan->loan_amount,
+                                'interest_rate_per_annum' => $loan->interest_rate_per_annum,
+                                'with_interest' => $loan->with_interest,
+                                'installment_count' => $prevCount,
+                                'end_date' => now()->toDateString(),
+                                'created_at' => now(),
+                                'updated_at' => now(),
+                            ]);
+                        }
+                    }
                 }
 
                 // Mark salary as issued
@@ -835,7 +875,8 @@ class SalaryProcessController extends Controller
 
                     if ($loan) {
                         // Calculate new installment count
-                        $newInstallmentCount = max(0, $loan->installment_count - 1);
+                        $prevCount = (int) ($loan->installment_count ?? 0);
+                        $newInstallmentCount = max(0, $prevCount - 1);
 
                         // Determine if this is the last installment
                         $isLastInstallment = ($newInstallmentCount == 0);
@@ -844,18 +885,31 @@ class SalaryProcessController extends Controller
                         $remainder = $loan->loan_amount % $loan->installment_amount;
                         $hasRemainder = ($remainder > 0);
 
-                        // If this is the last installment and there's a remainder,
-                        // use the remainder as the installment amount
+                        // If this is the last installment and there's a remainder, use the remainder as the installment amount
                         if ($isLastInstallment && $hasRemainder && $loan->installment_count == 1) {
-                            // Update the salary process with the correct final installment amount
                             $process->installment_amount = $remainder;
                             $process->save();
                         }
 
                         // Update the loan record
                         $loan->installment_count = $newInstallmentCount;
-                        $loan->status = $newInstallmentCount == 0 ? 'completed' : 'active';
+                        $loan->status = $isLastInstallment ? 'completed' : 'active';
                         $loan->save();
+
+                        // Log completed loan once it finishes
+                        if ($isLastInstallment) {
+                            DB::table('completed_loans')->insert([
+                                'employee_id' => $loan->employee_id,
+                                'loan_id' => $loan->id,
+                                'loan_amount' => $loan->loan_amount,
+                                'interest_rate_per_annum' => $loan->interest_rate_per_annum,
+                                'with_interest' => $loan->with_interest,
+                                'installment_count' => $prevCount,
+                                'end_date' => now()->toDateString(),
+                                'created_at' => now(),
+                                'updated_at' => now(),
+                            ]);
+                        }
                     }
 
                     // Mark salary as issued
