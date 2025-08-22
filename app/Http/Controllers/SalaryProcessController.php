@@ -279,8 +279,7 @@ class SalaryProcessController extends Controller
             comp.br2,
             comp.ot_morning_rate,
             comp.ot_night_rate,
-            comp.stamp,            -- ADDED: include stamp from compensation table
-
+            comp.stamp,
 
             -- BR status
             CASE
@@ -294,6 +293,16 @@ class SalaryProcessController extends Controller
             COALESCE(SUM(lo.loan_amount), 0) AS total_loan_amount,
             lo.installment_count,
             lo.installment_amount,
+
+            -- Dynamic installment amount for this month (handle last remainder)
+            MAX(
+                CASE
+                    WHEN lo.installment_count = 1
+                         AND MOD(lo.loan_amount, lo.installment_amount) > 0
+                    THEN MOD(lo.loan_amount, lo.installment_amount)
+                    ELSE lo.installment_amount
+                END
+            ) AS calculated_installment_amount,
 
             -- No pay records
             COALESCE(COUNT(npr.id), 0) AS approved_no_pay_days,
@@ -403,42 +412,42 @@ class SalaryProcessController extends Controller
         // Process results and calculate salaries
         $data = [];
         foreach ($results as $result) {
-            // Parse JSON fields
+            // Parse JSON
             $allowances = json_decode($result->allowances ?? '[]', true) ?: [];
             $deductions = json_decode($result->deductions ?? '[]', true) ?: [];
 
-            // Convert to array
             $employeeData = (array) $result;
             $employeeData['allowances'] = $allowances;
             $employeeData['deductions'] = $deductions;
 
-            // Map stamp: return 25 when stamp = 1, otherwise 0
+            // Stamp fee mapping
             $stampValue = ($result->stamp == 1) ? 25 : 0;
             $employeeData['stamp'] = $stampValue;
 
-            // Calculate salary components
+            // Base and BR
             $basicSalary = (float) $employeeData['basic_salary'];
-
-            // Add BR allowances to basic salary
             $brAllowance = 0;
             if ($result->br1 == 1 && $result->br2 == 1) {
-                // Both BR1 and BR2
                 $brAllowance = 3500;
             } elseif ($result->br1 == 1) {
-                // BR1 Only
                 $brAllowance = 1000;
             } elseif ($result->br2 == 1) {
-                // BR2 Only
                 $brAllowance = 2500;
             }
-
             $basicSalary += $brAllowance;
 
             $approvedNoPayDays = (int) $employeeData['approved_no_pay_days'];
-            $installmentAmount = (float) ($employeeData['installment_amount'] ?? 0);
 
-            // 1. Handle Increment (if applicable)
-            // increment_value is now a decimal absolute amount — add directly to basic salary
+            // Use calculated installment amount (handles last remainder)
+            $calculatedInstallment = isset($employeeData['calculated_installment_amount'])
+                ? (float) $employeeData['calculated_installment_amount']
+                : null;
+            $installmentAmount = (float) ($calculatedInstallment ?? ($employeeData['installment_amount'] ?? 0));
+
+            // Ensure frontend and storeSalaryData receive the adjusted value
+            $employeeData['installment_amount'] = $installmentAmount;
+
+            // 1. Increment
             if (
                 !empty($employeeData['increment_active']) &&
                 !empty($employeeData['increment_effected_date']) &&
@@ -448,34 +457,32 @@ class SalaryProcessController extends Controller
                 $basicSalary += $incrementValue;
             }
 
-            // 2. Calculate No-Pay Deduction using actual working days
+            // 2. No-pay
             $perDaySalary = $basicSalary / $workingDaysInMonth;
             $noPayDeduction = $approvedNoPayDays * $perDaySalary;
             $adjustedBasic = $basicSalary - $noPayDeduction;
 
-            // 3. Sum Allowances
+            // 3. Allowances
             $totalAllowances = array_reduce($allowances, function ($carry, $item) {
                 return $carry + (float) $item['amount'];
             }, 0);
 
-            // Calculate EPF/ETF base (basic + allowances - no pay)
+            // EPF/ETF base
             $epfEtfBase = $adjustedBasic + $totalAllowances;
 
-            // 4. Calculate EPF employee contribution (8%) if enabled
-            $epfEmployeeDeduction = 0;
-            if ($employeeData['enable_epf_etf']) {
-                $epfEmployeeDeduction = $epfEtfBase * 0.08; // 8% EPF deduction
-            }
+            // 4. EPF 8%
+            $epfEmployeeDeduction = $employeeData['enable_epf_etf'] ? $epfEtfBase * 0.08 : 0;
 
-            // 5. Calculate EPF employer contribution (12%) and ETF (3%) - for display only
+            // 5. Employer EPF/ETF (display)
             $epfEmployerContribution = $employeeData['enable_epf_etf'] ? $epfEtfBase * 0.12 : 0;
             $etfEmployerContribution = $employeeData['enable_epf_etf'] ? $epfEtfBase * 0.03 : 0;
 
-            // 6. Sum Fixed Deductions (excluding loans and EPF)
+            // 6. Fixed deductions
             $totalFixedDeductions = array_reduce($deductions, function ($carry, $item) {
                 return $carry + (float) $item['amount'];
             }, 0);
 
+            // OT fees
             $morning_ot_fees = 0;
             if ($employeeData['ot_morning'] == 1) {
                 $empid = $employeeData['id'];
@@ -484,7 +491,6 @@ class SalaryProcessController extends Controller
                     ->value('morning_ot');
                 $morning_ot_fees = $morning_ot_time * $employeeData['ot_morning_rate'];
             }
-
             $night_ot_fees = 0;
             if ($employeeData['ot_evening'] == 1) {
                 $empid = $employeeData['id'];
@@ -494,35 +500,30 @@ class SalaryProcessController extends Controller
                 $night_ot_fees = $night_ot_time * $employeeData['ot_night_rate'];
             }
 
-
-            // 7. Calculate Gross Salary (basic - no pay + allowances)
+            // 7. Gross
             $grossSalary = $epfEtfBase + $morning_ot_fees + $night_ot_fees;
 
-            // 8. Calculate Net Salary (gross - EPF - deductions - loan)
+            // 8. Net (use adjusted installment)
             $totalDeductions = $totalFixedDeductions + $installmentAmount + $epfEmployeeDeduction;
             $netSalary = $grossSalary - $totalDeductions;
 
-            // Subtract stamp fee (25) when stamp is active
             if ($stampValue) {
                 $netSalary -= $stampValue;
             }
 
-
-            // Add calculated fields to response
             $employeeData['salary_breakdown'] = [
                 'basic_salary' => $basicSalary,
                 'br_allowance' => $brAllowance,
                 'ot_morning_fees' => $morning_ot_fees,
                 'ot_night_fees' => $night_ot_fees,
-
                 'adjusted_basic' => $adjustedBasic,
                 'per_day_salary' => $perDaySalary,
                 'no_pay_deduction' => $noPayDeduction,
                 'total_allowances' => $totalAllowances,
                 'epf_etf_base' => $epfEtfBase,
-                'epf_employee_deduction' => $epfEmployeeDeduction, // 8% EPF deduction from employee
-                'epf_employer_contribution' => $epfEmployerContribution, // 12% EPF contribution from employer
-                'etf_employer_contribution' => $etfEmployerContribution, // 3% ETF contribution from employer
+                'epf_employee_deduction' => $epfEmployeeDeduction,
+                'epf_employer_contribution' => $epfEmployerContribution,
+                'etf_employer_contribution' => $etfEmployerContribution,
                 'total_fixed_deductions' => $totalFixedDeductions,
                 'loan_installment' => $installmentAmount,
                 'gross_salary' => $grossSalary,
