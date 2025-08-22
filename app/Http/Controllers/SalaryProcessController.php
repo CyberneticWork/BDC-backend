@@ -817,5 +817,59 @@ class SalaryProcessController extends Controller
         }
     }
 
+    // When processing salary and handling loan installments
+    public function updateStatus(Request $request)
+    {
+        DB::beginTransaction();
+        try {
+            if ($request->has('status') && $request->status == 'issued') {
+                // Get all salary processes being marked as issued
+                $salaryProcesses = salary_process::where('status', 'processed')->get();
 
+                foreach ($salaryProcesses as $process) {
+                    // Get the loan for this employee
+                    $loan = Loans::where('employee_id', $process->employee_id)
+                        ->where('status', 'active')
+                        ->first();
+
+                    if ($loan) {
+                        // Calculate new installment count
+                        $newInstallmentCount = max(0, $loan->installment_count - 1);
+
+                        // Determine if this is the last installment
+                        $isLastInstallment = ($newInstallmentCount == 0);
+
+                        // Calculate if there's a remainder for the final payment
+                        $remainder = $loan->loan_amount % $loan->installment_amount;
+                        $hasRemainder = ($remainder > 0);
+
+                        // If this is the last installment and there's a remainder,
+                        // use the remainder as the installment amount
+                        if ($isLastInstallment && $hasRemainder && $loan->installment_count == 1) {
+                            // Update the salary process with the correct final installment amount
+                            $process->installment_amount = $remainder;
+                            $process->save();
+                        }
+
+                        // Update the loan record
+                        $loan->installment_count = $newInstallmentCount;
+                        $loan->status = $newInstallmentCount == 0 ? 'completed' : 'active';
+                        $loan->save();
+                    }
+
+                    // Mark salary as issued
+                    $process->update(['status' => 'issued']);
+                }
+
+                DB::commit();
+                return response()->json(['message' => 'Payslips marked as issued and loan installments updated successfully']);
+            }
+
+            // Other status handling...
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['message' => 'Error updating payslips and loans: ' . $e->getMessage()], 500);
+        }
+    }
 }
