@@ -14,20 +14,12 @@ class shifts extends Model
         'shift_description',
         'start_time',
         'end_time',
-        'morning_ot_start',
-        'special_ot_start',
-        'late_deduction',
-        'midnight_roster',
-        'nopay_hour_halfday',
-        'break_time'
+        'midnight_roster'
     ];
 
     protected $casts = [
         'midnight_roster' => 'boolean',
         'start_time' => 'datetime:H:i',
         'end_time' => 'datetime:H:i',
-        'morning_ot_start' => 'datetime:H:i',
-        'special_ot_start' => 'datetime:H:i',
-        'late_deduction' => 'datetime:H:i'
     ];
 }
