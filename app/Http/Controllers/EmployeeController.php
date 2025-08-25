@@ -125,7 +125,7 @@ class EmployeeController extends Controller
             ->first();
 
 
-        return response()->json($employee);
+        return response()->json($employee, 200);
     }
 
 
