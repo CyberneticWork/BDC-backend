@@ -803,7 +803,7 @@ class EmployeeController extends Controller
             'designation_id' => $organization['designation'],
             'current_supervisor' => $organization['currentSupervisor'] ?? null,
             'date_of_joining' => $organization['dateOfJoined'],
-            'day_off' => $organization['dayOff'],
+            'day_off' => empty($organization['dayOff']) ? null : $organization['dayOff'],
             'confirmation_date' => empty($organization['confirmationDate']) ? null : $organization['confirmationDate'],
             'probationary_period' => $organization['probationPeriod'],
             'training_period' => $organization['trainingPeriod'],
