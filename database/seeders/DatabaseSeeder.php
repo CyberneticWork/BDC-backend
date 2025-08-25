@@ -127,10 +127,10 @@ class DatabaseSeeder extends Seeder
                 'start_time' => $shift[2],
                 'end_time' => $shift[3],
                 'morning_ot_start' => $shift[4],
-                'special_ot_start' => $shift[5],
-                'late_deduction' => $shift[6],
+            
+              
                 'midnight_roster' => $shift[7],
-                'nopay_hour_halfday' => $shift[8],
+              
             ]);
         }
 
