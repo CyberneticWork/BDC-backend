@@ -212,21 +212,24 @@ class LeaveMasterController extends Controller
     //return annual/casual/special leave record counts for a specific employee
     //return annual/casual/special leave record counts for a specific employee with half-day support
     public function getLeaveRecordCountsByEmployee($employeeId)
-    {
-        $leaveCounts = leave_master::where('employee_id', $employeeId)
-            ->selectRaw('
+{
+    $leaveCounts = leave_master::where('employee_id', $employeeId)
+        ->selectRaw('
             leave_type,
-            SUM(CASE WHEN is_half_day = 1 THEN 0 ELSE COALESCE(leave_duration, 1) END) as full_days,
-            SUM(CASE WHEN is_half_day = 1 THEN COALESCE(leave_duration, 0.5) ELSE 0 END) as half_days,
-            SUM(CASE WHEN status = "Rejected" AND is_half_day = 1 THEN COALESCE(leave_duration, 0.5) ELSE 0 END) as rejected_half_days,
-            SUM(CASE WHEN status = "Rejected" AND is_half_day = 0 THEN COALESCE(leave_duration, 1) ELSE 0 END) as rejected_full_days
+            -- Full days that are not half days
+            SUM(CASE WHEN is_half_day = 0 AND status != "Rejected" THEN COALESCE(leave_duration, 1) ELSE 0 END) as approved_full_days,
+            -- Half days (each counts as 0.5)
+            SUM(CASE WHEN is_half_day = 1 AND status != "Rejected" THEN 0.5 ELSE 0 END) as approved_half_days,
+            -- Rejected full days
+            SUM(CASE WHEN is_half_day = 0 AND status = "Rejected" THEN COALESCE(leave_duration, 1) ELSE 0 END) as rejected_full_days,
+            -- Rejected half days (each counts as 0.5)
+            SUM(CASE WHEN is_half_day = 1 AND status = "Rejected" THEN 0.5 ELSE 0 END) as rejected_half_days
         ')
-            ->groupBy('leave_type')
-            ->get();
+        ->groupBy('leave_type')
+        ->get();
 
-        return response()->json($leaveCounts);
-    }
-
+    return response()->json($leaveCounts);
+}
     // Get leave records that the status = 'Pending'
     public function getPendingLeaveRecords()
     {
