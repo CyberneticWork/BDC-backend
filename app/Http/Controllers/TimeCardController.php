@@ -997,7 +997,7 @@ class TimeCardController extends Controller
                 $employee = $employeeQuery->first();
 
                 if (!$employee) {
-                    $results['errors'][] = "Employee not found for NIC in selected company";
+                    $results['errors'][] = "Employee not found for NIC/Attendance number in selected company";
                     continue;
                 }
 
