@@ -3,6 +3,7 @@ namespace App\Imports;
 
 use App\Models\Allowances;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Maatwebsite\Excel\Concerns\ToCollection;
 use Maatwebsite\Excel\Concerns\WithHeadingRow;
 use Illuminate\Support\Facades\Validator;
@@ -22,6 +23,7 @@ class AllowancesImport implements ToCollection, WithHeadingRow
 
             $normalizedRow = $this->normalizeRow($row);
 
+            // Basic presence check for key column
             if (!isset($normalizedRow['allowance_type'])) {
                 $this->errors[] = [
                     'row' => $index + 2,
@@ -30,59 +32,81 @@ class AllowancesImport implements ToCollection, WithHeadingRow
                 continue;
             }
 
-            // Check if allowance_code already exists
+            // Skip existing allowance_code
             if (
                 isset($normalizedRow['allowance_code']) &&
                 Allowances::where('allowance_code', $normalizedRow['allowance_code'])->exists()
             ) {
-                continue; // Skip this row and continue with the next one
+                continue;
             }
 
-            // Convert Excel dates to proper format
-            if (isset($normalizedRow['fixed_date']) && is_numeric($normalizedRow['fixed_date'])) {
-                $normalizedRow['fixed_date'] = $this->convertExcelDate($normalizedRow['fixed_date']);
+            // Normalize enums and trim
+            if (isset($normalizedRow['status'])) {
+                $normalizedRow['status'] = strtolower(trim((string) $normalizedRow['status']));
+            }
+            if (isset($normalizedRow['allowance_type'])) {
+                $normalizedRow['allowance_type'] = strtolower(trim((string) $normalizedRow['allowance_type']));
             }
 
-            if (isset($normalizedRow['variable_from']) && is_numeric($normalizedRow['variable_from'])) {
-                $normalizedRow['variable_from'] = $this->convertExcelDate($normalizedRow['variable_from']);
+            // Coerce IDs (accept IDs from dropdown; if names typed, try resolving to IDs)
+            if (isset($normalizedRow['company_id'])) {
+                $normalizedRow['company_id'] = $this->resolveCompanyId($normalizedRow['company_id']);
+            }
+            if (isset($normalizedRow['department_id'])) {
+                $normalizedRow['department_id'] = $this->resolveDepartmentId(
+                    $normalizedRow['department_id'],
+                    $normalizedRow['company_id'] ?? null
+                );
             }
 
-            if (isset($normalizedRow['variable_to']) && is_numeric($normalizedRow['variable_to'])) {
-                $normalizedRow['variable_to'] = $this->convertExcelDate($normalizedRow['variable_to']);
+            // Coerce amount
+            if (isset($normalizedRow['amount'])) {
+                $normalizedRow['amount'] = $this->toNumeric($normalizedRow['amount']);
+            }
+
+            // Convert Excel dates to YYYY-MM-DD
+            foreach (['fixed_date', 'variable_from', 'variable_to'] as $dateField) {
+                if (array_key_exists($dateField, $normalizedRow)) {
+                    $normalizedRow[$dateField] = $this->toNullableDate($normalizedRow[$dateField]);
+                }
             }
 
             $validator = Validator::make($normalizedRow, [
-                'allowance_code' => 'required',  // Removed unique validation since we're handling it above
+                'allowance_code' => 'required|string', // uniqueness handled above
                 'allowance_name' => 'required|string|max:255',
-                'status' => 'required|in:active,inactive',
-              
-                'allowance_type' => 'required|in:fixed,variable',
-                'company_id' => 'required|exists:companies,id',
+                'status' => ['required', Rule::in(['active', 'inactive'])],
+                'allowance_type' => ['required', Rule::in(['fixed', 'variable'])],
+
+                'company_id' => 'required|integer|exists:companies,id',
                 'amount' => 'required|numeric|min:0',
+
                 'department_id' => [
                     'nullable',
-                    'exists:departments,id',
+                    'integer',
                     Rule::exists('departments', 'id')->where(function ($query) use ($normalizedRow) {
-                        $query->where('company_id', $normalizedRow['company_id']);
+                        if (!empty($normalizedRow['company_id'])) {
+                            $query->where('company_id', $normalizedRow['company_id']);
+                        }
                     })
                 ],
+
                 'fixed_date' => [
                     'nullable',
                     'date',
                     Rule::requiredIf(function () use ($normalizedRow) {
-                        return $normalizedRow['allowance_type'] === 'fixed';
+                        return ($normalizedRow['allowance_type'] ?? null) === 'fixed';
                     })
                 ],
                 'variable_from' => [
                     'nullable',
                     'date',
                     Rule::requiredIf(function () use ($normalizedRow) {
-                        return $normalizedRow['allowance_type'] === 'variable';
+                        return ($normalizedRow['allowance_type'] ?? null) === 'variable';
                     }),
                     function ($attribute, $value, $fail) use ($normalizedRow) {
                         if (
-                            $normalizedRow['allowance_type'] === 'variable' &&
-                            isset($normalizedRow['variable_to']) &&
+                            ($normalizedRow['allowance_type'] ?? null) === 'variable' &&
+                            isset($normalizedRow['variable_to'], $value) &&
                             $value > $normalizedRow['variable_to']
                         ) {
                             $fail('The from date must be before the to date.');
@@ -93,7 +117,7 @@ class AllowancesImport implements ToCollection, WithHeadingRow
                     'nullable',
                     'date',
                     Rule::requiredIf(function () use ($normalizedRow) {
-                        return $normalizedRow['allowance_type'] === 'variable';
+                        return ($normalizedRow['allowance_type'] ?? null) === 'variable';
                     }),
                     'after_or_equal:variable_from'
                 ]
@@ -125,7 +149,6 @@ class AllowancesImport implements ToCollection, WithHeadingRow
             'allowance_code' => ['allowance_code', 'code', 'allowance code'],
             'allowance_name' => ['allowance_name', 'name', 'allowance name'],
             'status' => ['status'],
-            
             'allowance_type' => ['allowance_type', 'type', 'allowance type'],
             'company_id' => ['company_id', 'company', 'company id'],
             'department_id' => ['department_id', 'department', 'department id'],
@@ -139,7 +162,17 @@ class AllowancesImport implements ToCollection, WithHeadingRow
             foreach ($possibleHeaders as $header) {
                 $header = strtolower(str_replace(' ', '_', $header));
                 if (isset($row[$header])) {
-                    $normalized[$field] = $row[$header];
+                    $value = $row[$header];
+
+                    // Normalize empty strings to null
+                    if (is_string($value)) {
+                        $value = trim($value);
+                        if ($value === '') {
+                            $value = null;
+                        }
+                    }
+
+                    $normalized[$field] = $value;
                     break;
                 }
             }
@@ -160,20 +193,76 @@ class AllowancesImport implements ToCollection, WithHeadingRow
         return $data;
     }
 
-    private function convertExcelDate($excelDate)
+    private function toNullableDate($value)
     {
-        if (is_numeric($excelDate)) {
-            // Convert Excel serial date to YYYY-MM-DD
-            $unixDate = ($excelDate - 25569) * 86400;
-            return gmdate("Y-m-d", $unixDate);
+        if ($value === null || $value === '') {
+            return null;
         }
 
-        // Try to parse as date string if not numeric
-        try {
-            return date("Y-m-d", strtotime($excelDate));
-        } catch (\Exception $e) {
-            return $excelDate;
+        // Excel serial date
+        if (is_numeric($value)) {
+            $unixDate = ((int) $value - 25569) * 86400;
+            return gmdate('Y-m-d', $unixDate);
         }
+
+        // String date
+        try {
+            $ts = strtotime((string) $value);
+            if ($ts !== false) {
+                return date('Y-m-d', $ts);
+            }
+        } catch (\Throwable $e) {
+            // fallthrough
+        }
+
+        return $value; // let validator catch invalid date
+    }
+
+    private function toNumeric($value)
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        if (is_numeric($value)) {
+            return $value + 0; // cast to int/float
+        }
+        return $value;
+    }
+
+    private function resolveCompanyId($value)
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        // If dropdown used, this will already be an ID (numeric)
+        if (is_numeric($value)) {
+            return (int) $value;
+        }
+        // Fallback: allow typing company name
+        $name = trim((string) $value);
+        $id = DB::table('companies')
+            ->whereRaw('LOWER(name) = ?', [mb_strtolower($name)])
+            ->value('id');
+
+        return $id ?: $value; // keep original so validator will fail with exists if not found
+    }
+
+    private function resolveDepartmentId($value, $companyId = null)
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        if (is_numeric($value)) {
+            return (int) $value;
+        }
+        $name = trim((string) $value);
+        $query = DB::table('departments')->whereRaw('LOWER(name) = ?', [mb_strtolower($name)]);
+        if (!empty($companyId)) {
+            $query->where('company_id', $companyId);
+        }
+        $id = $query->value('id');
+
+        return $id ?: $value;
     }
 
     private function throwValidationException()
