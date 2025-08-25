@@ -22,27 +22,47 @@ class LoanController extends Controller
      */
     public function store(Request $request)
     {
-
-
-        // $request->merge(['attendance_employee_no' => $request->employee_id]);
-
         $validated = $request->validate([
-            'employee_id' => 'required',
-            'loan_id' => 'required|string|unique:loans,loan_id',
-            'loan_amount' => ['required', 'numeric', 'min:0'],
-            'interest_rate_per_annum' => 'nullable|numeric|min:0',
+            'employee_id' => 'required|exists:employees,id',
+            'loan_amount' => 'required|numeric|min:0',
             'installment_amount' => 'required|numeric|min:0',
+            'interest_rate_per_annum' => 'nullable|numeric|min:0',
             'start_from' => 'required|date',
-            'with_interest' => 'required|boolean',
-            'installment_count' => 'nullable|integer|min:1',
+            'with_interest' => 'boolean',
         ]);
-
-        try {
-            $loan = loans::create($validated);
-            return response()->json($loan, 201);
-        } catch (\Throwable $th) {
-            return response()->json(['error' => $th->getMessage()], 500);
-        }
+        
+        $loanAmount = $validated['loan_amount'];
+        $installmentAmount = $validated['installment_amount'];
+        
+        // Calculate number of full installments
+        $fullInstallments = floor($loanAmount / $installmentAmount);
+        
+        // Calculate if there's a remainder for the last payment
+        $remainder = $loanAmount % $installmentAmount;
+        
+        // Total installment count (add 1 if there's a remainder)
+        $totalInstallments = $fullInstallments + ($remainder > 0 ? 1 : 0);
+        
+        $loan = new Loans();
+        $loan->loan_id = 'LOAN-' . time();
+        $loan->employee_id = $validated['employee_id'];
+        $loan->loan_amount = $loanAmount;
+        $loan->installment_amount = $installmentAmount;
+        $loan->start_from = $validated['start_from'];
+        $loan->interest_rate_per_annum = $validated['interest_rate_per_annum'] ?? 0;
+        $loan->with_interest = $validated['with_interest'] ?? false;
+        $loan->installment_count = $totalInstallments;
+        $loan->status = 'active';
+        $loan->save();
+        
+        // Store the remainder in a separate field or in a metadata JSON column
+        // If you don't have such fields, you could add them with a migration
+        
+        return response()->json([
+            'message' => 'Loan created successfully',
+            'loan' => $loan,
+            'last_installment_amount' => $remainder > 0 ? $remainder : $installmentAmount
+        ]);
     }
 
     /**
