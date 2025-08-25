@@ -16,13 +16,9 @@ return new class extends Migration {
             $table->time('start_time')->nullable();
             $table->time('end_time')->nullable();
             $table->time('morning_ot_start')->nullable();
-            $table->time('special_ot_start')->nullable();
-            $table->time('late_deduction')->nullable();
-            $table->string('break_time')->nullable();
-
+          
             $table->boolean('midnight_roster')->default(false);
-            $table->decimal('nopay_hour_halfday', 4, 2)->nullable();
-
+         
             $table->softDeletes();
             $table->timestamps();
 
@@ -31,8 +27,7 @@ return new class extends Migration {
             $table->index('start_time');
             $table->index('end_time');
             $table->index('morning_ot_start');
-            $table->index('special_ot_start');
-            $table->index('late_deduction');
+          
 
         });
     }
