@@ -47,6 +47,7 @@ Route::apiResource('employees', EmployeeController::class);
 Route::post('employes/post/update', [EmployeeController::class, 'update']);
 Route::get('/emp/table', [EmployeeController::class, 'getEmployeesForTable']);
 Route::get('/emp/search', [EmployeeController::class, 'search']);
+Route::get('/emp/search/empno', [EmployeeController::class, 'searchByAttendanceNo']);
 Route::apiResource('loans', LoanController::class);
 Route::apiResource('allowances', AllowancesController::class);
 Route::get('/allowance/by-company-or-department', [AllowancesController::class, 'getAllowancesByCompanyOrDepartment']);
