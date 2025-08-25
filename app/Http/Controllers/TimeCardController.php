@@ -926,8 +926,10 @@ class TimeCardController extends Controller
         $fromDate = $request->input('from_date');
         $toDate = $request->input('to_date');
 
-        $path = $request->file('file')->getRealPath();
-        $rows = Excel::toArray([], $path)[0];
+        // Pass the UploadedFile object directly (same method used by AllowancesController)
+        // This preserves original filename/extension so the package can detect type on Linux
+        $uploaded = $request->file('file');
+        $rows = Excel::toArray([], $uploaded)[0];
 
         $results = [
             'imported' => 0,
