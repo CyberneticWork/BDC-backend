@@ -14,6 +14,7 @@ use Maatwebsite\Excel\Facades\Excel;
 use Illuminate\Support\Facades\DB;
 use App\Models\absence;
 use App\Exports\AttendanceTemplateExport;
+use App\Models\leave_master;
 
 // use Maatwebsite\Excel\Facades\Excel;
 
@@ -1392,9 +1393,36 @@ class TimeCardController extends Controller
 
         return response()->json($absentees);
     }
-
     public function downloadTemplate()
     {
         return Excel::download(new AttendanceTemplateExport, 'attendance_template.xlsx');
     }
+    public function getTodayStats()
+{
+    $today = now()->format('Y-m-d');
+    
+    // Get employees on leave today
+    $onLeaveCount = leave_master::where('status', 'Approved')
+        ->where(function($query) use ($today) {
+            $query->where('leave_date', $today)
+                ->orWhere(function($q) use ($today) {
+                    $q->where('leave_from', '<=', $today)
+                      ->where('leave_to', '>=', $today);
+                });
+        })
+        ->distinct('employee_id')
+        ->count('employee_id');
+
+    // Get employees present today (have at least one IN record)
+    $presentCount = time_card::where('date', $today)
+        ->where('status', 'IN')
+        ->distinct('employee_id')
+        ->count('employee_id');
+
+    return response()->json([
+        'on_leave' => $onLeaveCount,
+        'present' => $presentCount
+    ]);
+}
+
 }

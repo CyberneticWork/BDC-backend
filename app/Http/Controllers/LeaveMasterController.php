@@ -257,4 +257,26 @@ class LeaveMasterController extends Controller
         $rejectedLeaves = leave_master::with('employee')->where('status', 'Rejected')->get();
         return response()->json($rejectedLeaves);
     }
+    // Add this method to your LeaveMasterController
+// Add this method to your LeaveMasterController
+public function getApprovedLeavesByDate(Request $request)
+{
+    $date = $request->query('date');
+    
+    if (!$date) {
+        return response()->json(['message' => 'Date parameter is required'], 422);
+    }
+
+    $leaveCount = leave_master::where('status', 'Approved')
+        ->where(function($query) use ($date) {
+            $query->where('leave_date', $date)
+                ->orWhere(function($q) use ($date) {
+                    $q->where('leave_from', '<=', $date)
+                      ->where('leave_to', '>=', $date);
+                });
+        })
+        ->count();
+
+    return response()->json($leaveCount);
+}
 }
