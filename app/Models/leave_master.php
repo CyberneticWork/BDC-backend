@@ -23,7 +23,8 @@ class leave_master extends Model
         'cancel_from',
         'cancel_to',
         'reason',
-        'status'
+        'status',
+        'over_limit'
     ];
 
     public function employee()

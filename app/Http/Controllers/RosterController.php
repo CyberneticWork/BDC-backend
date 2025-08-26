@@ -42,7 +42,7 @@ class RosterController extends Controller
     public function show($id)
     {
         $roster = roster::find($id);
-        if (! $roster) {
+        if (!$roster) {
             return response()->json(['message' => 'Roster not found'], 404);
         }
 
@@ -58,11 +58,11 @@ class RosterController extends Controller
 
         // Single entry validation
         $validator = Validator::make($request->all(), [
-            'roster_id' => 'required|integer',
+            'roster_id' => 'nullable|integer', // allow null; we may set it automatically
             'shift_code' => 'required|exists:shifts,id',
             'company_id' => 'nullable|exists:companies,id',
-            'department_id' => 'nullable',
-            'sub_department_id' => 'nullable',
+            'department_id' => 'nullable|exists:departments,id',
+            'sub_department_id' => 'nullable|exists:sub_departments,id',
             'employee_id' => 'nullable|exists:employees,id',
             'is_recurring' => 'boolean',
             'recurrence_pattern' => 'nullable|string',
@@ -77,8 +77,35 @@ class RosterController extends Controller
 
         $data = $validator->validated();
 
-        if (! isset($data['roster_id'])) {
-            $data['roster_id'] = roster::max('roster_id') + 1;
+        // Build group signature
+        $signature = [
+            'company_id' => $data['company_id'] ?? null,
+            'department_id' => $data['department_id'] ?? null,
+            'sub_department_id' => $data['sub_department_id'] ?? null,
+            'date_from' => $data['date_from'] ?? null,
+            'date_to' => $data['date_to'] ?? null,
+            'shift_code' => $data['shift_code'],
+        ];
+
+        // Check if a roster group with the same signature already exists
+        $existingRosterId = $this->findExistingRosterGroupId($signature);
+
+        if ($existingRosterId !== null) {
+            // If request tries to create a new roster_id for an existing group -> block
+            if (isset($data['roster_id']) && (int) $data['roster_id'] !== (int) $existingRosterId) {
+                return response()->json([
+                    'errors' => [
+                        'roster' => ["A roster already exists for this company/department/sub-department, date range and shift (roster_id: {$existingRosterId}). Use the same roster_id to add employees to the existing roster."]
+                    ]
+                ], 422);
+            }
+            // No roster_id provided -> attach to existing group
+            $data['roster_id'] = $existingRosterId;
+        } else {
+            // No existing group -> assign roster_id if not provided
+            if (!isset($data['roster_id'])) {
+                $data['roster_id'] = (int) roster::max('roster_id') + 1;
+            }
         }
 
         $roster = roster::create($data);
@@ -101,13 +128,15 @@ class RosterController extends Controller
     {
         $entries = json_decode($request->getContent(), true);
 
-        if (! is_array($entries)) {
+        if (!is_array($entries)) {
             return response()->json(['error' => 'Invalid bulk data format. Expected JSON array.'], 400);
         }
 
         $validatedEntries = [];
         $errors = [];
         $rosterId = null;
+
+        $commonSignature = null;
 
         foreach ($entries as $index => $entry) {
             $validator = Validator::make($entry, [
@@ -131,18 +160,47 @@ class RosterController extends Controller
 
             $validated = $validator->validated();
 
+            // Enforce same roster_id across the batch
             if ($rosterId === null) {
                 $rosterId = $validated['roster_id'];
-            } elseif ($validated['roster_id'] !== $rosterId) {
+            } elseif ((int) $validated['roster_id'] !== (int) $rosterId) {
                 $errors[$index] = ['roster_id' => 'All entries in a bulk request must have the same roster_id'];
+                continue;
+            }
+
+            // Build and enforce same group signature across the batch
+            $signature = [
+                'company_id' => $validated['company_id'] ?? null,
+                'department_id' => $validated['department_id'] ?? null,
+                'sub_department_id' => $validated['sub_department_id'] ?? null,
+                'date_from' => $validated['date_from'] ?? null,
+                'date_to' => $validated['date_to'] ?? null,
+                'shift_code' => $validated['shift_code'],
+            ];
+
+            if ($commonSignature === null) {
+                $commonSignature = $signature;
+            } elseif ($signature !== $commonSignature) {
+                $errors[$index] = ['group' => 'All entries must share the same company/department/sub-department, date range, and shift_code'];
                 continue;
             }
 
             $validatedEntries[] = $validated;
         }
 
-        if (! empty($errors)) {
+        if (!empty($errors)) {
             return response()->json(['errors' => $errors], 422);
+        }
+
+        // Prevent creating a new roster group if another one already exists with a different roster_id
+        $existingRosterId = $this->findExistingRosterGroupId($commonSignature);
+
+        if ($existingRosterId !== null && (int) $existingRosterId !== (int) $rosterId) {
+            return response()->json([
+                'errors' => [
+                    'roster' => ["A roster already exists for this company/department/sub-department, date range and shift (roster_id: {$existingRosterId}). Use the same roster_id to add employees to the existing roster."]
+                ]
+            ], 422);
         }
 
         DB::beginTransaction();
@@ -167,7 +225,7 @@ class RosterController extends Controller
     public function update(Request $request, $id)
     {
         $roster = roster::find($id);
-        if (! $roster) {
+        if (!$roster) {
             return response()->json(['message' => 'Roster not found'], 404);
         }
 
@@ -196,7 +254,7 @@ class RosterController extends Controller
     public function destroy($id)
     {
         $roster = roster::find($id);
-        if (! $roster) {
+        if (!$roster) {
             return response()->json(['message' => 'Roster not found'], 404);
         }
 
@@ -305,5 +363,29 @@ class RosterController extends Controller
                 'error' => $e->getMessage(),
             ], 500);
         }
+    }
+
+    /**
+     * Find an existing roster group (same org + date range + shift) and return its roster_id.
+     * Returns null if no such group exists.
+     */
+    private function findExistingRosterGroupId(array $signature): ?int
+    {
+        // Only enforce when company-level assignment is in play
+        if (!array_key_exists('company_id', $signature)) {
+            return null;
+        }
+
+        $query = roster::query()
+            ->where('company_id', $signature['company_id'])
+            ->where('department_id', $signature['department_id'])
+            ->where('sub_department_id', $signature['sub_department_id'])
+            ->where('date_from', $signature['date_from'])
+            ->where('date_to', $signature['date_to'])
+            ->where('shift_code', $signature['shift_code']);
+
+        $existing = $query->select('roster_id')->first();
+
+        return $existing?->roster_id ? (int) $existing->roster_id : null;
     }
 }
