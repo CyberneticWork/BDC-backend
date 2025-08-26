@@ -39,7 +39,8 @@ class LeaveMasterController extends Controller
             'cancel_from' => 'nullable|date',
             'cancel_to' => 'nullable|date|after_or_equal:cancel_from',
             'reason' => 'nullable|string|max:1000',
-            'status' => 'required|in:Pending,Approved,HR_Approved,Rejected'
+            'status' => 'required|in:Pending,Approved,HR_Approved,Rejected',
+            'force_continue' => 'nullable|boolean' // Add this new parameter
         ]);
 
         if ($validator->fails()) {
@@ -50,13 +51,39 @@ class LeaveMasterController extends Controller
         $employee = employee::with('organizationAssignment')->findOrFail($request->employee_id);
         $orgAssignment = $employee->organizationAssignment;
 
+        $overLimitInfo = null;
+
         // Check if employee is in probationary period
         if ($orgAssignment && $orgAssignment->probationary_period) {
             // If in probation, only allow half-day leaves
             if (!$request->is_half_day) {
-                return response()->json([
-                    'message' => 'Employees in probation period can only take half-day leaves'
-                ], 422);
+                if (!$request->force_continue) {
+                    return response()->json([
+                        'message' => 'Employees in probation period can only take half-day leaves',
+                        'limit_exceeded' => true,
+                        'continue_allowed' => true
+                    ], 422);
+                }
+
+                // Calculate the full duration first
+                $fullDuration = 0;
+                if (isset($request->leave_from) && isset($request->leave_to)) {
+                    $from = new \DateTime($request->leave_from);
+                    $to = new \DateTime($request->leave_to);
+                    $interval = $from->diff($to);
+                    $fullDuration = $interval->days + 1;
+                } elseif (isset($request->leave_date)) {
+                    $fullDuration = 1;
+                }
+
+                // Only half is valid, the rest is over limit
+                $validDuration = $fullDuration / 2;
+                $overLimitDuration = $fullDuration / 2;
+
+                $overLimitInfo = [
+                    'reason' => 'probation_full_day',
+                    'amount' => $overLimitDuration
+                ];
             }
 
             // Check if employee already has a half-day leave this month
@@ -70,26 +97,47 @@ class LeaveMasterController extends Controller
                 ->exists();
 
             if ($existingLeaves) {
-                return response()->json([
-                    'message' => 'Employees in probation period can only take one half-day leave per month'
-                ], 422);
+                if (!$request->force_continue) {
+                    return response()->json([
+                        'message' => 'Employees in probation period can only take one half-day leave per month',
+                        'limit_exceeded' => true,
+                        'continue_allowed' => true
+                    ], 422);
+                }
+                $overLimitInfo = [
+                    'reason' => 'probation_monthly_limit',
+                    'amount' => 0.5 // The entire leave is over limit
+                ];
             }
         }
 
         $data = $request->all();
 
         // Calculate leave_duration based on available data
+        $leaveDuration = 0;
         if (isset($data['leave_from']) && isset($data['leave_to'])) {
             $from = new \DateTime($data['leave_from']);
             $to = new \DateTime($data['leave_to']);
             $interval = $from->diff($to);
-            $data['leave_duration'] = $interval->days + 1;
+            $leaveDuration = $interval->days + 1;
         } elseif (isset($data['leave_date'])) {
-            $data['leave_duration'] = 1;
+            $leaveDuration = 1;
         }
 
         if (isset($data['is_half_day']) && $data['is_half_day']) {
-            $data['leave_duration'] = $data['leave_duration'] > 0 ? $data['leave_duration'] / 2 : 0.5;
+            $leaveDuration = $leaveDuration > 0 ? $leaveDuration / 2 : 0.5;
+        }
+
+        // For probationary period full-day leave override
+        if ($overLimitInfo && $overLimitInfo['reason'] === 'probation_full_day') {
+            $data['leave_duration'] = $leaveDuration / 2; // Only store valid portion
+        } else {
+            $data['leave_duration'] = $leaveDuration;
+        }
+
+        // Set over_limit value if needed
+        if ($overLimitInfo) {
+            $data['over_limit'] = $overLimitInfo['amount'];
         }
 
         $leaveMaster = leave_master::create($data);
@@ -122,7 +170,8 @@ class LeaveMasterController extends Controller
             'cancel_from' => 'nullable|date',
             'cancel_to' => 'nullable|date|after_or_equal:cancel_from',
             'reason' => 'nullable|string|max:1000',
-            'status' => 'sometimes|in:Pending,Approved,HR_Approved,Rejected'
+            'status' => 'sometimes|in:Pending,Approved,HR_Approved,Rejected',
+            'force_continue' => 'nullable|boolean' // Add this new parameter
         ]);
 
         if ($validator->fails()) {
@@ -133,13 +182,39 @@ class LeaveMasterController extends Controller
         $employee = employee::with('organizationAssignment')->findOrFail($leaveMaster->employee_id);
         $orgAssignment = $employee->organizationAssignment;
 
+        $overLimitInfo = null;
+
         // Check if employee is in probationary period
         if ($orgAssignment && $orgAssignment->probationary_period) {
             // If in probation, only allow half-day leaves
             if (isset($request->is_half_day) && !$request->is_half_day) {
-                return response()->json([
-                    'message' => 'Employees in probation period can only take half-day leaves'
-                ], 422);
+                if (!$request->force_continue) {
+                    return response()->json([
+                        'message' => 'Employees in probation period can only take half-day leaves',
+                        'limit_exceeded' => true,
+                        'continue_allowed' => true
+                    ], 422);
+                }
+
+                // Calculate the full duration first
+                $fullDuration = 0;
+                if (isset($request->leave_from) && isset($request->leave_to)) {
+                    $from = new \DateTime($request->leave_from);
+                    $to = new \DateTime($request->leave_to);
+                    $interval = $from->diff($to);
+                    $fullDuration = $interval->days + 1;
+                } elseif (isset($request->leave_date)) {
+                    $fullDuration = 1;
+                }
+
+                // Only half is valid, the rest is over limit
+                $validDuration = $fullDuration / 2;
+                $overLimitDuration = $fullDuration / 2;
+
+                $overLimitInfo = [
+                    'reason' => 'probation_full_day',
+                    'amount' => $overLimitDuration
+                ];
             }
 
             // Check if employee already has a half-day leave this month (excluding current leave)
@@ -154,9 +229,17 @@ class LeaveMasterController extends Controller
                 ->exists();
 
             if ($existingLeaves) {
-                return response()->json([
-                    'message' => 'Employees in probation period can only take one half-day leave per month'
-                ], 422);
+                if (!$request->force_continue) {
+                    return response()->json([
+                        'message' => 'Employees in probation period can only take one half-day leave per month',
+                        'limit_exceeded' => true,
+                        'continue_allowed' => true
+                    ], 422);
+                }
+                $overLimitInfo = [
+                    'reason' => 'probation_monthly_limit',
+                    'amount' => 0.5 // The entire leave is over limit
+                ];
             }
         }
 
@@ -174,11 +257,21 @@ class LeaveMasterController extends Controller
             $data['leave_duration'] = 1;
         }
 
-        // If is_half_day is true, divide the duration by 2
         if (isset($data['is_half_day']) && $data['is_half_day']) {
             $data['leave_duration'] = isset($data['leave_duration']) && $data['leave_duration'] > 0
                 ? $data['leave_duration'] / 2
                 : 0.5;
+        }
+
+        // For probationary period full-day leave override
+        if ($overLimitInfo && $overLimitInfo['reason'] === 'probation_full_day') {
+            // Only store valid portion (half of the calculated duration)
+            $data['leave_duration'] = $data['leave_duration'] / 2;
+        }
+
+        // Set over_limit value if needed
+        if ($overLimitInfo) {
+            $data['over_limit'] = $overLimitInfo['amount'];
         }
 
         $leaveMaster->update($data);

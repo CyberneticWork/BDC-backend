@@ -23,7 +23,7 @@ return new class extends Migration {
             $table->text('reason')->nullable();
             $table->integer('count')->nullable()->default(1);
             $table->enum('status', ['Pending', 'Approved', 'HR_Approved', 'Rejected'])->default('Pending');
-            $table->integer('over_limit')->nullable();
+            $table->decimal('over_limit', 10, 2)->nullable();
             $table->boolean('is_half_day')->default(false);
             $table->decimal('leave_duration', 5, 2)->default(1.00);
 
