@@ -40,7 +40,7 @@ Route::post('/login', [AuthController::class, 'login']);
 Route::post('/register', [AuthController::class, 'register']);
 Route::put('/leave-masters/{id}/status', [LeaveMasterController::class, 'updateStatus']);
 // Route::get('/test', [AuthController::class, 'test']);
-
+Route::get('/dashboard/stats/today', [TimeCardController::class, 'getTodayStats']);
 Route::apiResource('users', UserController::class);
 Route::apiResource('shifts', ShiftController::class);
 Route::apiResource('employees', EmployeeController::class);
