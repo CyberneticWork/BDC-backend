@@ -46,21 +46,48 @@ class LeaveMasterController extends Controller
             return response()->json($validator->errors(), 422);
         }
 
+        // Get employee organization assignment
+        $employee = employee::with('organizationAssignment')->findOrFail($request->employee_id);
+        $orgAssignment = $employee->organizationAssignment;
+
+        // Check if employee is in probationary period
+        if ($orgAssignment && $orgAssignment->probationary_period) {
+            // If in probation, only allow half-day leaves
+            if (!$request->is_half_day) {
+                return response()->json([
+                    'message' => 'Employees in probation period can only take half-day leaves'
+                ], 422);
+            }
+
+            // Check if employee already has a half-day leave this month
+            $currentMonth = now()->format('Y-m');
+            $existingLeaves = leave_master::where('employee_id', $request->employee_id)
+                ->where('status', '!=', 'Rejected')
+                ->where(function ($query) use ($currentMonth) {
+                    $query->whereRaw("DATE_FORMAT(leave_date, '%Y-%m') = ?", [$currentMonth])
+                        ->orWhereRaw("DATE_FORMAT(leave_from, '%Y-%m') = ?", [$currentMonth]);
+                })
+                ->exists();
+
+            if ($existingLeaves) {
+                return response()->json([
+                    'message' => 'Employees in probation period can only take one half-day leave per month'
+                ], 422);
+            }
+        }
+
         $data = $request->all();
 
         // Calculate leave_duration based on available data
         if (isset($data['leave_from']) && isset($data['leave_to'])) {
-            // Calculate days between leave_from and leave_to (inclusive)
             $from = new \DateTime($data['leave_from']);
             $to = new \DateTime($data['leave_to']);
             $interval = $from->diff($to);
-            $data['leave_duration'] = $interval->days + 1; // +1 to include both start and end dates
+            $data['leave_duration'] = $interval->days + 1;
         } elseif (isset($data['leave_date'])) {
-            // Single day leave
             $data['leave_duration'] = 1;
         }
 
-        // If is_half_day is true, divide the duration by 2
         if (isset($data['is_half_day']) && $data['is_half_day']) {
             $data['leave_duration'] = $data['leave_duration'] > 0 ? $data['leave_duration'] / 2 : 0.5;
         }
@@ -103,6 +130,36 @@ class LeaveMasterController extends Controller
         }
 
         $leaveMaster = leave_master::findOrFail($id);
+        $employee = employee::with('organizationAssignment')->findOrFail($leaveMaster->employee_id);
+        $orgAssignment = $employee->organizationAssignment;
+
+        // Check if employee is in probationary period
+        if ($orgAssignment && $orgAssignment->probationary_period) {
+            // If in probation, only allow half-day leaves
+            if (isset($request->is_half_day) && !$request->is_half_day) {
+                return response()->json([
+                    'message' => 'Employees in probation period can only take half-day leaves'
+                ], 422);
+            }
+
+            // Check if employee already has a half-day leave this month (excluding current leave)
+            $currentMonth = now()->format('Y-m');
+            $existingLeaves = leave_master::where('employee_id', $leaveMaster->employee_id)
+                ->where('id', '!=', $id)
+                ->where('status', '!=', 'Rejected')
+                ->where(function ($query) use ($currentMonth) {
+                    $query->whereRaw("DATE_FORMAT(leave_date, '%Y-%m') = ?", [$currentMonth])
+                        ->orWhereRaw("DATE_FORMAT(leave_from, '%Y-%m') = ?", [$currentMonth]);
+                })
+                ->exists();
+
+            if ($existingLeaves) {
+                return response()->json([
+                    'message' => 'Employees in probation period can only take one half-day leave per month'
+                ], 422);
+            }
+        }
+
         $data = $request->all();
 
         // Calculate leave_duration based on available data
@@ -212,9 +269,9 @@ class LeaveMasterController extends Controller
     //return annual/casual/special leave record counts for a specific employee
     //return annual/casual/special leave record counts for a specific employee with half-day support
     public function getLeaveRecordCountsByEmployee($employeeId)
-{
-    $leaveCounts = leave_master::where('employee_id', $employeeId)
-        ->selectRaw('
+    {
+        $leaveCounts = leave_master::where('employee_id', $employeeId)
+            ->selectRaw('
             leave_type,
             -- Full days that are not half days
             SUM(CASE WHEN is_half_day = 0 AND status != "Rejected" THEN COALESCE(leave_duration, 1) ELSE 0 END) as approved_full_days,
@@ -225,11 +282,11 @@ class LeaveMasterController extends Controller
             -- Rejected half days (each counts as 0.5)
             SUM(CASE WHEN is_half_day = 1 AND status = "Rejected" THEN 0.5 ELSE 0 END) as rejected_half_days
         ')
-        ->groupBy('leave_type')
-        ->get();
+            ->groupBy('leave_type')
+            ->get();
 
-    return response()->json($leaveCounts);
-}
+        return response()->json($leaveCounts);
+    }
     // Get leave records that the status = 'Pending'
     public function getPendingLeaveRecords()
     {
@@ -259,24 +316,24 @@ class LeaveMasterController extends Controller
     }
     // Add this method to your LeaveMasterController
 // Add this method to your LeaveMasterController
-public function getApprovedLeavesByDate(Request $request)
-{
-    $date = $request->query('date');
-    
-    if (!$date) {
-        return response()->json(['message' => 'Date parameter is required'], 422);
+    public function getApprovedLeavesByDate(Request $request)
+    {
+        $date = $request->query('date');
+
+        if (!$date) {
+            return response()->json(['message' => 'Date parameter is required'], 422);
+        }
+
+        $leaveCount = leave_master::where('status', 'Approved')
+            ->where(function ($query) use ($date) {
+                $query->where('leave_date', $date)
+                    ->orWhere(function ($q) use ($date) {
+                        $q->where('leave_from', '<=', $date)
+                            ->where('leave_to', '>=', $date);
+                    });
+            })
+            ->count();
+
+        return response()->json($leaveCount);
     }
-
-    $leaveCount = leave_master::where('status', 'Approved')
-        ->where(function($query) use ($date) {
-            $query->where('leave_date', $date)
-                ->orWhere(function($q) use ($date) {
-                    $q->where('leave_from', '<=', $date)
-                      ->where('leave_to', '>=', $date);
-                });
-        })
-        ->count();
-
-    return response()->json($leaveCount);
-}
 }
