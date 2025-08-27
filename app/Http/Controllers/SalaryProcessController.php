@@ -17,6 +17,7 @@ use App\Imports\EmployeeAllowancesImport;
 use App\Imports\EmployeeDeductionsImport;
 use Illuminate\Support\Facades\Validator;
 use App\Models\loans;
+use App\Models\leave_master; // add this
 
 
 class SalaryProcessController extends Controller
@@ -283,6 +284,7 @@ class SalaryProcessController extends Controller
             d.name AS department_name,
             sd.name AS sub_department_name,
             comp.basic_salary,
+            oa.probationary_period,  -- add probation flag
 
             -- Compensation flags
             comp.increment_active,
@@ -418,7 +420,8 @@ class SalaryProcessController extends Controller
         comp.ot_night_rate,  comp.enable_epf_etf,
         lo.installment_count, lo.installment_amount,
         c.id, oa.department_id,
-        comp.stamp                -- ADDED: group by stamp
+        comp.stamp,
+        oa.probationary_period          -- add to group by
 ";
 
         // Prepare parameters
@@ -479,10 +482,28 @@ class SalaryProcessController extends Controller
                 $basicSalary += $incrementValue;
             }
 
-            // 2. No-pay
+            // Probation over-limit days for this month
+            $employeeData['probationary_period'] = (bool) ($result->probationary_period ?? false);
+            $probationOverLimitDays = 0.0;
+            if ($employeeData['probationary_period']) {
+                $probationOverLimitDays = (float) (leave_master::where('employee_id', $employeeData['id'])
+                    ->where('status', 'Approved') // only approved
+                    ->where(function ($q) use ($startDate, $endDate) {
+                        $q->whereBetween('leave_date', [$startDate, $endDate])
+                          ->orWhere(function ($q2) use ($startDate, $endDate) {
+                              $q2->where('leave_from', '<=', $endDate)
+                                 ->where('leave_to', '>=', $startDate);
+                          });
+                    })
+                    ->sum('over_limit') ?? 0);
+            }
+            $employeeData['probation_over_limit'] = $probationOverLimitDays;
+
+            // 2. No-pay + probation over-limit deductions
             $perDaySalary = $basicSalary / $workingDaysInMonth;
             $noPayDeduction = $approvedNoPayDays * $perDaySalary;
-            $adjustedBasic = $basicSalary - $noPayDeduction;
+            $probationDeduction = $probationOverLimitDays * $perDaySalary;
+            $adjustedBasic = $basicSalary - $noPayDeduction - $probationDeduction;
 
             // 3. Allowances
             $totalAllowances = array_reduce($allowances, function ($carry, $item) {
@@ -541,6 +562,8 @@ class SalaryProcessController extends Controller
                 'adjusted_basic' => $adjustedBasic,
                 'per_day_salary' => $perDaySalary,
                 'no_pay_deduction' => $noPayDeduction,
+                'probation_over_limit_days' => $probationOverLimitDays,   // added
+                'probation_deduction' => $probationDeduction,            // added
                 'total_allowances' => $totalAllowances,
                 'epf_etf_base' => $epfEtfBase,
                 'epf_employee_deduction' => $epfEmployeeDeduction,
@@ -553,6 +576,26 @@ class SalaryProcessController extends Controller
                 'stamp' => $stampValue,
                 'net_salary' => $netSalary
             ];
+
+            // Include probation flag and over_limit (sum within requested month)
+            $employeeData['probationary_period'] = (bool) ($result->probationary_period ?? false);
+            $employeeData['probation_over_limit'] = 0.0;
+
+            if ($employeeData['probationary_period']) {
+                // Sum over_limit for any leave records falling within the month window
+                $overLimitSum = leave_master::where('employee_id', $employeeData['id'])
+                    ->where('status', 'Approved') // only approved
+                    ->where(function ($q) use ($startDate, $endDate) {
+                        $q->whereBetween('leave_date', [$startDate, $endDate])
+                            ->orWhere(function ($q2) use ($startDate, $endDate) {
+                                $q2->where('leave_from', '<=', $endDate)
+                                    ->where('leave_to', '>=', $startDate);
+                            });
+                    })
+                    ->sum('over_limit');
+
+                $employeeData['probation_over_limit'] = (float) ($overLimitSum ?? 0);
+            }
 
             $data[] = $employeeData;
         }
