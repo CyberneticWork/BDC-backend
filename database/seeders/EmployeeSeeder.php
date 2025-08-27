@@ -163,8 +163,8 @@ class EmployeeSeeder extends Seeder
             // Create employee
             $employee = employee::create([
                 'title' => $title,
-                'attendance_employee_no' => $i,
-                'epf' => $i,
+                'attendance_employee_no' => 'ST00' . $i,
+                'epf' => '00' .$i,
                 'nic' => ($gender === 'male' ? '8' : '7') . rand(111111111, 999999999) . 'V',
                 'dob' => date('Y-m-d', strtotime('-' . rand(25, 50) . ' years')),
                 'gender' => $gender,
