@@ -10,6 +10,7 @@ use App\Mail\LeaveApprovedMail;
 use App\Mail\LeaveRejectedMail;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Log;
+use Carbon\Carbon;
 
 class LeaveMasterController extends Controller
 {
@@ -65,45 +66,77 @@ class LeaveMasterController extends Controller
 
         // Check if employee is in probationary period
         if ($orgAssignment && $orgAssignment->probationary_period) {
-            // If in probation, only allow half-day leaves
+            // If in probation, process special leave rules
+            $requestDate = isset($request->leave_date) 
+                ? Carbon::parse($request->leave_date) 
+                : (isset($request->leave_from) ? Carbon::parse($request->leave_from) : now());
+            
+            $leaveBalance = $this->calculateProbationaryLeaveBalance($request->employee_id, $requestDate);
+            
+            // Calculate requested half-days
+            $requestedHalfDays = $request->is_half_day ? 1 : ($fullDuration * 2);
+            
+            // If full day leave during probation, only allow if they have enough balance
             if (!$request->is_half_day) {
                 if (!$request->force_continue) {
                     return response()->json([
-                        'message' => 'Employees in probation period can only take half-day leaves',
+                        'message' => 'Employees in probation period can only take half-day leaves at a time',
                         'limit_exceeded' => true,
                         'continue_allowed' => true
                     ], 422);
                 }
-                // Only half is valid, the rest is over limit
-                $overLimitInfo = [
-                    'reason' => 'probation_full_day',
-                    'amount' => $fullDuration / 2,
-                ];
-            }
-
-            // Check if employee already has a half-day leave this month
-            $currentMonth = now()->format('Y-m');
-            $existingLeaves = leave_master::where('employee_id', $request->employee_id)
-                ->where('status', '!=', 'Rejected')
-                ->where(function ($query) use ($currentMonth) {
-                    $query->whereRaw("DATE_FORMAT(leave_date, '%Y-%m') = ?", [$currentMonth])
-                        ->orWhereRaw("DATE_FORMAT(leave_from, '%Y-%m') = ?", [$currentMonth]);
-                })
-                ->exists();
-
-            if ($existingLeaves) {
-                if (!$request->force_continue) {
-                    return response()->json([
-                        'message' => 'Employees in probation period can only take one half-day leave per month',
-                        'limit_exceeded' => true,
-                        'continue_allowed' => true
-                    ], 422);
+                
+                // Check if they have enough balance for at least half of the request
+                if ($leaveBalance['available_half_days'] < 1) {
+                    // Not enough balance for even a half day
+                    if (!$request->force_continue) {
+                        return response()->json([
+                            'message' => 'You have used all your probationary leave allowance (' . 
+                                         $leaveBalance['max_accrued'] . ' half-days for the year)',
+                            'limit_exceeded' => true,
+                            'continue_allowed' => true
+                        ], 422);
+                    }
+                    
+                    // They're forcing through with no balance - all is over limit
+                    $overLimitInfo = [
+                        'reason' => 'probation_no_balance',
+                        'amount' => $fullDuration
+                    ];
+                } else {
+                    // They have some balance - calculate how much is valid vs over limit
+                    $validHalfDays = min($leaveBalance['available_half_days'], $requestedHalfDays);
+                    $overLimitHalfDays = $requestedHalfDays - $validHalfDays;
+                    
+                    // Convert back to days
+                    $validDuration = $validHalfDays / 2;
+                    $overLimitDuration = $overLimitHalfDays / 2;
+                    
+                    if ($overLimitDuration > 0) {
+                        $overLimitInfo = [
+                            'reason' => 'probation_partial_balance',
+                            'amount' => $overLimitDuration
+                        ];
+                    }
                 }
-                // Entire requested duration is over limit (if user requested half-day it's 0.5, otherwise fullDuration)
-                $overLimitInfo = [
-                    'reason' => 'probation_monthly_limit',
-                    'amount' => (isset($request->is_half_day) && $request->is_half_day) ? 0.5 : $fullDuration,
-                ];
+            } else {
+                // Half-day request - check if they have balance
+                if ($leaveBalance['available_half_days'] < 1) {
+                    if (!$request->force_continue) {
+                        return response()->json([
+                            'message' => 'You have used all your probationary leave allowance (' . 
+                                         $leaveBalance['max_accrued'] . ' half-days for the year)',
+                            'limit_exceeded' => true,
+                            'continue_allowed' => true
+                        ], 422);
+                    }
+                    
+                    // They're forcing through with no balance
+                    $overLimitInfo = [
+                        'reason' => 'probation_no_balance',
+                        'amount' => 0.5
+                    ];
+                }
             }
         }
 
@@ -129,11 +162,16 @@ class LeaveMasterController extends Controller
         if ($overLimitInfo) {
             if ($overLimitInfo['reason'] === 'probation_full_day') {
                 // When full-day was requested during probation, only half of the day is valid.
-                // Note: this branch only triggers when request->is_half_day is false.
                 $data['leave_duration'] = $leaveDuration / 2;
             } elseif ($overLimitInfo['reason'] === 'probation_monthly_limit') {
                 // Already used monthly half-day allowance -> this whole requested duration is over limit
                 $data['leave_duration'] = 0;
+            } elseif ($overLimitInfo['reason'] === 'probation_no_balance') {
+                // No balance available - set duration to 0
+                $data['leave_duration'] = 0;
+            } elseif ($overLimitInfo['reason'] === 'probation_partial_balance') {
+                // Partial balance - subtract the over_limit amount from the full duration
+                $data['leave_duration'] = $leaveDuration - $overLimitInfo['amount'];
             } else {
                 $data['leave_duration'] = $leaveDuration;
             }
@@ -191,47 +229,77 @@ class LeaveMasterController extends Controller
 
         // Check if employee is in probationary period
         if ($orgAssignment && $orgAssignment->probationary_period) {
-            // If in probation, only allow half-day leaves
-            if (isset($request->is_half_day) && !$request->is_half_day) {
+            // If in probation, process special leave rules
+            $requestDate = isset($request->leave_date) 
+                ? Carbon::parse($request->leave_date) 
+                : (isset($request->leave_from) ? Carbon::parse($request->leave_from) : now());
+            
+            $leaveBalance = $this->calculateProbationaryLeaveBalance($request->employee_id, $requestDate);
+            
+            // Calculate requested half-days
+            $requestedHalfDays = $request->is_half_day ? 1 : ($fullDuration * 2);
+            
+            // If full day leave during probation, only allow if they have enough balance
+            if (!$request->is_half_day) {
                 if (!$request->force_continue) {
                     return response()->json([
-                        'message' => 'Employees in probation period can only take half-day leaves',
+                        'message' => 'Employees in probation period can only take half-day leaves at a time',
                         'limit_exceeded' => true,
                         'continue_allowed' => true
                     ], 422);
                 }
-
-                // Only half is valid, the rest is over limit
-                $overLimitInfo = [
-                    'reason' => 'probation_full_day',
-                    'amount' => $fullDuration / 2,
-                ];
-            }
-
-            // Check if employee already has a half-day leave this month (excluding current leave)
-            $currentMonth = now()->format('Y-m');
-            $existingLeaves = leave_master::where('employee_id', $leaveMaster->employee_id)
-                ->where('id', '!=', $id)
-                ->where('status', '!=', 'Rejected')
-                ->where(function ($query) use ($currentMonth) {
-                    $query->whereRaw("DATE_FORMAT(leave_date, '%Y-%m') = ?", [$currentMonth])
-                        ->orWhereRaw("DATE_FORMAT(leave_from, '%Y-%m') = ?", [$currentMonth]);
-                })
-                ->exists();
-
-            if ($existingLeaves) {
-                if (!$request->force_continue) {
-                    return response()->json([
-                        'message' => 'Employees in probation period can only take one half-day leave per month',
-                        'limit_exceeded' => true,
-                        'continue_allowed' => true
-                    ], 422);
+                
+                // Check if they have enough balance for at least half of the request
+                if ($leaveBalance['available_half_days'] < 1) {
+                    // Not enough balance for even a half day
+                    if (!$request->force_continue) {
+                        return response()->json([
+                            'message' => 'You have used all your probationary leave allowance (' . 
+                                         $leaveBalance['max_accrued'] . ' half-days for the year)',
+                            'limit_exceeded' => true,
+                            'continue_allowed' => true
+                        ], 422);
+                    }
+                    
+                    // They're forcing through with no balance - all is over limit
+                    $overLimitInfo = [
+                        'reason' => 'probation_no_balance',
+                        'amount' => $fullDuration
+                    ];
+                } else {
+                    // They have some balance - calculate how much is valid vs over limit
+                    $validHalfDays = min($leaveBalance['available_half_days'], $requestedHalfDays);
+                    $overLimitHalfDays = $requestedHalfDays - $validHalfDays;
+                    
+                    // Convert back to days
+                    $validDuration = $validHalfDays / 2;
+                    $overLimitDuration = $overLimitHalfDays / 2;
+                    
+                    if ($overLimitDuration > 0) {
+                        $overLimitInfo = [
+                            'reason' => 'probation_partial_balance',
+                            'amount' => $overLimitDuration
+                        ];
+                    }
                 }
-                // Entire requested duration is over limit (if user requested half-day it's 0.5, otherwise fullDuration)
-                $overLimitInfo = [
-                    'reason' => 'probation_monthly_limit',
-                    'amount' => (isset($request->is_half_day) && $request->is_half_day) ? 0.5 : $fullDuration,
-                ];
+            } else {
+                // Half-day request - check if they have balance
+                if ($leaveBalance['available_half_days'] < 1) {
+                    if (!$request->force_continue) {
+                        return response()->json([
+                            'message' => 'You have used all your probationary leave allowance (' . 
+                                         $leaveBalance['max_accrued'] . ' half-days for the year)',
+                            'limit_exceeded' => true,
+                            'continue_allowed' => true
+                        ], 422);
+                    }
+                    
+                    // They're forcing through with no balance
+                    $overLimitInfo = [
+                        'reason' => 'probation_no_balance',
+                        'amount' => 0.5
+                    ];
+                }
             }
         }
 
@@ -428,5 +496,43 @@ class LeaveMasterController extends Controller
             ->count();
 
         return response()->json($leaveCount);
+    }
+
+    /**
+     * Calculate available probationary leave balance
+     * Probationary employees get 7 half-days per year (1 half-day per month with rollover)
+     */
+    private function calculateProbationaryLeaveBalance($employeeId, $requestDate = null)
+    {
+        $requestDate = $requestDate ?? now();
+        $currentYear = $requestDate->year;
+
+        // How many months have passed in the current year up to the request date
+        $monthsElapsed = min($requestDate->month, 12);
+
+        // Maximum potential half-day leaves accrued so far (1 per month, max 7 per year)
+        $maxAccruedLeaves = min($monthsElapsed, 7);
+
+        // Get all approved/pending leaves used in the current year
+        $usedLeaves = leave_master::where('employee_id', $employeeId)
+            ->where('status', '!=', 'Rejected')
+            ->whereYear('reporting_date', $currentYear)
+            ->get();
+
+        // Calculate used leave half-days
+        $usedHalfDays = 0;
+        foreach ($usedLeaves as $leave) {
+            // Count leave duration (already accounts for half-days)
+            $usedHalfDays += $leave->is_half_day ? 1 : ($leave->leave_duration * 2);
+        }
+
+        // Available half-days = accrued - used (minimum 0)
+        $availableHalfDays = max(0, $maxAccruedLeaves - $usedHalfDays);
+
+        return [
+            'available_half_days' => $availableHalfDays,
+            'used_half_days' => $usedHalfDays,
+            'max_accrued' => $maxAccruedLeaves
+        ];
     }
 }
