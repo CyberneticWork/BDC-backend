@@ -67,13 +67,13 @@ class SalaryController extends Controller
         try {
             // Find the salary record
             $salaryRecord = salary_process::findOrFail($id);
-            
+
             // Store the original values for audit tracking
             $originalData = $salaryRecord->toArray();
-            
+
             // Get the current data for calculations
             $basicSalary = (float) $request->basic_salary;
-            
+
             // Calculate BR allowance based on BR1 and BR2 flags
             $brAllowance = 0;
             if ($request->br1 && $request->br2) {
@@ -88,18 +88,18 @@ class SalaryController extends Controller
             } else {
                 $brStatus = 'None';
             }
-            
+
             // Get working days in month (simplified - could be more complex in production)
             $year = $request->year;
             $month = $request->month;
             $totalDaysInMonth = cal_days_in_month(CAL_GREGORIAN, (int)$month, (int)$year);
             $workingDaysInMonth = $totalDaysInMonth - 8; // Assuming ~8 non-working days per month
-            
+
             // Calculate per day salary and no-pay deduction
             $perDaySalary = $basicSalary / $workingDaysInMonth;
             $noPayDeduction = $request->approved_no_pay_days * $perDaySalary;
             $adjustedBasic = $basicSalary - $noPayDeduction;
-            
+
             // Accept allowances as array or JSON string; normalize to array
             $allowances = $request->allowances ?? [];
             if (is_string($allowances)) {
@@ -112,15 +112,15 @@ class SalaryController extends Controller
                     $totalAllowances += (float)($allowance['amount'] ?? 0);
                 }
             }
-            
+
             // Calculate EPF/ETF base
             $epfEtfBase = $adjustedBasic + $totalAllowances;
-            
+
             // Calculate EPF/ETF contributions if enabled
             $epfEmployeeDeduction = $request->enable_epf_etf ? $epfEtfBase * 0.08 : 0;
             $epfEmployerContribution = $request->enable_epf_etf ? $epfEtfBase * 0.12 : 0;
             $etfEmployerContribution = $request->enable_epf_etf ? $epfEtfBase * 0.03 : 0;
-            
+
             // Process deductions from the request
             $deductions = $request->deductions ?? [];
             if (is_string($deductions)) {
@@ -133,19 +133,19 @@ class SalaryController extends Controller
                     $totalFixedDeductions += (float)($deduction['amount'] ?? 0);
                 }
             }
-            
+
             // Handle stamp duty
             $stampValue = $request->stamp ? 25 : 0;
-            
+
             // Handle OT calculations - using the values from UI
             $morningOtFees = (float) $request->ot_morning;
             $nightOtFees = (float) $request->ot_evening;
-            
+
             // Calculate gross and net salary
             $grossSalary = $epfEtfBase + $morningOtFees + $nightOtFees;
             $totalDeductions = $totalFixedDeductions + ($request->installment_amount ?? 0) + $epfEmployeeDeduction;
             $netSalary = $grossSalary - $totalDeductions - $stampValue;
-            
+
             // Create updated salary_breakdown object
             $updatedSalaryBreakdown = [
                 'basic_salary' => $basicSalary,
@@ -167,7 +167,7 @@ class SalaryController extends Controller
                 'stamp' => $stampValue,
                 'net_salary' => $netSalary
             ];
-            
+
             // Prepare updated data
             $updatedData = [
                 'basic_salary' => $request->basic_salary,
@@ -193,10 +193,10 @@ class SalaryController extends Controller
                 'allowances' => $allowances,
                 'deductions' => $deductions,
             ];
-            
+
             // Update the salary record
             $salaryRecord->update($updatedData);
-            
+
             // Track changes for audit log - only fields directly edited by the user
             $changes = [];
 
@@ -214,7 +214,7 @@ class SalaryController extends Controller
                 if (!$request->has($field)) {
                     continue;
                 }
-                
+
                 // Convert value to comparable format (booleans need special handling)
                 $requestValue = $request->input($field);
                 if (in_array($field, ['increment_active', 'enable_epf_etf', 'br1', 'br2', 'stamp'])) {
@@ -222,14 +222,14 @@ class SalaryController extends Controller
                     $originalValue = (bool)($originalData[$field] ?? false);
                 } else {
                     $originalValue = $originalData[$field] ?? null;
-                    
+
                     // Handle numeric conversions for proper comparison
                     if (is_numeric($requestValue) && is_numeric($originalValue)) {
                         $requestValue = (string)$requestValue; // Convert to string to avoid float precision issues
                         $originalValue = (string)$originalValue;
                     }
                 }
-                
+
                 // Only track if value actually changed
                 if ($originalValue != $requestValue) {
                     $changes[$field] = [
@@ -244,7 +244,7 @@ class SalaryController extends Controller
                 // Simple change indicator for allowances to avoid deep comparison
                 $origAllowancesJson = json_encode($originalData['allowances'] ?? []);
                 $newAllowancesJson = json_encode($allowances);
-                
+
                 if ($origAllowancesJson !== $newAllowancesJson) {
                     $changes['allowances'] = [
                         'changed' => true,
@@ -258,7 +258,7 @@ class SalaryController extends Controller
                 // Simple change indicator for deductions to avoid deep comparison
                 $origDeductionsJson = json_encode($originalData['deductions'] ?? []);
                 $newDeductionsJson = json_encode($deductions);
-                
+
                 if ($origDeductionsJson !== $newDeductionsJson) {
                     $changes['deductions'] = [
                         'changed' => true,
@@ -268,14 +268,14 @@ class SalaryController extends Controller
             }
 
             // Include net salary change for easy reference, but only if tracked fields changed
-            if (!empty($changes) && 
+            if (!empty($changes) &&
                 (isset($originalData['salary_breakdown']['net_salary']) || isset($updatedSalaryBreakdown['net_salary']))) {
                 $changes['net_salary'] = [
                     'from' => $originalData['salary_breakdown']['net_salary'] ?? 0,
                     'to' => $updatedSalaryBreakdown['net_salary']
                 ];
             }
-            
+
             // In the update method, add this before creating the audit record:
             if (Auth::check()) {
                 $userId = Auth::id();
@@ -320,7 +320,7 @@ class SalaryController extends Controller
     {
         try {
             $salary = salary_process::findOrFail($id);
-            
+
             // Get user info for audit trail
             if (Auth::check()) {
                 $userId = Auth::id();
@@ -344,7 +344,7 @@ class SalaryController extends Controller
                 'action' => 'delete',
                 'changes' => ['deleted' => true]
             ]);
-            
+
             $salary->delete();
             return response()->json(['message' => 'Salary record deleted successfully'], 200);
         } catch (\Exception $e) {
@@ -361,11 +361,11 @@ class SalaryController extends Controller
     {
         try {
             $salaryRecord = salary_process::findOrFail($id);
-            
+
             $auditLogs = SalaryProcessAudit::where('salary_process_id', $id)
                 ->orderBy('created_at', 'desc')
                 ->get();
-            
+
             return response()->json([
                 'salary_id' => $id,
                 'employee_name' => $salaryRecord->full_name,
@@ -386,6 +386,8 @@ class SalaryController extends Controller
             ->where('status', 'processed')
             ->get();
 
+            // return response()->json($salaries, 200);
+
         if ($salaries->isEmpty()) {
             return response()->json(['message' => 'No processed salaries found'], 404);
         }
@@ -399,6 +401,7 @@ class SalaryController extends Controller
         // Add CSV headers (matching the Excel template)
         fputcsv($handle, [
             'Record Identifier',
+            'Employee No',
             'Value Date',
             'Payment Method Name',
             'Debit Account No.',
@@ -423,6 +426,7 @@ class SalaryController extends Controller
         foreach ($salaries as $salary) {
             fputcsv($handle, [
                 $salary->id, // Record Identifier (Debit)
+                $salary->employee_no, // Record Identifier (Debit)
                 now()->format('d/m/Y'), // Value Date (current date)
                 'CEFTS', // Payment Method Name
                 '000123456789', // Debit Account No. (hardcoded or configurable)
