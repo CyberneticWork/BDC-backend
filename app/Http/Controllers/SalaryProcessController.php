@@ -676,7 +676,7 @@ class SalaryProcessController extends Controller
         ]);
 
         try {
-            $month = $request->month ?? date('m');
+            $month = $request->data[0]['month'];
             $year = $request->year ?? date('Y');
             $duplicateEntries = [];
 
