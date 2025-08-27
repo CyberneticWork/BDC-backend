@@ -127,10 +127,10 @@ class DatabaseSeeder extends Seeder
                 'start_time' => $shift[2],
                 'end_time' => $shift[3],
                 'morning_ot_start' => $shift[4],
-            
-              
+
+
                 'midnight_roster' => $shift[7],
-              
+
             ]);
         }
 
@@ -253,10 +253,10 @@ class DatabaseSeeder extends Seeder
                 'ot_morning_rate' => rand(20, 100),
                 'ot_night_rate' => rand(20, 100),
 
-                'bank_name' => $bank['name'],
-                'branch_name' => $branch['name'],
-                'bank_code' => $bank['code'],
-                'branch_code' => $branch['code'],
+                'bank_name' => "People's Bank",
+                'branch_name' => "Katu",
+                'bank_code' => 318,
+                'branch_code' => 1234,
                 'bank_account_no' => '10' . rand(100000000, 999999999),
 
                 'br1' => rand(0, 1),

@@ -490,10 +490,10 @@ class SalaryProcessController extends Controller
                     ->where('status', 'Approved') // only approved
                     ->where(function ($q) use ($startDate, $endDate) {
                         $q->whereBetween('leave_date', [$startDate, $endDate])
-                          ->orWhere(function ($q2) use ($startDate, $endDate) {
-                              $q2->where('leave_from', '<=', $endDate)
-                                 ->where('leave_to', '>=', $startDate);
-                          });
+                            ->orWhere(function ($q2) use ($startDate, $endDate) {
+                                $q2->where('leave_from', '<=', $endDate)
+                                    ->where('leave_to', '>=', $startDate);
+                            });
                     })
                     ->sum('over_limit') ?? 0);
             }

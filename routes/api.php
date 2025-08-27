@@ -146,8 +146,7 @@ Route::get('/loans/employee-by-number/{number}', [LoanController::class, 'getEmp
 
 Route::get('/test/{id}', [ResignationController::class, 'testFunction']);
 
-Route::middleware('auth:sanctum')->group(function () {
-    Route::apiResource('salary', SalaryController::class);
-    Route::get('salary/{id}/audit', [SalaryController::class, 'getAuditLogs']);
-    Route::get('/salary/process/csv', [SalaryController::class, 'salaryCSV']);
-});
+Route::apiResource('salary', SalaryController::class);
+Route::get('salary/{id}/audit', [SalaryController::class, 'getAuditLogs']);
+Route::get('/salary/process/csv', [SalaryController::class, 'salaryCSV']);
+
