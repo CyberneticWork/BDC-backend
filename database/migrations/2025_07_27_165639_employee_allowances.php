@@ -13,7 +13,8 @@ return new class extends Migration {
         Schema::create('employee_allowances', function (Blueprint $table) {
             $table->id();
             $table->foreignId('employee_id')->nullable()->constrained('employees')->cascadeOnDelete();
-            $table->foreignId('attendance_employee_no')->nullable()->constrained('employees')->cascadeOnDelete();
+            $table->string('attendance_employee_no')->nullable();
+            $table->foreign('attendance_employee_no')->references('attendance_employee_no')->on('employees')->cascadeOnDelete();
             $table->foreignId('allowance_id')->constrained('allowances')->cascadeOnDelete();
             $table->decimal('custom_amount', 10, 2)->nullable();
             $table->boolean('is_active')->default(true);
