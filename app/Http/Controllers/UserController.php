@@ -15,7 +15,7 @@ class UserController extends Controller
     public function index()
     {
         $users = User::all();
-        return response()->json($users, 200);
+        return response()->json($users,200);
     }
 
     /**
@@ -65,53 +65,9 @@ class UserController extends Controller
     /**
      * Update the specified resource in storage.
      */
-    public function update(Request $request, $id)
+    public function update(Request $request, string $id)
     {
-        // Find the user
-        $user = User::find($id);
-
-        if (!$user) {
-            return response()->json([
-                'message' => 'User not found'
-            ], 404);
-        }
-
-        // Custom validation - email should be unique except for current user
-        $validator = Validator::make($request->all(), [
-            'name' => 'sometimes|string|max:255',
-            'email' => 'sometimes|string|email|max:255|unique:users,email,' . $id,
-            'password' => 'sometimes|string|min:8',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'message' => 'Validation failed',
-                'errors' => $validator->errors(),
-            ], 422);
-        }
-
-        // Prepare update data
-        $updateData = [];
-
-        if ($request->has('name')) {
-            $updateData['name'] = $request->name;
-        }
-
-        if ($request->has('email')) {
-            $updateData['email'] = $request->email;
-        }
-
-        if ($request->has('password')) {
-            $updateData['password'] = Hash::make($request->password);
-        }
-
-        // Update the user
-        $user->update($updateData);
-
-        return response()->json([
-            'message' => 'User updated successfully',
-            'user' => $user->fresh() // Get fresh instance from database
-        ], 200);
+        //
     }
 
     /**
