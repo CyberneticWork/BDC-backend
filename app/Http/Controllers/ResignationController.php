@@ -163,12 +163,21 @@ class ResignationController extends Controller
 
     }
 
+    private function generateStrongPassword($length = 12)
+    {
+        $chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+';
+        $password = '';
+
+        for ($i = 0; $i < $length; $i++) {
+            $password .= $chars[random_int(0, strlen($chars) - 1)];
+        }
+
+        return $password;
+    }
+
     public function testFunction($id)
     {
-        $ot = over_time::where('employee_id', $id)
-            ->where('status', 'approved')
-            ->get('afternoon_ot');
-        return $ot;
+        return response()->json(['password' => $this->generateStrongPassword($id)]);
     }
 
     public function uploadDocuments(Request $request, $id)

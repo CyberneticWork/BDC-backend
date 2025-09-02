@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use Carbon\Carbon;
+use App\Models\User;
 use App\Models\spouse;
 use App\Models\children;
 use App\Models\employee;
@@ -10,8 +12,8 @@ use App\Models\compensation;
 use Illuminate\Http\Request;
 use App\Models\contact_detail;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use App\Models\organization_assignment;
-use Carbon\Carbon;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 
@@ -426,6 +428,17 @@ class EmployeeController extends Controller
                 'profile_photo_path' => $profilePicturePath,
             ]);
 
+            $pwd = $this->generateStrongPassword(9);
+
+            $user = User::create([
+                'name' => $personal['fullName'],
+                'email' => $address['email'],
+                'password' => Hash::make($pwd),
+                'role' => 'employee',
+            ]);
+
+
+
             // Create children records if any valid children exist
             if (isset($personal['children']) && is_array($personal['children'])) {
                 foreach ($personal['children'] as $child) {
@@ -549,6 +562,18 @@ class EmployeeController extends Controller
                 'error' => $e->getMessage(),
             ], 500);
         }
+    }
+
+    private function generateStrongPassword($length = 12)
+    {
+        $chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+';
+        $password = '';
+
+        for ($i = 0; $i < $length; $i++) {
+            $password .= $chars[random_int(0, strlen($chars) - 1)];
+        }
+
+        return $password;
     }
 
     /**
