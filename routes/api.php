@@ -144,7 +144,7 @@ Route::get('/deductions/template/download', [DeductionController::class, 'downlo
 Route::post('/deductions/import', [DeductionController::class, 'import']);
 Route::get('/loans/employee-by-number/{number}', [LoanController::class, 'getEmployeeByNumber']);
 
-// Route::get('/test/{id}', [ResignationController::class, 'testFunction']);
+Route::post('/test', [ResignationController::class, 'testFunction']);
 
 Route::apiResource('salary', SalaryController::class);
 Route::get('salary/{id}/audit', [SalaryController::class, 'getAuditLogs']);

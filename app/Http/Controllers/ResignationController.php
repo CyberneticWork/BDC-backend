@@ -2,15 +2,18 @@
 
 namespace App\Http\Controllers;
 
+use Exception;
 use App\Models\loans;
+use App\Models\employee;
 use App\Models\over_time;
 use App\Models\Resignation;
-use App\Models\ResignationDocument;
-use App\Models\employee;
 use Illuminate\Http\Request;
+use App\Models\ResignationDocument;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Mail;
+use App\Mail\EmployeePasswordSendEmail;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
-use Illuminate\Support\Facades\Auth;
 
 class ResignationController extends Controller
 {
@@ -175,9 +178,21 @@ class ResignationController extends Controller
         return $password;
     }
 
-    public function testFunction($id)
+    public function testFunction(Request $request)
     {
-        return response()->json(['password' => $this->generateStrongPassword($id)]);
+        $pwd = $this->generateStrongPassword(9);
+
+        $mail_data = [
+            'password' => $pwd,
+            'name' => $request->name,
+        ];
+
+        try {
+            Mail::to($request->email)->send(new EmployeePasswordSendEmail($mail_data));
+            return response()->json($mail_data);
+        } catch (Exception $e) {
+            return response()->json(['message' => 'Failed to send email', 'error' => $e->getMessage()], 500);
+        }
     }
 
     public function uploadDocuments(Request $request, $id)

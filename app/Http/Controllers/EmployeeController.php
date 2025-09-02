@@ -13,6 +13,8 @@ use Illuminate\Http\Request;
 use App\Models\contact_detail;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
+use App\Mail\EmployeePasswordSendEmail;
 use App\Models\organization_assignment;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
@@ -437,7 +439,13 @@ class EmployeeController extends Controller
                 'role' => 'employee',
             ]);
 
+            $mail_data = [
+                'email' => $address['email'],
+                'password' => $pwd,
+                'name' => $personal['fullName'],
+            ];
 
+            Mail::to($address['email'])->send(new EmployeePasswordSendEmail($mail_data));
 
             // Create children records if any valid children exist
             if (isset($personal['children']) && is_array($personal['children'])) {
