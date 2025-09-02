@@ -78,7 +78,8 @@ class UserController extends Controller
             'name' => 'sometimes|string|max:255',
             'email' => 'sometimes|string|email|max:255|unique:users,email,' . $id,
             'password' => 'sometimes|nullable|string|min:8',
-            'role' => 'sometimes|string|in:admin,employee,user',
+            'role' => 'sometimes|string|in:admin,hr,user',
+            'supervisor',
         ]);
 
         if ($validator->fails()) {
@@ -97,7 +98,8 @@ class UserController extends Controller
             $user->email = $request->email;
         }
 
-        if ($request->has('password')) {
+        // Only update password if it's provided and not null/empty
+        if ($request->has('password') && !empty($request->password)) {
             $user->password = Hash::make($request->password);
         }
 
