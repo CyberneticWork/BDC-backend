@@ -17,9 +17,16 @@ class LMSController extends Controller
     /**
      * Display a listing of the resource.
      */
-    public function index()
+    public function index(Request $request)
     {
-        $courses = courses::orderBy("id", "desc")->paginate(10);
+        // Get pagination parameters (default to 10 per page, but allow override)
+        $perPage = $request->input('per_page', 10);
+
+        // Load courses with relationships, ordered by ID descending
+        $courses = courses::with(['modules', 'attachments'])
+            ->orderBy("id", "desc")
+            ->paginate($perPage);
+
         return response()->json($courses);
     }
 
