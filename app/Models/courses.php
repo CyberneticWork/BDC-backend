@@ -31,16 +31,16 @@ class courses extends Model
         return $this->belongsTo(User::class, 'created_by');
     }
 
-    // Relationship: Course has many Modules
+    // Relationship: Course has many Modules (specify foreign key)
     public function modules(): HasMany
     {
-        return $this->hasMany(modules::class);
+        return $this->hasMany(modules::class, 'course_id');  // Explicitly set foreign key
     }
 
-    // Relationship: Course has many Attachments
+    // Relationship: Course has many Attachments (specify foreign key)
     public function attachments(): HasMany
     {
-        return $this->hasMany(attachments::class);
+        return $this->hasMany(attachments::class, 'course_id');  // Explicitly set foreign key
     }
 
     // Relationship: Course has many Exams

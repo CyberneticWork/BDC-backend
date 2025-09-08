@@ -17,6 +17,9 @@ return new class extends Migration {
             $table->json('options');
             $table->integer('correct_answer');
             $table->text('explanation')->nullable();
+
+            $table->softDeletes();
+
             $table->timestamps();
         });
     }

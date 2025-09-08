@@ -22,6 +22,8 @@ use App\Http\Controllers\ResignationController;
 use App\Http\Controllers\LeaveCalenderController;
 use App\Http\Controllers\SalaryProcessController;
 use App\Http\Controllers\SubDepartmentsController;
+use App\Http\Controllers\LMSController;
+
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -149,4 +151,8 @@ Route::post('/test', [ResignationController::class, 'testFunction']);
 Route::apiResource('salary', SalaryController::class);
 Route::get('salary/{id}/audit', [SalaryController::class, 'getAuditLogs']);
 Route::get('/salary/process/csv', [SalaryController::class, 'salaryCSV']);
+
+// LMS Routes
+
+Route::apiResource('courses', LMSController::class);  // Handles all CRUD: GET /courses (index), POST /courses (store), GET /courses/{id} (show), etc.
 

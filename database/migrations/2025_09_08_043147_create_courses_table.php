@@ -16,6 +16,8 @@ return new class extends Migration {
             $table->text('description')->nullable();
             $table->string('duration')->nullable();
             $table->foreignId('created_by')->constrained('users');
+
+            $table->softDeletes();
             $table->timestamps();
         });
     }

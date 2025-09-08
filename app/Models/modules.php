@@ -26,10 +26,10 @@ class modules extends Model
         'updated_at' => 'datetime',
     ];
 
-    // Relationship: Module belongs to Course
+    // Relationship: Module belongs to Course (specify foreign key)
     public function course(): BelongsTo
     {
-        return $this->belongsTo(courses::class);
+        return $this->belongsTo(courses::class, 'course_id');  // Explicitly set foreign key
     }
 
     // Relationship: Module has many Progress records

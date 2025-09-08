@@ -17,6 +17,9 @@ return new class extends Migration {
             $table->enum('type', ['pdf', 'video']);
             $table->string('url');
             $table->string('size')->nullable();
+
+            $table->softDeletes();
+
             $table->timestamps();
         });
     }

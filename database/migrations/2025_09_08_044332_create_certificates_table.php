@@ -16,6 +16,9 @@ return new class extends Migration {
             $table->foreignId('course_id')->constrained('courses');
             $table->date('issued_date')->useCurrent();
             $table->string('certificate_url')->nullable();
+
+            $table->softDeletes();
+
             $table->timestamps();
         });
     }

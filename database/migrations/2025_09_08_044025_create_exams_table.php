@@ -19,6 +19,9 @@ return new class extends Migration {
             $table->integer('total_questions')->default(0);
             $table->integer('passing_score')->default(70);
             $table->foreignId('created_by')->constrained('users');
+
+            $table->softDeletes();
+
             $table->timestamps();
         });
     }

@@ -14,6 +14,9 @@ return new class extends Migration {
             $table->integer('score');
             $table->boolean('passed');
             $table->timestamp('submitted_at')->useCurrent();
+
+            $table->softDeletes();
+
             $table->timestamps();
         });
     }

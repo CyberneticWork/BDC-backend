@@ -25,9 +25,9 @@ class attachments extends Model
         'updated_at' => 'datetime',
     ];
 
-    // Relationship: Attachment belongs to Course
+    // Relationship: Attachment belongs to Course (specify foreign key)
     public function course(): BelongsTo
     {
-        return $this->belongsTo(courses::class);
+        return $this->belongsTo(courses::class, 'course_id');  // Explicitly set foreign key
     }
 }
