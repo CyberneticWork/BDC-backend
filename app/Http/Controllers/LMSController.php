@@ -115,18 +115,92 @@ class LMSController extends Controller
     }
 
     /**
-     * Update the specified resource in storage.
+     * Update the specified course with modules and attachments.
      */
     public function update(Request $request, string $id)
     {
-        //
+        // Find the course
+        $course = courses::findOrFail($id);
+
+        // Validate the request data (similar to store)
+        $validator = Validator::make($request->all(), [
+            'title' => 'required|string|max:255',
+            'description' => 'nullable|string',
+            'duration' => 'nullable|string|max:50',
+            'modules' => 'nullable|array',
+            'modules.*.title' => 'required|string|max:255',
+            'modules.*.content' => 'nullable|string',
+            'attachments' => 'nullable|array',
+            'attachments.*.name' => 'required|string|max:255',
+            'attachments.*.type' => 'required|in:pdf,video',
+            'attachments.*.url' => 'required|string|max:255',
+            'attachments.*.size' => 'nullable|string|max:50',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        // Update the course
+        $course->update([
+            'title' => $request->title,
+            'description' => $request->description,
+            'duration' => $request->duration,
+        ]);
+
+        // Handle modules: Delete existing and recreate (or update if IDs are provided)
+        if ($request->has('modules') && is_array($request->modules)) {
+            // Delete existing modules
+            modules::where('course_id', $course->id)->delete();
+            // Create new modules
+            foreach ($request->modules as $moduleData) {
+                modules::create([
+                    'course_id' => $course->id,
+                    'title' => $moduleData['title'],
+                    'content' => $moduleData['content'] ?? null,
+                    'completed' => false,
+                ]);
+            }
+        }
+
+        // Handle attachments: Delete existing and recreate
+        if ($request->has('attachments') && is_array($request->attachments)) {
+            // Delete existing attachments
+            attachments::where('course_id', $course->id)->delete();
+            // Create new attachments
+            foreach ($request->attachments as $attachmentData) {
+                attachments::create([
+                    'course_id' => $course->id,
+                    'name' => $attachmentData['name'],
+                    'type' => $attachmentData['type'],
+                    'url' => $attachmentData['url'],
+                    'size' => $attachmentData['size'] ?? null,
+                ]);
+            }
+        }
+
+        // Load relationships for response
+        $course->load(['modules', 'attachments']);
+
+        return response()->json([
+            'message' => 'Course updated successfully',
+            'course' => $course
+        ], 200);
     }
 
     /**
-     * Remove the specified resource from storage.
+     * Soft delete the specified course.
      */
     public function destroy(string $id)
     {
-        //
+        $course = courses::findOrFail($id);
+        $course->delete();  // Soft delete (sets deleted_at)
+
+        return response()->json([
+            'message' => 'Course deleted successfully'
+        ], 200);
     }
 }
