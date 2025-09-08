@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::create('pms_task_assignees', function (Blueprint $table) {
             $table->id();
-            // change: store attendance_employee_no in employee_id column
+            // store attendance_employee_no (string) in employee_id column
             $table->string('employee_id');
             $table->foreign('employee_id')
                   ->references('attendance_employee_no')

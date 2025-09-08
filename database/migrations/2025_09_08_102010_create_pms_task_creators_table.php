@@ -14,12 +14,18 @@ return new class extends Migration
         Schema::create('pms_task_creators', function (Blueprint $table) {
             $table->id();
             $table->foreignId('task_id')->constrained('pms_kpi_tasks')->onDelete('cascade');
-            $table->foreignId('employee_id')->nullable()->constrained('employees')->onDelete('set null');
+
+            $table->string('employee_id')->nullable();
+            $table->foreign('employee_id')
+                  ->references('attendance_employee_no')
+                  ->on('employees')
+                  ->nullOnDelete();
+
             $table->string('name')->nullable();
             $table->string('role', 100)->nullable();
             $table->timestamp('date')->nullable()->useCurrent();
             $table->timestamps();
-            
+
             $table->index('task_id');
             $table->index('employee_id');
         });
