@@ -109,4 +109,24 @@ class employee extends Model
         return $this->hasMany(over_time::class);
     }
 
+    public function pmsTaskUpdates()
+    {
+        return $this->hasMany(PmsTaskUpdate::class, 'employee_id', 'attendance_employee_no');
+    }
+
+    public function pmsTaskAssignees()
+    {
+        return $this->hasMany(PmsTaskAssignee::class, 'employee_id', 'attendance_employee_no');
+    }
+
+    public function pmsTaskCreators()
+    {
+        return $this->hasMany(PmsTaskCreator::class, 'employee_id', 'attendance_employee_no');
+    }
+
+    public function pmsPerformanceReviews()
+    {
+        return $this->hasMany(PmsPerformanceReview::class, 'employee_id', 'attendance_employee_no');
+    }
+
 }
