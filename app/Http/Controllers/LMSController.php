@@ -10,6 +10,7 @@ use App\Models\Module;
 use App\Models\modules;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 
 class LMSController extends Controller
@@ -44,10 +45,7 @@ class LMSController extends Controller
             'modules.*.title' => 'required|string|max:255',
             'modules.*.content' => 'nullable|string',
             'attachments' => 'nullable|array',
-            'attachments.*.name' => 'required|string|max:255',
-            'attachments.*.type' => 'required|in:pdf,video',
-            'attachments.*.url' => 'required|string|max:255',
-            'attachments.*.size' => 'nullable|string|max:50',
+            'attachments.*' => 'file|mimes:pdf,mp4,mov,avi|max:10240', // Allow PDF and video files, max 10MB each
         ]);
 
         if ($validator->fails()) {
@@ -84,15 +82,23 @@ class LMSController extends Controller
             }
         }
 
-        // Create attachments if provided
-        if ($request->has('attachments') && is_array($request->attachments)) {
-            foreach ($request->attachments as $attachmentData) {
+        // Handle attachments: Upload files to storage and create records
+        if ($request->hasFile('attachments')) {
+            foreach ($request->file('attachments') as $file) {
+                // Store the file in storage/app/public/attachments
+                $path = $file->store('attachments', 'public');
+                
+                // Determine type based on MIME type
+                $mime = $file->getMimeType();
+                $type = str_contains($mime, 'pdf') ? 'pdf' : 'video';
+                
+                // Create attachment record
                 attachments::create([
                     'course_id' => $course->id,
-                    'name' => $attachmentData['name'],
-                    'type' => $attachmentData['type'],
-                    'url' => $attachmentData['url'],
-                    'size' => $attachmentData['size'] ?? null,
+                    'name' => $file->getClientOriginalName(),
+                    'type' => $type,
+                    'url' => Storage::url($path), // Generate public URL
+                    'size' => $file->getSize(),
                 ]);
             }
         }
@@ -138,10 +144,7 @@ class LMSController extends Controller
             'modules.*.title' => 'required|string|max:255',
             'modules.*.content' => 'nullable|string',
             'attachments' => 'nullable|array',
-            'attachments.*.name' => 'required|string|max:255',
-            'attachments.*.type' => 'required|in:pdf,video',
-            'attachments.*.url' => 'required|string|max:255',
-            'attachments.*.size' => 'nullable|string|max:50',
+            'attachments.*' => 'file|mimes:pdf,mp4,mov,avi|max:10240', // Allow PDF and video files, max 10MB each
         ]);
 
         if ($validator->fails()) {
@@ -173,18 +176,33 @@ class LMSController extends Controller
             }
         }
 
-        // Handle attachments: Delete existing and recreate
-        if ($request->has('attachments') && is_array($request->attachments)) {
-            // Delete existing attachments
-            attachments::where('course_id', $course->id)->delete();
-            // Create new attachments
-            foreach ($request->attachments as $attachmentData) {
+        // Handle attachments: Delete existing files and records, then upload new ones
+        if ($request->hasFile('attachments')) {
+            // Delete existing attachments and their files
+            $existingAttachments = attachments::where('course_id', $course->id)->get();
+            foreach ($existingAttachments as $attachment) {
+                // Delete the file from storage
+                Storage::disk('public')->delete(str_replace('/storage/', '', $attachment->url));
+                // Delete the record
+                $attachment->delete();
+            }
+            
+            // Upload new files
+            foreach ($request->file('attachments') as $file) {
+                // Store the file in storage/app/public/attachments
+                $path = $file->store('attachments', 'public');
+                
+                // Determine type based on MIME type
+                $mime = $file->getMimeType();
+                $type = str_contains($mime, 'pdf') ? 'pdf' : 'video';
+                
+                // Create attachment record
                 attachments::create([
                     'course_id' => $course->id,
-                    'name' => $attachmentData['name'],
-                    'type' => $attachmentData['type'],
-                    'url' => $attachmentData['url'],
-                    'size' => $attachmentData['size'] ?? null,
+                    'name' => $file->getClientOriginalName(),
+                    'type' => $type,
+                    'url' => Storage::url($path), // Generate public URL
+                    'size' => $file->getSize(),
                 ]);
             }
         }
