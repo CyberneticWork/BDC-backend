@@ -15,6 +15,7 @@ return new class extends Migration {
             $table->foreignId('course_id')->constrained('courses')->onDelete('cascade');
             $table->string('title');
             $table->text('content')->nullable();
+            $table->string('path')->nullable();
             $table->boolean('completed')->default(false);
 
             $table->softDeletes();
