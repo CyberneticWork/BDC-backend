@@ -133,12 +133,13 @@ class LMSController extends Controller
         // Find the course
         $course = courses::findOrFail($id);
 
-        // Validate the request data (updated to include module files)
+        // Validate the request data (updated to include module files and optional IDs)
         $validator = Validator::make($request->all(), [
             'title' => 'required|string|max:255',
             'description' => 'nullable|string',
             'duration' => 'nullable|string|max:50',
             'modules' => 'nullable|array',
+            'modules.*.id' => 'nullable|exists:modules,id', // Optional ID for existing modules
             'modules.*.title' => 'required|string|max:255',
             'modules.*.content' => 'nullable|string',
             'modules.*.file' => 'nullable|file|mimes:pdf,mp4,mov,avi|max:10240', // New: Allow PDF/video for each module
@@ -160,33 +161,68 @@ class LMSController extends Controller
             'duration' => $request->duration,
         ]);
 
-        // Handle modules: Delete existing and recreate (or update if IDs are provided)
+        // Handle modules: Update existing, add new, and delete removed ones
         if ($request->has('modules') && is_array($request->modules)) {
-            // Get existing modules to delete old files
-            $existingModules = modules::where('course_id', $course->id)->get();
-            foreach ($existingModules as $existingModule) {
-                if ($existingModule->path) {
-                    Storage::disk('public')->delete(str_replace('/storage/', '', $existingModule->path)); // Delete old file
+            $providedModuleIds = []; // Track IDs from the request
+
+            foreach ($request->modules as $index => $moduleData) {
+                $moduleId = $moduleData['id'] ?? null;
+                $path = null;
+
+                if ($moduleId) {
+                    // Update existing module
+                    $module = modules::findOrFail($moduleId);
+                    $providedModuleIds[] = $moduleId;
+
+                    // Handle file upload if provided
+                    if ($request->hasFile("modules.{$index}.file")) {
+                        $file = $request->file("modules.{$index}.file");
+                        $storedPath = $file->store('modules', 'public');
+                        $path = Storage::url($storedPath);
+
+                        // Delete old file if it exists
+                        if ($module->path) {
+                            Storage::disk('public')->delete(str_replace('/storage/', '', $module->path));
+                        }
+                    } else {
+                        // Keep existing path if no new file
+                        $path = $module->path;
+                    }
+
+                    // Update module
+                    $module->update([
+                        'title' => $moduleData['title'],
+                        'content' => $moduleData['content'] ?? null,
+                        'path' => $path,
+                    ]);
+                } else {
+                    // Create new module
+                    if ($request->hasFile("modules.{$index}.file")) {
+                        $file = $request->file("modules.{$index}.file");
+                        $storedPath = $file->store('modules', 'public');
+                        $path = Storage::url($storedPath);
+                    }
+
+                    $newModule = modules::create([
+                        'course_id' => $course->id,
+                        'title' => $moduleData['title'],
+                        'content' => $moduleData['content'] ?? null,
+                        'completed' => false,
+                        'path' => $path,
+                    ]);
+                    $providedModuleIds[] = $newModule->id; // Add to provided IDs
                 }
-                $existingModule->delete();
             }
 
-            // Create new modules
-            foreach ($request->modules as $index => $moduleData) {
-                $path = null;
-                if ($request->hasFile("modules.{$index}.file")) {
-                    $file = $request->file("modules.{$index}.file");
-                    $storedPath = $file->store('modules', 'public');
-                    $path = Storage::url($storedPath);
+            // Delete modules not in the request (and their files)
+            $existingModules = modules::where('course_id', $course->id)->get();
+            foreach ($existingModules as $existingModule) {
+                if (!in_array($existingModule->id, $providedModuleIds)) {
+                    if ($existingModule->path) {
+                        Storage::disk('public')->delete(str_replace('/storage/', '', $existingModule->path));
+                    }
+                    $existingModule->delete();
                 }
-
-                modules::create([
-                    'course_id' => $course->id,
-                    'title' => $moduleData['title'],
-                    'content' => $moduleData['content'] ?? null,
-                    'completed' => false,
-                    'path' => $path,
-                ]);
             }
         }
 
