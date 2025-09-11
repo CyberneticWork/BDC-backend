@@ -16,6 +16,7 @@ class modules extends Model
         'title',
         'content',
         'completed',
+        'path',
         'created_at',
         'updated_at',
     ];

@@ -36,7 +36,7 @@ class LMSController extends Controller
      */
     public function store(Request $request)
     {
-        // Validate the request data
+        // Validate the request data (updated to include module files)
         $validator = Validator::make($request->all(), [
             'title' => 'required|string|max:255',
             'description' => 'nullable|string',
@@ -44,8 +44,9 @@ class LMSController extends Controller
             'modules' => 'nullable|array',
             'modules.*.title' => 'required|string|max:255',
             'modules.*.content' => 'nullable|string',
+            'modules.*.file' => 'nullable|file|mimes:pdf,mp4,mov,avi|max:10240', // New: Allow PDF/video for each module, max 10MB
             'attachments' => 'nullable|array',
-            'attachments.*' => 'file|mimes:pdf,mp4,mov,avi|max:10240', // Allow PDF and video files, max 10MB each
+            'attachments.*' => 'file|mimes:pdf,mp4,mov,avi|max:10240',
         ]);
 
         if ($validator->fails()) {
@@ -55,49 +56,46 @@ class LMSController extends Controller
             ], 422);
         }
 
-        // Get the current authenticated user (creator)
-        // $user = Auth::user();
-        // if (!$user) {
-        //     return response()->json(['message' => 'Unauthorized'], 401);
-        // }
-
         // Create the course
         $course = courses::create([
             'title' => $request->title,
             'description' => $request->description,
             'duration' => $request->duration,
-            // 'created_by' => $user->id,
-            'created_by' => 1,
+            'created_by' => 1, // Or use Auth::id() if authentication is set up
         ]);
 
         // Create modules if provided
         if ($request->has('modules') && is_array($request->modules)) {
-            foreach ($request->modules as $moduleData) {
+            foreach ($request->modules as $index => $moduleData) {
+                $path = null;
+                if ($request->hasFile("modules.{$index}.file")) {
+                    $file = $request->file("modules.{$index}.file");
+                    $path = $file->store('modules', 'public'); // Store in storage/app/public/modules
+                    $path = Storage::url($path); // Generate public URL
+                }
+
                 modules::create([
                     'course_id' => $course->id,
                     'title' => $moduleData['title'],
                     'content' => $moduleData['content'] ?? null,
                     'completed' => false,
+                    'path' => $path, // Save the file path
                 ]);
             }
         }
 
-        // Handle attachments: Upload files to storage and create records
+        // Handle attachments (unchanged)
         if ($request->hasFile('attachments')) {
             foreach ($request->file('attachments') as $file) {
-                // Store the file in storage/app/public/attachments
                 $path = $file->store('attachments', 'public');
-                
-                // Determine type based on MIME type
                 $mime = $file->getMimeType();
                 $type = str_contains($mime, 'pdf') ? 'pdf' : 'video';
-                
-                // Create attachment record
+
                 attachments::create([
                     'course_id' => $course->id,
                     'name' => $file->getClientOriginalName(),
                     'type' => $type,
-                    'url' => Storage::url($path), // Generate public URL
+                    'url' => Storage::url($path),
                     'size' => $file->getSize(),
                 ]);
             }
@@ -135,16 +133,18 @@ class LMSController extends Controller
         // Find the course
         $course = courses::findOrFail($id);
 
-        // Validate the request data (similar to store)
+        // Validate the request data (updated to include module files and optional IDs)
         $validator = Validator::make($request->all(), [
             'title' => 'required|string|max:255',
             'description' => 'nullable|string',
             'duration' => 'nullable|string|max:50',
             'modules' => 'nullable|array',
+            'modules.*.id' => 'nullable|exists:modules,id', // Optional ID for existing modules
             'modules.*.title' => 'required|string|max:255',
             'modules.*.content' => 'nullable|string',
+            'modules.*.file' => 'nullable|file|mimes:pdf,mp4,mov,avi|max:10240', // New: Allow PDF/video for each module
             'attachments' => 'nullable|array',
-            'attachments.*' => 'file|mimes:pdf,mp4,mov,avi|max:10240', // Allow PDF and video files, max 10MB each
+            'attachments.*' => 'file|mimes:pdf,mp4,mov,avi|max:10240',
         ]);
 
         if ($validator->fails()) {
@@ -161,47 +161,91 @@ class LMSController extends Controller
             'duration' => $request->duration,
         ]);
 
-        // Handle modules: Delete existing and recreate (or update if IDs are provided)
+        // Handle modules: Update existing, add new, and delete removed ones
         if ($request->has('modules') && is_array($request->modules)) {
-            // Delete existing modules
-            modules::where('course_id', $course->id)->delete();
-            // Create new modules
-            foreach ($request->modules as $moduleData) {
-                modules::create([
-                    'course_id' => $course->id,
-                    'title' => $moduleData['title'],
-                    'content' => $moduleData['content'] ?? null,
-                    'completed' => false,
-                ]);
+            $providedModuleIds = []; // Track IDs from the request
+
+            foreach ($request->modules as $index => $moduleData) {
+                $moduleId = $moduleData['id'] ?? null;
+                $path = null;
+
+                if ($moduleId) {
+                    // Update existing module
+                    $module = modules::findOrFail($moduleId);
+                    $providedModuleIds[] = $moduleId;
+
+                    // Handle file upload if provided
+                    if ($request->hasFile("modules.{$index}.file")) {
+                        $file = $request->file("modules.{$index}.file");
+                        $storedPath = $file->store('modules', 'public');
+                        $path = Storage::url($storedPath);
+
+                        // Delete old file if it exists
+                        if ($module->path) {
+                            Storage::disk('public')->delete(str_replace('/storage/', '', $module->path));
+                        }
+                    } else {
+                        // Keep existing path if no new file
+                        $path = $module->path;
+                    }
+
+                    // Update module
+                    $module->update([
+                        'title' => $moduleData['title'],
+                        'content' => $moduleData['content'] ?? null,
+                        'path' => $path,
+                    ]);
+                } else {
+                    // Create new module
+                    if ($request->hasFile("modules.{$index}.file")) {
+                        $file = $request->file("modules.{$index}.file");
+                        $storedPath = $file->store('modules', 'public');
+                        $path = Storage::url($storedPath);
+                    }
+
+                    $newModule = modules::create([
+                        'course_id' => $course->id,
+                        'title' => $moduleData['title'],
+                        'content' => $moduleData['content'] ?? null,
+                        'completed' => false,
+                        'path' => $path,
+                    ]);
+                    $providedModuleIds[] = $newModule->id; // Add to provided IDs
+                }
+            }
+
+            // Delete modules not in the request (and their files)
+            $existingModules = modules::where('course_id', $course->id)->get();
+            foreach ($existingModules as $existingModule) {
+                if (!in_array($existingModule->id, $providedModuleIds)) {
+                    if ($existingModule->path) {
+                        Storage::disk('public')->delete(str_replace('/storage/', '', $existingModule->path));
+                    }
+                    $existingModule->delete();
+                }
             }
         }
 
-        // Handle attachments: Delete existing files and records, then upload new ones
+        // Handle attachments (unchanged, but ensure old files are deleted if needed)
         if ($request->hasFile('attachments')) {
             // Delete existing attachments and their files
             $existingAttachments = attachments::where('course_id', $course->id)->get();
             foreach ($existingAttachments as $attachment) {
-                // Delete the file from storage
                 Storage::disk('public')->delete(str_replace('/storage/', '', $attachment->url));
-                // Delete the record
                 $attachment->delete();
             }
-            
+
             // Upload new files
             foreach ($request->file('attachments') as $file) {
-                // Store the file in storage/app/public/attachments
                 $path = $file->store('attachments', 'public');
-                
-                // Determine type based on MIME type
                 $mime = $file->getMimeType();
                 $type = str_contains($mime, 'pdf') ? 'pdf' : 'video';
-                
-                // Create attachment record
+
                 attachments::create([
                     'course_id' => $course->id,
                     'name' => $file->getClientOriginalName(),
                     'type' => $type,
-                    'url' => Storage::url($path), // Generate public URL
+                    'url' => Storage::url($path),
                     'size' => $file->getSize(),
                 ]);
             }

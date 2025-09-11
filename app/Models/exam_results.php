@@ -11,7 +11,7 @@ class exam_results extends Model
     use SoftDeletes;
 
     protected $fillable = [
-        'attendance_employee_no',
+        'user_id',
         'exam_id',
         'score',
         'passed',
@@ -28,10 +28,10 @@ class exam_results extends Model
         'updated_at' => 'datetime',
     ];
 
-    // Relationship: ExamResult belongs to Employee (via attendance_employee_no)
-    public function employee(): BelongsTo
+    // Relationship: ExamResult belongs to users in users (via attendance_employee_no)
+    public function user(): BelongsTo
     {
-        return $this->belongsTo(employee::class, 'attendance_employee_no', 'attendance_employee_no');
+        return $this->belongsTo(user::class, 'user_id', 'id');
     }
 
     // Relationship: ExamResult belongs to Exam
