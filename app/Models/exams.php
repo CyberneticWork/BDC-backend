@@ -45,7 +45,7 @@ class exams extends Model
     // Relationship: Exam has many Questions
     public function questions(): HasMany
     {
-        return $this->hasMany(questions::class);
+        return $this->hasMany(questions::class, 'exam_id', 'id');
     }
 
     // Relationship: Exam has many ExamResults

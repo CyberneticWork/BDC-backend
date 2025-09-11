@@ -30,6 +30,6 @@ class questions extends Model
     // Relationship: Question belongs to Exam
     public function exam(): BelongsTo
     {
-        return $this->belongsTo(exams::class);
+        return $this->belongsTo(exams::class, 'exam_id', 'id');
     }
 }

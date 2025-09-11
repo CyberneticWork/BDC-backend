@@ -23,6 +23,7 @@ use App\Http\Controllers\LeaveCalenderController;
 use App\Http\Controllers\SalaryProcessController;
 use App\Http\Controllers\SubDepartmentsController;
 use App\Http\Controllers\LMSController;
+use App\Http\Controllers\ExamController;
 
 
 Route::get('/user', function (Request $request) {
@@ -155,4 +156,11 @@ Route::get('/salary/process/csv', [SalaryController::class, 'salaryCSV']);
 // LMS Routes
 
 Route::apiResource('courses', LMSController::class);  // Handles all CRUD: GET /courses (index), POST /courses (store), GET /courses/{id} (show), etc.
+
+
+// Route::middleware('auth:sanctum')->group(function () {
+Route::apiResource('exams', ExamController::class);
+Route::post('exams/{id}/submit', [ExamController::class, 'submitExam']);
+Route::get('exam-results', [ExamController::class, 'getResults']);
+// });
 
