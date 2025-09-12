@@ -24,7 +24,7 @@ use App\Http\Controllers\SalaryProcessController;
 use App\Http\Controllers\SubDepartmentsController;
 use App\Http\Controllers\LMSController;
 use App\Http\Controllers\ExamController;
-
+use App\Http\Controllers\PmsController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -164,3 +164,10 @@ Route::post('exams/{id}/submit', [ExamController::class, 'submitExam']);
 Route::get('exam-results', [ExamController::class, 'getResults']);
 // });
 
+// PMS Related Data Endpoints
+Route::get('/kpi-tasks', [PmsController::class, 'getKpiTasks']);
+Route::get('/creator-roles', [PmsController::class, 'getCreatorRoles']);
+Route::get('/pms/companies', [PmsController::class, 'getCompanies']);
+Route::get('/pms/departments/{companyId}', [PmsController::class, 'getDepartmentsByCompany']);
+Route::get('/pms/employees-by-company', [PmsController::class, 'getEmployeesByCompany']);
+Route::get('/pms/search-employees', [PmsController::class, 'searchEmployeesByAttendanceNo']);
