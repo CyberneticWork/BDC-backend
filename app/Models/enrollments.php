@@ -11,7 +11,7 @@ class enrollments extends Model
     use SoftDeletes;
 
     protected $fillable = [
-        'attendance_employee_no',
+        'user_id',
         'course_id',
         'enrolled_at',
         'created_at',
@@ -24,10 +24,10 @@ class enrollments extends Model
         'updated_at' => 'datetime',
     ];
 
-    // Relationship: Enrollment belongs to Employee (via attendance_employee_no)
-    public function employee(): BelongsTo
+    // Relationship: Enrollment belongs to User
+    public function user(): BelongsTo
     {
-        return $this->belongsTo(employee::class, 'attendance_employee_no', 'attendance_employee_no');
+        return $this->belongsTo(User::class, 'user_id', 'id');
     }
 
     // Relationship: Enrollment belongs to Course

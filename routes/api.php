@@ -8,6 +8,7 @@ use App\Http\Controllers\UserController;
 use App\Http\Controllers\NopayController;
 use App\Http\Controllers\ShiftController;
 use App\Http\Controllers\RosterController;
+use App\Http\Controllers\EnrollmentController;
 use App\Http\Controllers\SalaryController;
 use App\Http\Controllers\ApiDataController;
 use App\Http\Controllers\CompanyController;
@@ -157,10 +158,18 @@ Route::get('/salary/process/csv', [SalaryController::class, 'salaryCSV']);
 
 Route::apiResource('courses', LMSController::class);  // Handles all CRUD: GET /courses (index), POST /courses (store), GET /courses/{id} (show), etc.
 
-
 Route::middleware('auth:sanctum')->group(function () {
+    // Exam routes
     Route::apiResource('exams', ExamController::class);
     Route::post('exams/{id}/submit', [ExamController::class, 'submitExam']);
     Route::get('exam-results', [ExamController::class, 'getResults']);
+
+    // Enrollment routes
+    Route::get('enrollments', [EnrollmentController::class, 'index']);
+    Route::post('courses/{courseId}/enroll', [EnrollmentController::class, 'enroll']);
+    Route::delete('courses/{courseId}/enroll', [EnrollmentController::class, 'unenroll']);
+    Route::get('courses/{courseId}/enrollment', [EnrollmentController::class, 'checkEnrollment']);
+    Route::get('courses/{courseId}/progress', [EnrollmentController::class, 'getProgress']);
+    Route::post('courses/{courseId}/modules/{moduleId}/progress', [EnrollmentController::class, 'updateModuleProgress']);
 });
 
