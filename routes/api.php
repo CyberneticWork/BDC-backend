@@ -171,5 +171,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('courses/{courseId}/enrollment', [EnrollmentController::class, 'checkEnrollment']);
     Route::get('courses/{courseId}/progress', [EnrollmentController::class, 'getProgress']);
     Route::post('courses/{courseId}/modules/{moduleId}/progress', [EnrollmentController::class, 'updateModuleProgress']);
+    Route::get('user/progress', [EnrollmentController::class, 'getUserProgress']);
 });
 

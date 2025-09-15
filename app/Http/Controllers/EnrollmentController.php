@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\enrollments;
 use App\Models\courses;
+use App\Models\certificates;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -170,6 +171,9 @@ class EnrollmentController extends Controller
             ], 400);
         }
 
+        // Check if course is now completed and issue certificate if needed
+        $this->checkAndIssueCertificate($userId, $courseId);
+
         // Get updated progress
         return $this->getProgress($courseId);
     }
@@ -206,6 +210,123 @@ class EnrollmentController extends Controller
             return response()->json([
                 'message' => 'Failed to unenroll from course: ' . $e->getMessage()
             ], 500);
+        }
+    }
+
+    /**
+     * Get overall progress for the authenticated user.
+     */
+    public function getUserProgress()
+    {
+        $userId = auth()->id();
+
+        // Get all enrollments with courses and modules
+        $enrollments = enrollments::with(['course.modules'])
+            ->where('user_id', $userId)
+            ->get();
+
+        $totalCourses = $enrollments->count();
+        $completedCourses = 0;
+        $totalModules = 0;
+        $completedModules = 0;
+        $enrolledCourses = [];
+
+        foreach ($enrollments as $enrollment) {
+            $course = $enrollment->course;
+            $modules = $course->modules;
+            $totalModules += $modules->count();
+
+            // Get progress for this course
+            $progressRecords = DB::table('progress')
+                ->where('user_id', $userId)
+                ->where('course_id', $course->id)
+                ->get();
+
+            $courseCompletedModules = $progressRecords->where('completed', true)->count();
+            $completedModules += $courseCompletedModules;
+
+            $isCompleted = $modules->count() > 0 && $courseCompletedModules === $modules->count();
+            if ($isCompleted) {
+                $completedCourses++;
+            }
+
+            $enrolledCourses[] = [
+                'id' => $course->id,
+                'title' => $course->title,
+                'description' => $course->description,
+                'duration' => $course->duration,
+                'enrolled_at' => $enrollment->enrolled_at,
+                'completed' => $isCompleted,
+                'total_modules' => $modules->count(),
+                'completed_modules' => $courseCompletedModules,
+                'progress_percentage' => $modules->count() > 0
+                    ? round(($courseCompletedModules / $modules->count()) * 100)
+                    : 0,
+            ];
+        }
+
+        // Get user's certificates
+        $certificates = certificates::with('course')
+            ->where('user_id', $userId)
+            ->get()
+            ->map(function ($certificate) {
+                return [
+                    'id' => $certificate->id,
+                    'course_id' => $certificate->course_id,
+                    'course_title' => $certificate->course->title ?? 'Unknown Course',
+                    'issued_date' => $certificate->issued_date,
+                    'certificate_url' => $certificate->certificate_url,
+                    'created_at' => $certificate->created_at,
+                ];
+            });
+
+        return response()->json([
+            'totalCourses' => $totalCourses,
+            'completedCourses' => $completedCourses,
+            'totalModules' => $totalModules,
+            'completedModules' => $completedModules,
+            'certificatesEarned' => $certificates->count(),
+            'enrolledCourses' => $enrolledCourses,
+            'certificates' => $certificates,
+        ]);
+    }
+
+    /**
+     * Check if course is completed and issue certificate if needed.
+     */
+    private function checkAndIssueCertificate($userId, $courseId)
+    {
+        // Get course with modules
+        $course = courses::with('modules')->find($courseId);
+        if (!$course || $course->modules->isEmpty()) {
+            return;
+        }
+
+        // Check if all modules are completed
+        $totalModules = $course->modules->count();
+        $completedModules = DB::table('progress')
+            ->where('user_id', $userId)
+            ->where('course_id', $courseId)
+            ->where('completed', true)
+            ->count();
+
+        $isCompleted = $completedModules === $totalModules;
+
+        if ($isCompleted) {
+            // Check if certificate already exists
+            $existingCertificate = certificates::where('user_id', $userId)
+                ->where('course_id', $courseId)
+                ->first();
+
+            if (!$existingCertificate) {
+                // Issue certificate
+                certificates::create([
+                    'user_id' => $userId,
+                    'course_id' => $courseId,
+                    'issued_date' => now()->toDateString(),
+                    'certificate_url' => null, // Can be updated later with actual certificate file
+                ]);
+            }
         }
     }
 }

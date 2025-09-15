@@ -11,7 +11,7 @@ class certificates extends Model
     use SoftDeletes;
 
     protected $fillable = [
-        'attendance_employee_no',
+        'user_id',
         'course_id',
         'issued_date',
         'certificate_url',
@@ -25,10 +25,10 @@ class certificates extends Model
         'updated_at' => 'datetime',
     ];
 
-    // Relationship: Certificate belongs to Employee (via attendance_employee_no)
-    public function employee(): BelongsTo
+    // Relationship: Certificate belongs to User
+    public function user(): BelongsTo
     {
-        return $this->belongsTo(employee::class, 'attendance_employee_no', 'attendance_employee_no');
+        return $this->belongsTo(User::class);
     }
 
     // Relationship: Certificate belongs to Course
