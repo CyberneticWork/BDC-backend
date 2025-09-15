@@ -27,6 +27,7 @@ return new class extends Migration
             $table->string('completion_status')->default('not-started'); // not-started, pending, in-progress, completed
             $table->timestamp('last_updated')->nullable();
             $table->timestamps();
+            $table->softDeletes();
         });
     }
 

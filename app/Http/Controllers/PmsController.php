@@ -293,13 +293,42 @@ class PmsController extends Controller
     }
 
     /**
-     * Remove the specified KPI task assignment from storage.
+     * Remove the specified KPI task assignment (soft delete).
      */
-    public function deleteKpiTaskAssignment($id)
+    public function destroy($id)
     {
-        $assignment = KpiTaskAssignment::findOrFail($id);
-        $assignment->delete();
+        try {
+            $assignment = KpiTaskAssignment::find($id);
+            if (!$assignment) {
+                return response()->json(['message' => 'KPI task assignment not found'], 404);
+            }
 
-        return response()->json(['message' => 'KPI task assignment deleted successfully']);
+            // Try normal Eloquent soft delete first (will set deleted_at)
+            try {
+                $assignment->delete();
+                return response()->json(['message' => 'Deleted'], 200);
+            } catch (\Throwable $e) {
+                // Log the error and fallback to direct DB update of deleted_at to ensure soft-delete behavior
+                \Log::error('PmsController::destroy - Eloquent delete failed', [
+                    'id' => $id,
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString(),
+                ]);
+
+                \DB::table('kpi_task_assignments')->where('id', $id)->update(['deleted_at' => now()]);
+
+                return response()->json(['message' => 'Deleted (soft) via fallback'], 200);
+            }
+        } catch (\Throwable $e) {
+            \Log::error('PmsController::destroy - unexpected error', [
+                'id' => $id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            return response()->json([
+                'message' => 'Delete failed',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
     }
 }
