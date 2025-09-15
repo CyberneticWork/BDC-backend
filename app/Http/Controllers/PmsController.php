@@ -230,4 +230,76 @@ class PmsController extends Controller
 
         return response()->json($transformed);
     }
+
+    /**
+     * Update the specified KPI task assignment in storage.
+     */
+    public function updateKpiTaskAssignment(Request $request, $id)
+    {
+        $validated = $request->validate([
+            'task_name' => 'sometimes|required|string',
+            'description' => 'nullable|string',
+            'company_id' => 'sometimes|required|exists:companies,id',
+            'department_id' => 'nullable|exists:departments,id',
+            'creator_role_name' => 'sometimes|required|string',
+            'assignees' => 'sometimes|required|array|min:1',
+            'assignees.*' => 'required|string', // attendance_employee_no
+            'start_date' => 'sometimes|required|date',
+            'end_date' => 'sometimes|required|date|after:start_date',
+            'weights' => 'nullable|array',
+            'priority' => 'nullable|string|in:low,medium,high',
+        ]);
+
+        $assignment = KpiTaskAssignment::findOrFail($id);
+
+        // Update KpiTask if task_name changed
+        if (isset($validated['task_name'])) {
+            $kpiTask = KpiTask::firstOrCreate(['task_name' => $validated['task_name']]);
+            $assignment->kpi_task_id = $kpiTask->id;
+        }
+
+        // Update CreatorRole if changed
+        if (isset($validated['creator_role_name'])) {
+            $creatorRole = CreatorRole::where('role_name', $validated['creator_role_name'])->first();
+            if (!$creatorRole) {
+                return response()->json(['error' => 'Creator role not found'], 400);
+            }
+            $assignment->creator_role_id = $creatorRole->id;
+        }
+
+        // Update other fields
+        if (isset($validated['description'])) $assignment->description = $validated['description'];
+        if (isset($validated['company_id'])) $assignment->company_id = $validated['company_id'];
+        if (isset($validated['department_id'])) $assignment->department_id = $validated['department_id'];
+        if (isset($validated['start_date'])) $assignment->start_date = $validated['start_date'];
+        if (isset($validated['end_date'])) $assignment->end_date = $validated['end_date'];
+        if (isset($validated['weights'])) $assignment->weights = $validated['weights'];
+        if (isset($validated['priority'])) $assignment->priority = $validated['priority'];
+
+        // Handle assignees update (this might require creating new assignments or updating existing)
+        // For simplicity, assume updating the employee_id if assignees array has one item
+        if (isset($validated['assignees']) && count($validated['assignees']) === 1) {
+            $employee = employee::where('attendance_employee_no', $validated['assignees'][0])->first();
+            if (!$employee) {
+                return response()->json(['error' => 'Employee not found'], 400);
+            }
+            $assignment->employee_id = $employee->id;
+        }
+
+        $assignment->last_updated = now();
+        $assignment->save();
+
+        return response()->json($assignment);
+    }
+
+    /**
+     * Remove the specified KPI task assignment from storage.
+     */
+    public function deleteKpiTaskAssignment($id)
+    {
+        $assignment = KpiTaskAssignment::findOrFail($id);
+        $assignment->delete();
+
+        return response()->json(['message' => 'KPI task assignment deleted successfully']);
+    }
 }

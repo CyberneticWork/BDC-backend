@@ -173,3 +173,5 @@ Route::get('/pms/employees-by-company', [PmsController::class, 'getEmployeesByCo
 Route::get('/pms/search-employees', [PmsController::class, 'searchEmployeesByAttendanceNo']);
 Route::get('/pms/kpi-task-assignments', [PmsController::class, 'getKpiTaskAssignments']);
 Route::post('/pms/kpi-task-assignments', [PmsController::class, 'storeKpiTaskAssignment']);
+Route::put('/pms/kpi-task-assignments/{id}', [PmsController::class, 'updateKpiTaskAssignment']);
+Route::delete('/pms/kpi-task-assignments/{id}', [PmsController::class, 'deleteKpiTaskAssignment']);
