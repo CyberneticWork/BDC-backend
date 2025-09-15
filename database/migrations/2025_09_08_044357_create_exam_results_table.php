@@ -11,13 +11,17 @@ return new class extends Migration {
             $table->id();
             $table->foreignId('user_id')->constrained('users');
             $table->foreignId('exam_id')->constrained('exams');
+            $table->integer('attempt_number')->default(1); // added
             $table->integer('score');
             $table->boolean('passed');
+            $table->json('answers')->nullable(); // added
             $table->timestamp('submitted_at')->useCurrent();
 
             $table->softDeletes();
-
             $table->timestamps();
+
+            $table->index(['user_id','exam_id']);
+            $table->index(['user_id','exam_id','attempt_number']); // added
         });
     }
 
