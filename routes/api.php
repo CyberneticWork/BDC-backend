@@ -171,3 +171,5 @@ Route::get('/pms/companies', [PmsController::class, 'getCompanies']);
 Route::get('/pms/departments/{companyId}', [PmsController::class, 'getDepartmentsByCompany']);
 Route::get('/pms/employees-by-company', [PmsController::class, 'getEmployeesByCompany']);
 Route::get('/pms/search-employees', [PmsController::class, 'searchEmployeesByAttendanceNo']);
+Route::get('/pms/kpi-task-assignments', [PmsController::class, 'getKpiTaskAssignments']);
+Route::post('/pms/kpi-task-assignments', [PmsController::class, 'storeKpiTaskAssignment']);

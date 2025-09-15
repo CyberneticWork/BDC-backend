@@ -8,6 +8,7 @@ use App\Models\CreatorRole;
 use App\Models\company;
 use App\Models\departments;
 use App\Models\employee;
+use App\Models\KpiTaskAssignment;
 
 class PmsController extends Controller
 {
@@ -109,5 +110,124 @@ class PmsController extends Controller
             });
         
         return response()->json($employees);
+    }
+
+    /**
+     * Store a new KPI task assignment (creates multiple records for multiple assignees).
+     */
+    public function storeKpiTaskAssignment(Request $request)
+    {
+        $validated = $request->validate([
+            'task_name' => 'required|string',
+            'description' => 'nullable|string',
+            'company_id' => 'required|exists:companies,id',
+            'department_id' => 'nullable|exists:departments,id',
+            'creator_role_name' => 'required|string',
+            'assignees' => 'required|array|min:1',
+            'assignees.*' => 'required|string', // attendance_employee_no
+            'start_date' => 'required|date',
+            'end_date' => 'required|date|after:start_date',
+            'weights' => 'nullable|array',
+            'priority' => 'nullable|string|in:low,medium,high',
+        ]);
+
+        // Find or create KpiTask by task_name
+        $kpiTask = KpiTask::firstOrCreate(['task_name' => $validated['task_name']]);
+
+        // Find CreatorRole by role_name
+        $creatorRole = CreatorRole::where('role_name', $validated['creator_role_name'])->first();
+        if (!$creatorRole) {
+            return response()->json(['error' => 'Creator role not found'], 400);
+        }
+
+        $assignments = [];
+        foreach ($validated['assignees'] as $attendanceNo) {
+            $employee = employee::where('attendance_employee_no', $attendanceNo)->first();
+            if (!$employee) {
+                return response()->json(['error' => 'Employee not found: ' . $attendanceNo], 400);
+            }
+
+            $assignment = KpiTaskAssignment::create([
+                'kpi_task_id' => $kpiTask->id,
+                'creator_role_id' => $creatorRole->id,
+                'weights' => $validated['weights'] ?? [],
+                'company_id' => $validated['company_id'],
+                'department_id' => $validated['department_id'],
+                'employee_id' => $employee->id,
+                'start_date' => $validated['start_date'],
+                'end_date' => $validated['end_date'],
+                'status' => 'active',
+                'priority' => $validated['priority'] ?? 'medium',
+                'description' => $validated['description'],
+                'completion_status' => 'not-started',
+                'last_updated' => now(),
+            ]);
+
+            $assignments[] = $assignment;
+        }
+
+        return response()->json($assignments, 201);
+    }
+
+    /**
+     * Get all KPI task assignments with related data for display.
+     */
+    public function getKpiTaskAssignments(Request $request)
+    {
+        $assignments = KpiTaskAssignment::with([
+            'kpiTask:id,task_name',
+            'employee:id,full_name,attendance_employee_no',
+            'company:id,name',
+            'department:id,name',
+            'creatorRole:id,role_name'
+        ])
+        ->select([
+            'id',
+            'kpi_task_id',
+            'employee_id',
+            'company_id',
+            'department_id',
+            'creator_role_id',
+            'description',
+            'start_date',
+            'end_date',
+            'status',
+            'priority',
+            'weights',
+            'completion_status',
+            'created_at'
+        ])
+        ->orderBy('created_at', 'desc') // Show recently added first
+        ->get();
+
+        // Transform to match frontend expectations
+        $transformed = $assignments->map(function ($assignment) {
+            return [
+                'id' => $assignment->id,
+                'name' => $assignment->kpiTask->task_name ?? 'Unknown Task',
+                'description' => $assignment->description ?? '',
+                'company' => $assignment->company_id,
+                'departmentId' => $assignment->department_id,
+                'companyName' => $assignment->company->name ?? 'Unknown Company',
+                'departmentName' => $assignment->department->name ?? 'Unknown Department',
+                'department' => $assignment->department->name ?? 'Unknown Department',
+                'assignees' => [$assignment->employee->attendance_employee_no ?? ''],
+                'assigneeUpdates' => [], // Can be populated later if needed
+                'startDate' => $assignment->start_date->toDateString(),
+                'endDate' => $assignment->end_date->toDateString(),
+                'status' => $assignment->status ?? 'active',
+                'priority' => $assignment->priority ?? 'medium',
+                'creator' => [
+                    'role' => $assignment->creatorRole->role_name ?? 'Unknown Role',
+                    'date' => $assignment->created_at->toISOString()
+                ],
+                'weights' => $assignment->weights ?? [],
+                'lastUpdated' => $assignment->created_at->toISOString(),
+                'frequency' => 'Monthly', // Default or add to table if needed
+                'category' => 'General' // Default or add to table if needed
+            ];
+        });
+
+        return response()->json($transformed);
     }
 }
