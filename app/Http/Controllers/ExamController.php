@@ -102,7 +102,8 @@ class ExamController extends Controller
         // $userId = auth()->id();
         $userId = 1;
 
-        $exam = exams::with(['questions', 'course'])->where('id', $id)->where('created_by', $userId)->first();
+        // $exam = exams::with(['questions', 'course'])->where('id', $id)->where('created_by', $userId)->first();
+        $exam = exams::with(['questions', 'course'])->first();
 
         if (!$exam) {
             return response()->json(['message' => 'Exam not found'], 404);
@@ -117,8 +118,8 @@ class ExamController extends Controller
     public function update(Request $request, $id)
     {
         // For testing: Comment out auth and use fixed user ID
-        // $userId = auth()->id();
-        $userId = 1;
+        $userId = auth()->id();
+        // $userId = 1;
 
         $exam = exams::where('id', $id)->where('created_by', $userId)->first();
 
@@ -185,8 +186,8 @@ class ExamController extends Controller
     public function destroy($id)
     {
         // For testing: Comment out auth and use fixed user ID
-        // $userId = auth()->id();
-        $userId = 1;
+        $userId = auth()->id();
+        // $userId = 1;
 
         $exam = exams::where('id', $id)->where('created_by', $userId)->first();
 
@@ -203,7 +204,7 @@ class ExamController extends Controller
      */
     public function submitExam(Request $request, $id)
     {
-        $userId = 1; // replace with auth()->id() later
+        $userId = auth()->id(); // replace with auth()->id() later
         $exam = exams::with('questions')->find($id);
 
         if (!$exam) {
@@ -227,7 +228,8 @@ class ExamController extends Controller
         foreach ($questions as $index => $question) {
             $userAnswer = $answers[$index] ?? null;
             $isCorrect = $userAnswer === $question->correct_answer;
-            if ($isCorrect) $correctCount++;
+            if ($isCorrect)
+                $correctCount++;
             $results[] = [
                 'question_id' => $question->id,
                 'user_answer' => $userAnswer,
@@ -237,12 +239,12 @@ class ExamController extends Controller
             ];
         }
 
-        $score = round(($correctCount / max(1,$questions->count())) * 100);
+        $score = round(($correctCount / max(1, $questions->count())) * 100);
         $passed = $score >= $exam->passing_score;
 
         // new: compute next attempt number
-        $attemptNumber = (int) exam_results::where('user_id',$userId)
-            ->where('exam_id',$exam->id)
+        $attemptNumber = (int) exam_results::where('user_id', $userId)
+            ->where('exam_id', $exam->id)
             ->max('attempt_number');
         $attemptNumber = $attemptNumber ? $attemptNumber + 1 : 1;
 
@@ -275,8 +277,8 @@ class ExamController extends Controller
     public function getResults(Request $request)
     {
         // For testing: Comment out auth and use fixed user ID
-        // $userId = auth()->id();
-        $userId = 1;
+        $userId = auth()->id();
+        // $userId = 1;
 
         $results = exam_results::with('exam')->where('user_id', $userId)->paginate(10);
         return response()->json($results);
