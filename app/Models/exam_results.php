@@ -13,10 +13,8 @@ class exam_results extends Model
     protected $fillable = [
         'user_id',
         'exam_id',
-        'attempt_number',   // added
         'score',
         'passed',
-        'answers',          // added
         'submitted_at',
         'created_at',
         'updated_at',
@@ -25,7 +23,6 @@ class exam_results extends Model
     protected $casts = [
         'score' => 'integer',
         'passed' => 'boolean',
-        'answers' => 'array',      // added
         'submitted_at' => 'datetime',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',

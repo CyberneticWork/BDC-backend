@@ -203,7 +203,10 @@ class ExamController extends Controller
      */
     public function submitExam(Request $request, $id)
     {
-        $userId = 1; // replace with auth()->id() later
+        // For testing: Comment out auth and use fixed user ID
+        // $userId = auth()->id();
+        $userId = 1;
+
         $exam = exams::with('questions')->find($id);
 
         if (!$exam) {
@@ -227,7 +230,9 @@ class ExamController extends Controller
         foreach ($questions as $index => $question) {
             $userAnswer = $answers[$index] ?? null;
             $isCorrect = $userAnswer === $question->correct_answer;
-            if ($isCorrect) $correctCount++;
+            if ($isCorrect)
+                $correctCount++;
+
             $results[] = [
                 'question_id' => $question->id,
                 'user_answer' => $userAnswer,
@@ -237,35 +242,26 @@ class ExamController extends Controller
             ];
         }
 
-        $score = round(($correctCount / max(1,$questions->count())) * 100);
+        $score = round(($correctCount / $questions->count()) * 100);
         $passed = $score >= $exam->passing_score;
 
-        // new: compute next attempt number
-        $attemptNumber = (int) exam_results::where('user_id',$userId)
-            ->where('exam_id',$exam->id)
-            ->max('attempt_number');
-        $attemptNumber = $attemptNumber ? $attemptNumber + 1 : 1;
-
+        // Save result
         $result = exam_results::create([
             'user_id' => $userId,
             'exam_id' => $exam->id,
-            'attempt_number' => $attemptNumber, // added
             'score' => $score,
             'passed' => $passed,
-            'answers' => $results,              // added
             'submitted_at' => now(),
         ]);
 
         return response()->json([
             'exam_id' => $exam->id,
-            'attempt_number' => $attemptNumber, // added
             'score' => $score,
             'passed' => $passed,
             'correct_answers' => $correctCount,
             'total_questions' => $questions->count(),
             'results' => $results,
             'submitted_at' => $result->submitted_at,
-            'passing_score' => $exam->passing_score
         ]);
     }
 
