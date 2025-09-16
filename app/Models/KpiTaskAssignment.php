@@ -44,17 +44,17 @@ class KpiTaskAssignment extends Model
 
     public function company()
     {
-        return $this->belongsTo(company::class); // Updated to lowercase
+        return $this->belongsTo(company::class);
     }
 
     public function department()
     {
-        return $this->belongsTo(departments::class); // Updated to lowercase
+        return $this->belongsTo(departments::class);
     }
 
     public function employee()
     {
-        return $this->belongsTo(employee::class); // Updated to lowercase
+        return $this->belongsTo(employee::class);
     }
 
     public function progressSubmissions()

@@ -5,9 +5,9 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use App\Models\KpiTask;
 use App\Models\CreatorRole;
-use App\Models\Company; // Updated to PascalCase
-use App\Models\Departments; // Updated to PascalCase
-use App\Models\Employee; // Updated to PascalCase
+use App\Models\company; // Updated to PascalCase
+use App\Models\departments; // Updated to PascalCase
+use App\Models\employee; // Updated to PascalCase
 use App\Models\KpiTaskAssignment;
 
 class PmsController extends Controller
@@ -339,130 +339,137 @@ class PmsController extends Controller
     {
         try {
             \Log::info('Fetching KPI assignments for employee', ['employeeId' => $employeeId]);
+
+            // Employee lookup handling both ID and attendance number
+            $employee = null;
             
-            // Find employee by attendance_employee_no
-            $employee = Employee::where('attendance_employee_no', $employeeId)->first(); // Updated to PascalCase
-            
-            if (!$employee) {
-                \Log::warning('Employee not found', ['employeeId' => $employeeId]);
-                return response()->json([]);
-            }
-            
-            \Log::info('Found employee', ['id' => $employee->id, 'name' => $employee->full_name]);
-            
-            $assignments = KpiTaskAssignment::with([
-                'kpiTask:id,task_name,description', 
-                'creatorRole:id,role_name',
-                'company:id,name',
-                'department:id,name',
-                'employee:id,attendance_employee_no,full_name'
-            ])
-            ->where('employee_id', $employee->id)
-            ->whereNull('deleted_at')
-            ->select([
-                'id', 'kpi_task_id', 'creator_role_id', 'weights',
-                'company_id', 'department_id', 'employee_id',
-                'start_date', 'end_date', 'status', 'priority',
-                'description', 'completion_status', 'last_updated', 'created_at'
-            ])
-            ->orderBy('created_at', 'desc')
-            ->get();
-            
-            \Log::info('Retrieved assignments', ['count' => $assignments->count()]);
-            
-            // Return sample data if no assignments found (for development)
-            if ($assignments->isEmpty()) {
-                \Log::info('No assignments found, returning sample data');
-                return response()->json([
-                    [
-                        'id' => 999,
-                        'name' => 'Sample Task',
-                        'description' => 'This is a test task for ' . $employee->full_name,
-                        'startDate' => now()->format('Y-m-d'),
-                        'endDate' => now()->addMonths(3)->format('Y-m-d'),
-                        'status' => 'active',
-                        'priority' => 'medium',
-                        'completionStatus' => 'not-started',
-                        'weights' => [
-                            ['title' => 'Quality', 'percentage' => 25],
-                            ['title' => 'Timeliness', 'percentage' => 25],
-                            ['title' => 'Teamwork', 'percentage' => 25],
-                            ['title' => 'Initiative', 'percentage' => 25],
-                        ],
-                        'lastUpdated' => now()->toISOString(),
-                        'documentCount' => 0,
-                        'assignees' => [$employeeId],
-                        'assigneeUpdates' => [
-                            [
-                                'employeeId' => intval(str_replace('EMP', '', $employeeId)),
-                                'updates' => []
-                            ]
-                        ],
-                        'company' => 'Your Company',
-                        'department' => 'Your Department',
-                        'creatorRole' => 'Manager',
-                    ]
+            // Try to find by attendance number first
+            if (is_string($employeeId) && preg_match('/^EMP/i', $employeeId)) {
+                $employee = Employee::where('attendance_employee_no', $employeeId)->first();
+                \Log::info('Lookup by attendance number', [
+                    'employeeId' => $employeeId, 
+                    'found' => ($employee ? 'yes' : 'no')
                 ]);
             }
             
-            // Transform to match frontend expectations
+            // If not found and it's numeric, try by ID
+            if (!$employee && is_numeric($employeeId)) {
+                $employee = Employee::find($employeeId);
+                \Log::info('Lookup by numeric ID', [
+                    'employeeId' => $employeeId, 
+                    'found' => ($employee ? 'yes' : 'no')
+                ]);
+                
+                // If still not found, try formatted attendance number
+                if (!$employee) {
+                    $formattedId = 'EMP' . str_pad($employeeId, 4, '0', STR_PAD_LEFT);
+                    $employee = Employee::where('attendance_employee_no', $formattedId)->first();
+                    \Log::info('Lookup by formatted attendance number', [
+                        'formattedId' => $formattedId, 
+                        'found' => ($employee ? 'yes' : 'no')
+                    ]);
+                }
+            }
+
+            if (!$employee) {
+                \Log::warning('Employee not found', ['employeeId' => $employeeId]);
+                return response()->json([
+                    'error' => 'Employee not found',
+                    'employeeId' => $employeeId
+                ], 404);
+            }
+
+            \Log::info('Found employee', [
+                'id' => $employee->id, 
+                'name' => $employee->full_name, 
+                'attendance_no' => $employee->attendance_employee_no
+            ]);
+
+            // Fetch assignments and log query details
+            $query = KpiTaskAssignment::where('employee_id', $employee->id)
+                ->whereNull('deleted_at');
+                
+            \Log::info('Executing query', [
+                'sql' => $query->toSql(),
+                'bindings' => $query->getBindings()
+            ]);
+            
+            $assignments = $query->get();
+
+            \Log::info('Retrieved assignments', ['count' => $assignments->count()]);
+
+            if ($assignments->isEmpty()) {
+                \Log::info('No assignments found for employee', ['employeeId' => $employeeId]);
+                return response()->json([], 200);
+            }
+
+            // Transform assignments manually (no eager loading)
             $transformed = $assignments->map(function ($assignment) {
+                // Safely fetch related data (set to null if fails)
+                $kpiTask = null;
+                $company = null;
+                $department = null;
+                $creatorRole = null;
+
+                try {
+                    $kpiTask = KpiTask::find($assignment->kpi_task_id);
+                } catch (\Exception $e) {
+                    \Log::warning('Failed to fetch KpiTask', ['id' => $assignment->kpi_task_id, 'error' => $e->getMessage()]);
+                }
+
+                try {
+                    $company = company::find($assignment->company_id);
+                } catch (\Exception $e) {
+                    \Log::warning('Failed to fetch company', ['id' => $assignment->company_id, 'error' => $e->getMessage()]);
+                }
+
+                try {
+                    $department = departments::find($assignment->department_id);
+                } catch (\Exception $e) {
+                    \Log::warning('Failed to fetch department', ['id' => $assignment->department_id, 'error' => $e->getMessage()]);
+                }
+
+                try {
+                    $creatorRole = CreatorRole::find($assignment->creator_role_id);
+                } catch (\Exception $e) {
+                    \Log::warning('Failed to fetch CreatorRole', ['id' => $assignment->creator_role_id, 'error' => $e->getMessage()]);
+                }
+
+                // Build response with major data (other fields nullable)
                 return [
                     'id' => $assignment->id,
-                    'name' => $assignment->kpiTask->task_name ?? 'Unknown Task',
-                    'description' => $assignment->description ?? $assignment->kpiTask->description ?? '',
-                    'startDate' => $assignment->start_date,
-                    'endDate' => $assignment->end_date,
-                    'status' => $assignment->status,
-                    'priority' => $assignment->priority,
-                    'completionStatus' => $assignment->completion_status,
+                    'name' => $kpiTask ? $kpiTask->task_name : 'Unknown Task',
+                    'description' => $assignment->description ?? ($kpiTask ? $kpiTask->description : ''),
+
+                    'startDate' => $assignment->start_date ? $assignment->start_date->toDateString() : null,
+                    'endDate' => $assignment->end_date ? $assignment->end_date->toDateString() : null,
+                    'status' => $assignment->status ?? 'active',
+                    'priority' => $assignment->priority ?? 'medium',
+                    'completionStatus' => $assignment->completion_status ?? 'not-started',
                     'weights' => $assignment->weights ?? [],
-                    'lastUpdated' => $assignment->last_updated ?? $assignment->created_at,
-                    'documentCount' => 0, // Placeholder
-                    'assignees' => [$assignment->employee->attendance_employee_no ?? ''],
-                    'assigneeUpdates' => [
-                        [
-                            'employeeId' => intval(str_replace('EMP', '', $assignment->employee->attendance_employee_no ?? '0')),
-                            'updates' => []
-                        ]
-                    ],
-                    'company' => $assignment->company->name ?? '',
-                    'department' => $assignment->department->name ?? '',
-                    'creatorRole' => $assignment->creatorRole->role_name ?? '',
+                    'lastUpdated' => $assignment->last_updated ? $assignment->last_updated->toISOString() : 
+                                    ($assignment->created_at ? $assignment->created_at->toISOString() : null),
+                    'documentCount' => 0, // As requested, ignore document data
+                    'assignees' => [$employee->attendance_employee_no ?? ''],
+                    'assigneeUpdates' => [], // As requested, ignore submission data
+                    'company' => $company ? $company->name : null,
+                    'department' => $department ? $department->name : null,
+                    'creatorRole' => $creatorRole ? $creatorRole->role_name : null,
                 ];
             });
 
-            return response()->json($transformed);
+            return response()->json($transformed, 200);
         } catch (\Exception $e) {
             \Log::error('Error fetching KPI assignments', [
                 'employeeId' => $employeeId,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
-            // Return a user-friendly error message
+
             return response()->json([
-                [
-                    'id' => 9999,
-                    'name' => 'Error Loading Tasks',
-                    'description' => 'There was a server error loading your tasks. Please try again later.',
-                    'startDate' => now()->format('Y-m-d'),
-                    'endDate' => now()->addDays(30)->format('Y-m-d'),
-                    'status' => 'attention',
-                    'priority' => 'high',
-                    'completionStatus' => 'not-started',
-                    'weights' => [],
-                    'lastUpdated' => now()->toISOString(),
-                    'documentCount' => 0,
-                    'assignees' => [$employeeId],
-                    'assigneeUpdates' => [
-                        [
-                            'employeeId' => intval(str_replace('EMP', '', $employeeId)),
-                            'updates' => []
-                        ]
-                    ]
-                ]
-            ], 200); // Return 200 with error indicator in data instead of 500
+                'error' => 'Failed to fetch KPI assignments',
+                'message' => $e->getMessage()
+            ], 500);
         }
     }
 }
