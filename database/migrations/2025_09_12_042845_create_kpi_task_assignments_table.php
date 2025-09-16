@@ -16,9 +16,9 @@ return new class extends Migration
             $table->foreignId('kpi_task_id')->constrained('kpi_tasks');
             $table->foreignId('creator_role_id')->constrained('creator_roles');
             $table->json('weights'); // Store performance criteria weights as JSON
-            $table->foreignId('company_id'); // Link to company table
-            $table->foreignId('department_id')->nullable(); // Link to department table
-            $table->foreignId('employee_id'); // Link to employee table
+            $table->foreignId('company_id')->constrained('companies')->onDelete('cascade'); // Link to company table
+            $table->foreignId('department_id')->nullable()->constrained('departments')->onDelete('set null'); // Link to department table
+            $table->foreignId('employee_id')->constrained('employees')->onDelete('cascade'); // Link to employee table
             $table->date('start_date');
             $table->date('end_date');
             $table->string('status')->default('active'); // active, attention, inactive
