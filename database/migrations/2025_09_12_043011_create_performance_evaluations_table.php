@@ -13,8 +13,8 @@ return new class extends Migration
     {
         Schema::create('performance_evaluations', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('employee_id');
-            $table->foreignId('evaluator_id');
+            $table->unsignedBigInteger('employee_id');
+            $table->unsignedBigInteger('evaluator_id');
             $table->date('start_date'); // Evaluation period start
             $table->date('end_date'); // Evaluation period end
             $table->integer('percentage'); // Final calculated percentage
@@ -24,6 +24,19 @@ return new class extends Migration
             $table->integer('task_count'); // Number of tasks evaluated
             $table->timestamps();
         });
+
+        Schema::table('performance_evaluations', function (Blueprint $table) {
+            // Add FK for employee_id -> employees.id (cascade on delete)
+            // Use explicit index/constraint names to avoid collisions
+            $table->foreign('employee_id', 'pe_employee_fk')
+                  ->references('id')->on('employees')
+                  ->onDelete('cascade');
+
+            // Add FK for evaluator_id -> users.id (cascade on delete)
+            $table->foreign('evaluator_id', 'pe_evaluator_fk')
+                  ->references('id')->on('users')
+                  ->onDelete('cascade');
+        });
     }
 
     /**
@@ -31,6 +44,16 @@ return new class extends Migration
      */
     public function down(): void
     {
+        Schema::table('performance_evaluations', function (Blueprint $table) {
+            // Drop the foreign keys if they exist
+            if (Schema::hasColumn('performance_evaluations', 'evaluator_id')) {
+                $table->dropForeign('pe_evaluator_fk');
+            }
+            if (Schema::hasColumn('performance_evaluations', 'employee_id')) {
+                $table->dropForeign('pe_employee_fk');
+            }
+        });
+
         Schema::dropIfExists('performance_evaluations');
     }
 };
