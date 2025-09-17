@@ -14,8 +14,10 @@ return new class extends Migration
         Schema::create('performance_reviews', function (Blueprint $table) {
             $table->id();
             $table->foreignId('kpi_assignment_id')->nullable()->constrained('kpi_task_assignments');
-            $table->foreignId('employee_id');
-            $table->foreignId('supervisor_id');
+            // employee_id: reference employees.id, cascade on delete
+            $table->foreignId('employee_id')->constrained('employees')->onDelete('cascade');
+            // supervisor_id: reference users.id (nullable, set null when user deleted)
+            $table->foreignId('supervisor_id')->nullable()->constrained('users')->onDelete('set null');
             $table->integer('progress')->default(0);
             $table->string('grade')->nullable();
             $table->text('supervisor_comments')->nullable();

@@ -4,6 +4,8 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use App\Models\User;
+use App\Models\Employee;
 
 class PerformanceReview extends Model
 {
@@ -42,11 +44,12 @@ class PerformanceReview extends Model
 
     public function employee()
     {
-        return $this->belongsTo(Employee::class);
+        return $this->belongsTo(employee::class, 'employee_id');
     }
 
     public function supervisor()
     {
-        return $this->belongsTo(Employee::class, 'supervisor_id');
+        // supervisor references users.id
+        return $this->belongsTo(user::class, 'supervisor_id');
     }
 }

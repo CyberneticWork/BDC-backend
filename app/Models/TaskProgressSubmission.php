@@ -32,6 +32,7 @@ class TaskProgressSubmission extends Model
 
     public function employee()
     {
-        return $this->belongsTo(Employee::class);
+        // employee_id stores attendance_employee_no => use ownerKey 'attendance_employee_no'
+        return $this->belongsTo(employee::class, 'employee_id', 'attendance_employee_no');
     }
 }

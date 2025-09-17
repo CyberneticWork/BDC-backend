@@ -29,11 +29,11 @@ class PerformanceEvaluation extends Model
 
     public function employee()
     {
-        return $this->belongsTo(Employee::class);
+        return $this->belongsTo(employee::class);
     }
 
     public function evaluator()
     {
-        return $this->belongsTo(Employee::class, 'evaluator_id');
+        return $this->belongsTo(employee::class, 'evaluator_id');
     }
 }
