@@ -24,6 +24,7 @@ use App\Http\Controllers\LeaveCalenderController;
 use App\Http\Controllers\SalaryProcessController;
 use App\Http\Controllers\SubDepartmentsController;
 use App\Http\Controllers\LMSController;
+use App\Http\Controllers\LMSAdmincontroller;
 use App\Http\Controllers\ExamController;
 
 
@@ -172,5 +173,14 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('courses/{courseId}/progress', [EnrollmentController::class, 'getProgress']);
     Route::post('courses/{courseId}/modules/{moduleId}/progress', [EnrollmentController::class, 'updateModuleProgress']);
     Route::get('user/progress', [EnrollmentController::class, 'getUserProgress']);
+});
+
+// LMS Admin Dashboard Routes
+Route::middleware('auth:sanctum')->prefix('admin/lms')->group(function () {
+    Route::get('users/course-progress', [LMSAdmincontroller::class, 'listAllUsersCourseProgress']);
+    Route::get('users/exam-progress', [LMSAdmincontroller::class, 'listAllUsersExamProgress']);
+    Route::get('users/{userId}/course-progress', [LMSAdmincontroller::class, 'getUserCourseProgress']);
+    Route::get('users/{userId}/exam-progress', [LMSAdmincontroller::class, 'getUserExamProgress']);
+    Route::get('stats', [LMSAdmincontroller::class, 'getLmsStats']);
 });
 
