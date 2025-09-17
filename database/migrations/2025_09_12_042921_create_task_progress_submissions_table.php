@@ -15,11 +15,11 @@ return new class extends Migration
             $table->id();
             $table->foreignId('kpi_assignment_id')->constrained('kpi_task_assignments');
             // store employee attendance number (string) and reference employees.attendance_employee_no
-            $table->string('employee_id');
-            $table->foreign('employee_id')
-                  ->references('attendance_employee_no')
-                  ->on('employees')
-                  ->cascadeOnDelete();
+            $table->foreignId('employee_id')->constrained('employees')->onDelete('cascade');
+            // $table->foreign('employee_id')
+            //       ->references('attendance_employee_no')
+            //       ->on('employees')
+            //       ->cascadeOnDelete();
             $table->text('note');
             $table->integer('progress_percentage');
             $table->json('performance_metrics'); // Store metrics as JSON
