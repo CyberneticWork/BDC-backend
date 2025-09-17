@@ -9,6 +9,7 @@ use App\Models\company; // Updated to PascalCase
 use App\Models\departments; // Updated to PascalCase
 use App\Models\employee; // Updated to PascalCase
 use App\Models\KpiTaskAssignment;
+use App\Models\TaskProgressSubmission;
 
 class PmsController extends Controller
 {
@@ -469,6 +470,124 @@ class PmsController extends Controller
             return response()->json([
                 'error' => 'Failed to fetch KPI assignments',
                 'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Store a new task progress submission.
+     */
+    public function storeTaskProgressSubmission(Request $request)
+    {
+        $validated = $request->validate([
+            'kpi_assignment_id' => 'required|exists:kpi_task_assignments,id',
+            'employee_id' => 'required|exists:employees,id',
+            'note' => 'required|string',
+            'progress_percentage' => 'required|integer|min:0|max:100',
+            'performance_metrics' => 'required|array',
+            'document_name' => 'nullable|string',
+            'document_size' => 'nullable|string',
+            'document_type' => 'nullable|string',
+            'document_path' => 'nullable|string',
+        ]);
+
+        try {
+            $submission = TaskProgressSubmission::create($validated);
+
+            // Update the KPI assignment's completion status based on progress
+            $assignment = KpiTaskAssignment::find($validated['kpi_assignment_id']);
+            if ($assignment) {
+                if ($validated['progress_percentage'] >= 100) {
+                    $assignment->completion_status = 'completed';
+                } elseif ($validated['progress_percentage'] > 0) {
+                    $assignment->completion_status = 'in-progress';
+                } else {
+                    $assignment->completion_status = 'not-started';
+                }
+                $assignment->last_updated = now();
+                $assignment->save();
+            }
+
+            return response()->json([
+                'message' => 'Progress submitted successfully',
+                'submission' => $submission
+            ], 201);
+
+        } catch (\Exception $e) {
+            \Log::error('Error storing task progress submission', [
+                'error' => $e->getMessage(),
+                'data' => $validated
+            ]);
+
+            return response()->json([
+                'error' => 'Failed to submit progress',
+                'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get task progress submissions for a specific assignment.
+     */
+    public function getTaskProgressSubmissions($assignmentId)
+    {
+        try {
+            $submissions = TaskProgressSubmission::where('kpi_assignment_id', $assignmentId)
+                ->with('employee:id,full_name,attendance_employee_no')
+                ->orderBy('created_at', 'desc')
+                ->get();
+
+            return response()->json($submissions, 200);
+
+        } catch (\Exception $e) {
+            \Log::error('Error fetching task progress submissions', [
+                'assignmentId' => $assignmentId,
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'error' => 'Failed to fetch progress submissions'
+            ], 500);
+        }
+    }
+
+    /**
+     * Get all task progress submissions for an employee.
+     */
+    public function getEmployeeTaskProgressSubmissions($employeeId)
+    {
+        try {
+            // Find employee by ID or attendance number
+            $employee = null;
+            if (is_string($employeeId) && preg_match('/^EMP/i', $employeeId)) {
+                $employee = Employee::where('attendance_employee_no', $employeeId)->first();
+            } elseif (is_numeric($employeeId)) {
+                $employee = Employee::find($employeeId);
+                if (!$employee) {
+                    $formattedId = 'EMP' . str_pad($employeeId, 4, '0', STR_PAD_LEFT);
+                    $employee = Employee::where('attendance_employee_no', $formattedId)->first();
+                }
+            }
+
+            if (!$employee) {
+                return response()->json(['error' => 'Employee not found'], 404);
+            }
+
+            $submissions = TaskProgressSubmission::where('employee_id', $employee->id)
+                ->with(['kpiAssignment.kpiTask:id,task_name'])
+                ->orderBy('created_at', 'desc')
+                ->get();
+
+            return response()->json($submissions, 200);
+
+        } catch (\Exception $e) {
+            \Log::error('Error fetching employee progress submissions', [
+                'employeeId' => $employeeId,
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'error' => 'Failed to fetch progress submissions'
             ], 500);
         }
     }

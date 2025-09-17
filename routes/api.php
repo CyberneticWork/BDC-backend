@@ -177,3 +177,8 @@ Route::put('/pms/kpi-task-assignments/{id}', [PmsController::class, 'updateKpiTa
 Route::delete('/pms/kpi-task-assignments/{id}', [PmsController::class, 'destroy']);
 Route::get('/pms/employee-kpi-task-assignments/{employeeId}', [PmsController::class, 'getEmployeeKpiTaskAssignments']);
 Route::get('/pms/create-test-assignment/{employeeId}', [PmsController::class, 'createTestAssignment']);
+
+// PMS Task Progress Submissions
+Route::post('/pms/task-progress-submissions', [PmsController::class, 'storeTaskProgressSubmission']);
+Route::get('/pms/task-progress-submissions/assignment/{assignmentId}', [PmsController::class, 'getTaskProgressSubmissions']);
+Route::get('/pms/task-progress-submissions/employee/{employeeId}', [PmsController::class, 'getEmployeeTaskProgressSubmissions']);
