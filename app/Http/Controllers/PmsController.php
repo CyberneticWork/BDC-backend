@@ -479,27 +479,116 @@ class PmsController extends Controller
      */
     public function storeTaskProgressSubmission(Request $request)
     {
-        $validated = $request->validate([
-            'kpi_assignment_id' => 'required|exists:kpi_task_assignments,id',
-            'employee_id' => 'required|exists:employees,id',
-            'note' => 'required|string',
-            'progress_percentage' => 'required|integer|min:0|max:100',
-            'performance_metrics' => 'required|array',
-            'document_name' => 'nullable|string',
-            'document_size' => 'nullable|string',
-            'document_type' => 'nullable|string',
-            'document_path' => 'nullable|string',
+        // Log incoming request for debugging
+        \Log::info('Task progress submission request received', [
+            'data' => $request->except(['document']),
+            'hasFile' => $request->hasFile('document'),
+            'fileInfo' => $request->hasFile('document') ? [
+                'name' => $request->file('document')->getClientOriginalName(),
+                'size' => $request->file('document')->getSize(),
+                'type' => $request->file('document')->getMimeType(),
+            ] : null
         ]);
 
+        $validator = \Validator::make($request->all(), [
+            'kpi_assignment_id' => 'required|integer|exists:kpi_task_assignments,id',
+            'employee_id' => 'required|integer|exists:employees,id',
+            'note' => 'required|string|min:5|max:1000',
+            'progress_percentage' => 'required|integer|min:0|max:100',
+            'performance_metrics' => 'required|string|min:1', // JSON string from FormData
+            'document_name' => 'nullable|string|max:255',
+            'document_size' => 'nullable|string|max:50',
+            'document_type' => 'nullable|string|max:100',
+            'document' => 'nullable|file|mimes:pdf,doc,docx,xls,xlsx,jpg,jpeg,png,txt|max:10240', // 10MB max
+        ], [
+            'kpi_assignment_id.required' => 'KPI assignment ID is required',
+            'kpi_assignment_id.exists' => 'Invalid KPI assignment ID',
+            'employee_id.required' => 'Employee ID is required',
+            'employee_id.exists' => 'Invalid employee ID',
+            'note.required' => 'Progress note is required',
+            'note.min' => 'Progress note must be at least 5 characters',
+            'note.max' => 'Progress note cannot exceed 1000 characters',
+            'progress_percentage.required' => 'Progress percentage is required',
+            'progress_percentage.integer' => 'Progress percentage must be an integer',
+            'progress_percentage.min' => 'Progress percentage cannot be less than 0',
+            'progress_percentage.max' => 'Progress percentage cannot be more than 100',
+            'performance_metrics.required' => 'Performance metrics are required',
+            'document.mimes' => 'Document must be a PDF, Word, Excel, image, or text file',
+            'document.max' => 'Document size cannot exceed 10MB',
+        ]);
+
+        if ($validator->fails()) {
+            \Log::warning('Task progress submission validation failed', [
+                'errors' => $validator->errors()->toArray(),
+                'input' => $request->except(['document'])
+            ]);
+            
+            return response()->json([
+                'message' => 'The given data was invalid.',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $validated = $validator->validated();
+
         try {
-            $submission = TaskProgressSubmission::create($validated);
+            // Parse the JSON string back to array
+            $performanceMetrics = json_decode($validated['performance_metrics'], true);
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                \Log::error('Invalid JSON in performance_metrics', [
+                    'json_error' => json_last_error_msg(),
+                    'raw_data' => $validated['performance_metrics']
+                ]);
+                
+                return response()->json([
+                    'message' => 'Invalid performance metrics format',
+                    'errors' => ['performance_metrics' => ['Performance metrics must be valid JSON']]
+                ], 422);
+            }
+            
+            // Ensure progress_percentage is an integer
+            $progressPercentage = (int) $validated['progress_percentage'];
+            
+            // Handle file upload if present
+            $documentPath = null;
+            if ($request->hasFile('document')) {
+                $file = $request->file('document');
+                
+                // Create directory if it doesn't exist
+                $uploadPath = storage_path('app/public/task_documents');
+                if (!file_exists($uploadPath)) {
+                    mkdir($uploadPath, 0755, true);
+                }
+                
+                // Store file in storage/app/public/task_documents
+                $documentPath = $file->store('task_documents', 'public');
+                
+                // Convert to public URL
+                $documentPath = '/storage/' . $documentPath;
+            }
+
+            $submissionData = [
+                'kpi_assignment_id' => (int) $validated['kpi_assignment_id'],
+                'employee_id' => (int) $validated['employee_id'],
+                'note' => $validated['note'],
+                'progress_percentage' => $progressPercentage,
+                'performance_metrics' => $performanceMetrics, // Use parsed array
+                'document_name' => $validated['document_name'] ?? null,
+                'document_size' => $validated['document_size'] ?? null,
+                'document_type' => $validated['document_type'] ?? null,
+                'document_path' => $documentPath,
+            ];
+
+            \Log::info('Creating task progress submission', ['data' => $submissionData]);
+
+            $submission = TaskProgressSubmission::create($submissionData);
 
             // Update the KPI assignment's completion status based on progress
             $assignment = KpiTaskAssignment::find($validated['kpi_assignment_id']);
             if ($assignment) {
-                if ($validated['progress_percentage'] >= 100) {
+                if ($progressPercentage >= 100) {
                     $assignment->completion_status = 'completed';
-                } elseif ($validated['progress_percentage'] > 0) {
+                } elseif ($progressPercentage > 0) {
                     $assignment->completion_status = 'in-progress';
                 } else {
                     $assignment->completion_status = 'not-started';
@@ -510,18 +599,19 @@ class PmsController extends Controller
 
             return response()->json([
                 'message' => 'Progress submitted successfully',
-                'submission' => $submission
+                'submission' => $submission->load('employee:id,full_name,attendance_employee_no')
             ], 201);
 
         } catch (\Exception $e) {
             \Log::error('Error storing task progress submission', [
                 'error' => $e->getMessage(),
-                'data' => $validated
+                'trace' => $e->getTraceAsString(),
+                'data' => $request->except(['document'])
             ]);
 
             return response()->json([
-                'error' => 'Failed to submit progress',
-                'message' => $e->getMessage()
+                'message' => 'Failed to submit progress',
+                'error' => 'An unexpected error occurred while processing your submission.'
             ], 500);
         }
     }
