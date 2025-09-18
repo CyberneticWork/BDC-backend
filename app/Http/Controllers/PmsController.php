@@ -10,6 +10,7 @@ use App\Models\departments; // Updated to PascalCase
 use App\Models\employee; // Updated to PascalCase
 use App\Models\KpiTaskAssignment;
 use App\Models\TaskProgressSubmission;
+use App\Models\PerformanceReview;
 
 class PmsController extends Controller
 {
@@ -855,11 +856,97 @@ class PmsController extends Controller
     }
 
     /**
-     * Helper method to derive cycle from date.
+     * Derive cycle from date
      */
     private function deriveCycle($date)
     {
-        $quarter = ceil($date->month / 3);
-        return $date->year . ' Q' . $quarter;
+        $year = date('Y', strtotime($date));
+        $month = date('n', strtotime($date));
+        
+        if ($month >= 1 && $month <= 3) {
+            return $year . ' Q1';
+        } elseif ($month >= 4 && $month <= 6) {
+            return $year . ' Q2';
+        } elseif ($month >= 7 && $month <= 9) {
+            return $year . ' Q3';
+        } else {
+            return $year . ' Q4';
+        }
+    }
+
+    /**
+     * Update or create a performance review with metrics and supervisor feedback
+     */
+    public function updatePerformanceReview(Request $request, $assignmentId)
+    {
+        try {
+            $validated = $request->validate([
+                'progress' => 'required|integer|min:0|max:100',
+                'grade' => 'nullable|string|max:5',
+                'supervisor_comments' => 'nullable|string',
+                'status' => 'required|string|in:Draft,In Progress,Pending Manager,Pending Employee,Completed',
+                'performance_metrics' => 'required|array'
+            ]);
+            
+            // Get the assignment to access its data
+            $assignment = KpiTaskAssignment::with('employee')->findOrFail($assignmentId);
+            
+            // Find or create performance review for this assignment
+            $review = \App\Models\PerformanceReview::updateOrCreate(
+                ['kpi_assignment_id' => $assignmentId],
+                [
+                    'employee_id' => $assignment->employee->id,
+                    'supervisor_id' => auth()->id(), // Current authenticated user
+                    'progress' => $validated['progress'],
+                    'grade' => $validated['grade'],
+                    'supervisor_comments' => $validated['supervisor_comments'],
+                    'status' => $validated['status'],
+                    'performance_metrics' => $validated['performance_metrics'],
+                    'review_type' => 'performance',
+                    'review_cycle' => $this->deriveCycle($assignment->start_date),
+                    'start_date' => $assignment->start_date,
+                    'due_date' => $assignment->end_date,
+                    'completed_date' => $validated['status'] === 'Completed' ? now() : null,
+                ]
+            );
+            
+            // Also update the KPI assignment status
+            $assignment->completion_status = match ($validated['status']) {
+                'Completed' => 'completed',
+                'Draft' => 'not-started',
+                default => 'in-progress',
+            };
+            $assignment->save();
+            
+            return response()->json([
+                'message' => 'Performance review updated successfully',
+                'review' => $review
+            ]);
+            
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'error' => 'Validation failed',
+                'message' => $e->getMessage(),
+                'errors' => $e->errors()
+            ], 422);
+            
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'error' => 'Assignment not found',
+                'message' => 'The specified assignment does not exist'
+            ], 404);
+            
+        } catch (\Exception $e) {
+            \Log::error('Error updating performance review', [
+                'assignment_id' => $assignmentId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'error' => 'Failed to update performance review',
+                'message' => $e->getMessage()
+            ], 500);
+        }
     }
 }

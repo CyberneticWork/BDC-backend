@@ -187,3 +187,4 @@ Route::get('/pms/task-progress-submissions/employee/{employeeId}', [PmsControlle
 Route::get('/pms/performance-reviews', [PmsController::class, 'getPerformanceReviews']);
 Route::get('/pms/performance-reviews/{assignmentId}/details', [PmsController::class, 'getPerformanceReviewDetails']);
 Route::get('/pms/performance-reviews/{assignmentId}/documents', [PmsController::class, 'getAssignmentDocuments']);
+Route::put('/pms/performance-reviews/{assignmentId}', [PmsController::class, 'updatePerformanceReview']);

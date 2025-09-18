@@ -4,8 +4,8 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use App\Models\User;
-use App\Models\Employee;
+use App\Models\user;
+use App\Models\employee;
 
 class PerformanceReview extends Model
 {
