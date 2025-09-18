@@ -18,9 +18,11 @@ class ExamController extends Controller
     {
         // For testing: Comment out auth and use fixed user ID
         // $userId = auth()->id();
-        $userId = 1;
+        // $userId = 1;
 
-        $query = exams::with(['questions', 'course'])->where('created_by', $userId);
+        // $query = exams::with(['questions', 'course'])->where('created_by', $userId);
+        $query = exams::with(['questions', 'course']);
+
 
         // Optional filters
         if ($request->has('course_id')) {
@@ -100,10 +102,10 @@ class ExamController extends Controller
     {
         // For testing: Comment out auth and use fixed user ID
         // $userId = auth()->id();
-        $userId = 1;
+        // $userId = 1;
 
         // $exam = exams::with(['questions', 'course'])->where('id', $id)->where('created_by', $userId)->first();
-        $exam = exams::with(['questions', 'course'])->first();
+        $exam = exams::with(['questions', 'course'])->find($id);
 
         if (!$exam) {
             return response()->json(['message' => 'Exam not found'], 404);
