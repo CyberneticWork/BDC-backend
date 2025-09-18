@@ -681,4 +681,185 @@ class PmsController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Get all performance reviews with related task and submission data.
+     */
+    public function getPerformanceReviews(Request $request)
+    {
+        try {
+            // Get all task assignments that have at least one progress submission
+            $assignmentsWithSubmissions = KpiTaskAssignment::with([
+                'kpiTask:id,task_name',
+                'employee:id,full_name,attendance_employee_no',
+                'company:id,name',
+                'department:id,name',
+                'creatorRole:id,role_name',
+                'progressSubmissions' => function($query) {
+                    $query->orderBy('created_at', 'desc');
+                }
+            ])
+            ->whereHas('progressSubmissions') // Only assignments with submissions
+            ->get();
+
+            $performanceReviews = $assignmentsWithSubmissions->map(function ($assignment) {
+                $latestSubmission = $assignment->progressSubmissions->first();
+                
+                return [
+                    'id' => $assignment->id,
+                    'taskId' => $assignment->kpi_task_id,
+                    'taskName' => $assignment->kpiTask->task_name ?? 'Unknown Task',
+                    'employeeName' => $assignment->employee->full_name ?? 'Unknown Employee',
+                    'employeeId' => $assignment->employee->attendance_employee_no ?? '',
+                    'position' => '', // Can be added from employee table if needed
+                    'department' => $assignment->department->name ?? 'Unknown Department',
+                    'company' => $assignment->company->name ?? 'Unknown Company',
+                    'manager' => 'Supervisor', // Can be fetched from supervisor assignment
+                    'type' => 'Performance Review',
+                    'status' => 'Pending Manager', // Default status when submission exists
+                    'startDate' => $assignment->start_date->toDateString(),
+                    'dueDate' => $assignment->end_date->toDateString(),
+                    'completedDate' => null,
+                    'overallRating' => null,
+                    'cycle' => $this->deriveCycle($assignment->start_date),
+                    'progress' => 0, // Supervisor progress - to be filled by supervisor
+                    'grade' => null,
+                    'supervisorComments' => null,
+                    'lastUpdated' => $latestSubmission->created_at->toISOString(),
+                    'selfReportedProgress' => $latestSubmission->progress_percentage,
+                    'selfReportedLastUpdated' => $latestSubmission->created_at->toISOString(),
+                    'selfReportedAuthor' => $latestSubmission->employee->full_name ?? 'Employee',
+                    'performanceMetrics' => $latestSubmission->performance_metrics,
+                    'weights' => $assignment->weights,
+                    'priority' => $assignment->priority,
+                    'description' => $assignment->description,
+                    'submissionCount' => $assignment->progressSubmissions->count(),
+                    'latestSubmissionNote' => $latestSubmission->note,
+                    'documentCount' => $assignment->progressSubmissions->whereNotNull('document_name')->count(),
+                ];
+            });
+
+            return response()->json($performanceReviews, 200);
+
+        } catch (\Exception $e) {
+            \Log::error('Error fetching performance reviews', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'error' => 'Failed to fetch performance reviews'
+            ], 500);
+        }
+    }
+
+    /**
+     * Get performance review details with all submissions.
+     */
+    public function getPerformanceReviewDetails($assignmentId)
+    {
+        try {
+            $assignment = KpiTaskAssignment::with([
+                'kpiTask:id,task_name',
+                'employee:id,full_name,attendance_employee_no',
+                'company:id,name',
+                'department:id,name',
+                'creatorRole:id,role_name',
+                'progressSubmissions' => function($query) {
+                    $query->orderBy('created_at', 'desc');
+                }
+            ])->findOrFail($assignmentId);
+
+            $submissions = $assignment->progressSubmissions->map(function($submission) {
+                return [
+                    'id' => $submission->id,
+                    'note' => $submission->note,
+                    'progress_percentage' => $submission->progress_percentage,
+                    'performance_metrics' => $submission->performance_metrics,
+                    'document_name' => $submission->document_name,
+                    'document_size' => $submission->document_size,
+                    'document_type' => $submission->document_type,
+                    'document_path' => $submission->document_path,
+                    'created_at' => $submission->created_at->toISOString(),
+                    'author' => $submission->employee->full_name ?? 'Employee',
+                ];
+            });
+
+            return response()->json([
+                'assignment' => [
+                    'id' => $assignment->id,
+                    'task_name' => $assignment->kpiTask->task_name,
+                    'description' => $assignment->description,
+                    'start_date' => $assignment->start_date->toDateString(),
+                    'end_date' => $assignment->end_date->toDateString(),
+                    'weights' => $assignment->weights,
+                    'priority' => $assignment->priority,
+                    'employee_name' => $assignment->employee->full_name,
+                    'employee_id' => $assignment->employee->attendance_employee_no,
+                    'department' => $assignment->department->name,
+                    'company' => $assignment->company->name,
+                ],
+                'submissions' => $submissions
+            ], 200);
+
+        } catch (\Exception $e) {
+            \Log::error('Error fetching performance review details', [
+                'assignmentId' => $assignmentId,
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'error' => 'Failed to fetch performance review details'
+            ], 500);
+        }
+    }
+
+    /**
+     * Get documents for a specific assignment.
+     */
+    public function getAssignmentDocuments($assignmentId)
+    {
+        try {
+            $documents = TaskProgressSubmission::where('kpi_assignment_id', $assignmentId)
+                ->whereNotNull('document_name')
+                ->with('employee:id,full_name,attendance_employee_no')
+                ->orderBy('created_at', 'desc')
+                ->get()
+                ->map(function($submission) {
+                    return [
+                        'id' => $submission->id,
+                        'documentName' => $submission->document_name,
+                        'documentSize' => $submission->document_size,
+                        'documentType' => $submission->document_type,
+                        'documentPath' => $submission->document_path,
+                        'author' => $submission->employee->full_name ?? 'Employee',
+                        'date' => $submission->created_at->toISOString(),
+                        'note' => $submission->note,
+                        'progressPercentage' => $submission->progress_percentage,
+                        'performanceMetrics' => $submission->performance_metrics,
+                    ];
+                });
+
+            return response()->json($documents, 200);
+
+        } catch (\Exception $e) {
+            \Log::error('Error fetching assignment documents', [
+                'assignmentId' => $assignmentId,
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'error' => 'Failed to fetch documents'
+            ], 500);
+        }
+    }
+
+    /**
+     * Helper method to derive cycle from date.
+     */
+    private function deriveCycle($date)
+    {
+        $quarter = ceil($date->month / 3);
+        return $date->year . ' Q' . $quarter;
+    }
 }

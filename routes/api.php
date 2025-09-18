@@ -182,3 +182,8 @@ Route::get('/pms/create-test-assignment/{employeeId}', [PmsController::class, 'c
 Route::post('/pms/task-progress-submissions', [PmsController::class, 'storeTaskProgressSubmission']);
 Route::get('/pms/task-progress-submissions/assignment/{assignmentId}', [PmsController::class, 'getTaskProgressSubmissions']);
 Route::get('/pms/task-progress-submissions/employee/{employeeId}', [PmsController::class, 'getEmployeeTaskProgressSubmissions']);
+
+// PMS Performance Reviews
+Route::get('/pms/performance-reviews', [PmsController::class, 'getPerformanceReviews']);
+Route::get('/pms/performance-reviews/{assignmentId}/details', [PmsController::class, 'getPerformanceReviewDetails']);
+Route::get('/pms/performance-reviews/{assignmentId}/documents', [PmsController::class, 'getAssignmentDocuments']);
