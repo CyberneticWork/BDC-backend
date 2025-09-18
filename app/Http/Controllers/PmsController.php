@@ -706,6 +706,9 @@ class PmsController extends Controller
             $performanceReviews = $assignmentsWithSubmissions->map(function ($assignment) {
                 $latestSubmission = $assignment->progressSubmissions->first();
                 
+                // Check if performance review exists for this assignment
+                $existingReview = PerformanceReview::where('kpi_assignment_id', $assignment->id)->first();
+                
                 return [
                     'id' => $assignment->id,
                     'taskId' => $assignment->kpi_task_id,
@@ -715,22 +718,28 @@ class PmsController extends Controller
                     'position' => '', // Can be added from employee table if needed
                     'department' => $assignment->department->name ?? 'Unknown Department',
                     'company' => $assignment->company->name ?? 'Unknown Company',
-                    'manager' => 'Supervisor', // Can be fetched from supervisor assignment
+                    'manager' => $assignment->creatorRole->role_name ?? 'Supervisor',
                     'type' => 'Performance Review',
-                    'status' => 'Pending Manager', // Default status when submission exists
+                    'status' => $existingReview ? $existingReview->status : 'Pending Manager',
                     'startDate' => $assignment->start_date->toDateString(),
                     'dueDate' => $assignment->end_date->toDateString(),
-                    'completedDate' => null,
+                    'completedDate' => $existingReview ? $existingReview->completed_date?->toDateString() : null,
                     'overallRating' => null,
                     'cycle' => $this->deriveCycle($assignment->start_date),
-                    'progress' => 0, // Supervisor progress - to be filled by supervisor
-                    'grade' => null,
-                    'supervisorComments' => null,
-                    'lastUpdated' => $latestSubmission->created_at->toISOString(),
+                    
+                    // **FIXED**: Supervisor progress from performance_reviews table (0 if no review exists)
+                    'progress' => $existingReview ? $existingReview->progress : 0,
+                    'grade' => $existingReview ? $existingReview->grade : null,
+                    'supervisorComments' => $existingReview ? $existingReview->supervisor_comments : null,
+                    'lastUpdated' => $existingReview ? $existingReview->updated_at->toISOString() : $latestSubmission->created_at->toISOString(),
+                    'performanceMetrics' => $existingReview ? $existingReview->performance_metrics : null,
+                    
+                    // Self-reported data from latest submission (separate from supervisor progress)
                     'selfReportedProgress' => $latestSubmission->progress_percentage,
                     'selfReportedLastUpdated' => $latestSubmission->created_at->toISOString(),
                     'selfReportedAuthor' => $latestSubmission->employee->full_name ?? 'Employee',
-                    'performanceMetrics' => $latestSubmission->performance_metrics,
+                    
+                    // Additional data
                     'weights' => $assignment->weights,
                     'priority' => $assignment->priority,
                     'description' => $assignment->description,
@@ -771,6 +780,9 @@ class PmsController extends Controller
                 }
             ])->findOrFail($assignmentId);
 
+            // Get existing performance review if it exists
+            $existingReview = PerformanceReview::where('kpi_assignment_id', $assignmentId)->first();
+            
             $submissions = $assignment->progressSubmissions->map(function($submission) {
                 return [
                     'id' => $submission->id,
@@ -778,34 +790,50 @@ class PmsController extends Controller
                     'progress_percentage' => $submission->progress_percentage,
                     'performance_metrics' => $submission->performance_metrics,
                     'document_name' => $submission->document_name,
-                    'document_size' => $submission->document_size,
-                    'document_type' => $submission->document_type,
                     'document_path' => $submission->document_path,
                     'created_at' => $submission->created_at->toISOString(),
-                    'author' => $submission->employee->full_name ?? 'Employee',
+                    'employee_name' => $submission->employee->full_name ?? 'Employee'
                 ];
             });
+
+            $latestSubmission = $assignment->progressSubmissions->first();
 
             return response()->json([
                 'assignment' => [
                     'id' => $assignment->id,
-                    'task_name' => $assignment->kpiTask->task_name,
-                    'description' => $assignment->description,
+                    'task_name' => $assignment->kpiTask->task_name ?? 'Unknown Task',
+                    'employee_name' => $assignment->employee->full_name ?? 'Unknown Employee',
+                    'employee_id' => $assignment->employee->attendance_employee_no ?? '',
+                    'department' => $assignment->department->name ?? 'Unknown Department',
+                    'company' => $assignment->company->name ?? 'Unknown Company',
+                    'creator_role' => $assignment->creatorRole->role_name ?? 'Supervisor',
                     'start_date' => $assignment->start_date->toDateString(),
                     'end_date' => $assignment->end_date->toDateString(),
-                    'weights' => $assignment->weights,
                     'priority' => $assignment->priority,
-                    'employee_name' => $assignment->employee->full_name,
-                    'employee_id' => $assignment->employee->attendance_employee_no,
-                    'department' => $assignment->department->name,
-                    'company' => $assignment->company->name,
+                    'description' => $assignment->description,
+                    'weights' => $assignment->weights,
                 ],
-                'submissions' => $submissions
+                'submissions' => $submissions,
+                'performance_review' => $existingReview ? [
+                    'progress' => $existingReview->progress,
+                    'grade' => $existingReview->grade,
+                    'supervisor_comments' => $existingReview->supervisor_comments,
+                    'status' => $existingReview->status,
+                    'performance_metrics' => $existingReview->performance_metrics,
+                    'completed_date' => $existingReview->completed_date?->toDateString(),
+                    'last_updated' => $existingReview->updated_at->toISOString(),
+                ] : null,
+                'self_reported' => $latestSubmission ? [
+                    'progress' => $latestSubmission->progress_percentage,
+                    'last_updated' => $latestSubmission->created_at->toISOString(),
+                    'author' => $latestSubmission->employee->full_name ?? 'Employee',
+                    'performance_metrics' => $latestSubmission->performance_metrics,
+                ] : null
             ], 200);
 
         } catch (\Exception $e) {
             \Log::error('Error fetching performance review details', [
-                'assignmentId' => $assignmentId,
+                'assignment_id' => $assignmentId,
                 'error' => $e->getMessage()
             ]);
 
@@ -888,15 +916,27 @@ class PmsController extends Controller
                 'performance_metrics' => 'required|array'
             ]);
             
-            // Get the assignment to access its data
-            $assignment = KpiTaskAssignment::with('employee')->findOrFail($assignmentId);
+            // Get the assignment with all related data
+            $assignment = KpiTaskAssignment::with([
+                'employee', 
+                'creatorRole',
+                'progressSubmissions' => function($query) {
+                    $query->orderBy('created_at', 'desc');
+                }
+            ])->findOrFail($assignmentId);
+            
+            // Get the latest submission for self-reported data
+            $latestSubmission = $assignment->progressSubmissions->first();
+            
+            // Get supervisor ID from creator role or current auth user
+            $supervisorId = auth()->id(); // Current authenticated user as supervisor
             
             // Find or create performance review for this assignment
-            $review = \App\Models\PerformanceReview::updateOrCreate(
+            $review = PerformanceReview::updateOrCreate(
                 ['kpi_assignment_id' => $assignmentId],
                 [
                     'employee_id' => $assignment->employee->id,
-                    'supervisor_id' => auth()->id(), // Current authenticated user
+                    'supervisor_id' => $supervisorId,
                     'progress' => $validated['progress'],
                     'grade' => $validated['grade'],
                     'supervisor_comments' => $validated['supervisor_comments'],
@@ -907,6 +947,10 @@ class PmsController extends Controller
                     'start_date' => $assignment->start_date,
                     'due_date' => $assignment->end_date,
                     'completed_date' => $validated['status'] === 'Completed' ? now() : null,
+                    
+                    // Set self-reported data from latest submission
+                    'self_reported_progress' => $latestSubmission ? $latestSubmission->progress_percentage : 0,
+                    'self_reported_last_updated' => $latestSubmission ? $latestSubmission->created_at : null,
                 ]
             );
             
@@ -920,7 +964,7 @@ class PmsController extends Controller
             
             return response()->json([
                 'message' => 'Performance review updated successfully',
-                'review' => $review
+                'review' => $review->load(['employee', 'supervisor', 'kpiAssignment'])
             ]);
             
         } catch (\Illuminate\Validation\ValidationException $e) {
