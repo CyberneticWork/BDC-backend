@@ -689,72 +689,94 @@ class PmsController extends Controller
     public function getPerformanceReviews(Request $request)
     {
         try {
-            // Get all task assignments that have at least one progress submission
-            $assignmentsWithSubmissions = KpiTaskAssignment::with([
+            $perPage = (int)$request->query('per_page', 8);
+            if ($perPage <= 0) { $perPage = 8; }
+
+            // Base query: only assignments having submissions
+            $query = KpiTaskAssignment::with([
                 'kpiTask:id,task_name',
                 'employee:id,full_name,attendance_employee_no',
                 'company:id,name',
                 'department:id,name',
                 'creatorRole:id,role_name',
-                'progressSubmissions' => function($query) {
-                    $query->orderBy('created_at', 'desc');
+                'progressSubmissions' => function ($q) {
+                    $q->orderBy('created_at', 'desc');
                 }
             ])
-            ->whereHas('progressSubmissions') // Only assignments with submissions
-            ->get();
+            ->whereHas('progressSubmissions')
+            // Subselect latest submission timestamp
+            ->addSelect([
+                'latest_submission_at' => TaskProgressSubmission::select('created_at')
+                    ->whereColumn('kpi_assignment_id', 'kpi_task_assignments.id')
+                    ->latest()
+                    ->limit(1),
+                // Subselect latest performance review update (if exists)
+                'latest_review_at' => PerformanceReview::select('updated_at')
+                    ->whereColumn('kpi_assignment_id', 'kpi_task_assignments.id')
+                    ->latest()
+                    ->limit(1),
+            ]);
 
-            $performanceReviews = $assignmentsWithSubmissions->map(function ($assignment) {
+            // Order: coalesce latest review updated_at else latest submission
+            $query->orderByRaw('COALESCE(latest_review_at, latest_submission_at) DESC');
+
+            $assignments = $query->paginate($perPage);
+
+            // Transform current page collection
+            $transformed = $assignments->getCollection()->map(function ($assignment) {
                 $latestSubmission = $assignment->progressSubmissions->first();
-                
-                // Check if performance review exists for this assignment
                 $existingReview = PerformanceReview::where('kpi_assignment_id', $assignment->id)->first();
-                
+
                 return [
                     'id' => $assignment->id,
                     'taskId' => $assignment->kpi_task_id,
                     'taskName' => $assignment->kpiTask->task_name ?? 'Unknown Task',
                     'employeeName' => $assignment->employee->full_name ?? 'Unknown Employee',
                     'employeeId' => $assignment->employee->attendance_employee_no ?? '',
-                    'position' => '', // Can be added from employee table if needed
+                    'position' => '',
                     'department' => $assignment->department->name ?? 'Unknown Department',
                     'company' => $assignment->company->name ?? 'Unknown Company',
                     'manager' => $assignment->creatorRole->role_name ?? 'Supervisor',
                     'type' => 'Performance Review',
                     'status' => $existingReview ? $existingReview->status : 'Pending Manager',
-                    'startDate' => $assignment->start_date->toDateString(),
-                    'dueDate' => $assignment->end_date->toDateString(),
-                    'completedDate' => $existingReview ? $existingReview->completed_date?->toDateString() : null,
-                    'overallRating' => null,
+                    'startDate' => $assignment->start_date?->toDateString(),
+                    'dueDate' => $assignment->end_date?->toDateString(),
+                    'completedDate' => $existingReview?->completed_date?->toDateString(),
                     'cycle' => $this->deriveCycle($assignment->start_date),
-                    
-                    // **FIXED**: Supervisor progress from performance_reviews table (0 if no review exists)
-                    'progress' => $existingReview ? $existingReview->progress : 0,
-                    'grade' => $existingReview ? $existingReview->grade : null,
-                    'supervisorComments' => $existingReview ? $existingReview->supervisor_comments : null,
-                    'lastUpdated' => $existingReview ? $existingReview->updated_at->toISOString() : $latestSubmission->created_at->toISOString(),
-                    'performanceMetrics' => $existingReview ? $existingReview->performance_metrics : null,
-                    
-                    // Self-reported data from latest submission (separate from supervisor progress)
-                    'selfReportedProgress' => $latestSubmission->progress_percentage,
-                    'selfReportedLastUpdated' => $latestSubmission->created_at->toISOString(),
-                    'selfReportedAuthor' => $latestSubmission->employee->full_name ?? 'Employee',
-                    
-                    // Additional data
-                    'weights' => $assignment->weights,
+                    'progress' => $existingReview ? (int)$existingReview->progress : 0, // supervisor progress
+                    'grade' => $existingReview?->grade,
+                    'supervisorComments' => $existingReview?->supervisor_comments,
+                    'lastUpdated' => ($existingReview?->updated_at ?? $latestSubmission?->created_at)?->toISOString(),
+                    'performanceMetrics' => $existingReview?->performance_metrics,
+                    'selfReportedProgress' => $latestSubmission?->progress_percentage ?? 0,
+                    'selfReportedLastUpdated' => $latestSubmission?->created_at?->toISOString(),
+                    'selfReportedAuthor' => $latestSubmission?->employee?->full_name,
+                    'weights' => $assignment->weights ?? [],
                     'priority' => $assignment->priority,
                     'description' => $assignment->description,
                     'submissionCount' => $assignment->progressSubmissions->count(),
-                    'latestSubmissionNote' => $latestSubmission->note,
+                    'latestSubmissionNote' => $latestSubmission?->note,
                     'documentCount' => $assignment->progressSubmissions->whereNotNull('document_name')->count(),
                 ];
             });
 
-            return response()->json($performanceReviews, 200);
+            $assignments->setCollection($transformed);
+
+            return response()->json([
+                'data' => $assignments->items(),
+                'meta' => [
+                    'current_page' => $assignments->currentPage(),
+                    'last_page' => $assignments->lastPage(),
+                    'per_page' => $assignments->perPage(),
+                    'total' => $assignments->total(),
+                    'from' => $assignments->firstItem(),
+                    'to' => $assignments->lastItem(),
+                ]
+            ], 200);
 
         } catch (\Exception $e) {
             \Log::error('Error fetching performance reviews', [
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
             ]);
 
             return response()->json([
