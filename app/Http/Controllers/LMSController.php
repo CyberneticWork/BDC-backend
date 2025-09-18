@@ -272,4 +272,15 @@ class LMSController extends Controller
             'message' => 'Course deleted successfully'
         ], 200);
     }
+    public function removeAttachment($id)
+{
+    $attachment = attachments::findOrFail($id);
+    // Delete the file from storage
+    if ($attachment->url) {
+        \Illuminate\Support\Facades\Storage::disk('public')->delete(str_replace('/storage/', '', $attachment->url));
+    }
+    $attachment->delete();
+
+    return response()->json(['message' => 'Attachment removed successfully'], 200);
+}
 }

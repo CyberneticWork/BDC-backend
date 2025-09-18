@@ -158,7 +158,7 @@ Route::get('/salary/process/csv', [SalaryController::class, 'salaryCSV']);
 // LMS Routes
 
 Route::apiResource('courses', LMSController::class);  // Handles all CRUD: GET /courses (index), POST /courses (store), GET /courses/{id} (show), etc.
-
+Route::delete('/attachments/{id}', [LMSController::class, 'removeAttachment']);
 Route::middleware('auth:sanctum')->group(function () {
     // Exam routes
     Route::apiResource('exams', ExamController::class);
