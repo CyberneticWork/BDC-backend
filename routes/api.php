@@ -188,3 +188,8 @@ Route::get('/pms/performance-reviews', [PmsController::class, 'getPerformanceRev
 Route::get('/pms/performance-reviews/{assignmentId}/details', [PmsController::class, 'getPerformanceReviewDetails']);
 Route::get('/pms/performance-reviews/{assignmentId}/documents', [PmsController::class, 'getAssignmentDocuments']);
 Route::put('/pms/performance-reviews/{assignmentId}', [PmsController::class, 'updatePerformanceReview']);
+
+// Employee Performance Evaluation endpoints
+Route::post('/pms/employee-performance/calculate', [PmsController::class, 'calculateEmployeePerformance']);
+Route::post('/pms/employee-performance/save', [PmsController::class, 'saveEmployeePerformance']);
+Route::get('/pms/employee-performance', [PmsController::class, 'getEmployeePerformanceEvaluations']);
