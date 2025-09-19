@@ -70,8 +70,10 @@ class LMSController extends Controller
                 $path = null;
                 if ($request->hasFile("modules.{$index}.file")) {
                     $file = $request->file("modules.{$index}.file");
-                    $path = $file->store('modules', 'public'); // Store in storage/app/public/modules
-                    $path = Storage::url($path); // Generate public URL
+                    // Save using the original filename sent by the frontend
+                    $originalName = $file->getClientOriginalName();
+                    $storedPath = $file->storeAs('modules', $originalName, 'public');
+                    $path = Storage::url($storedPath); // public URL
                 }
 
                 modules::create([
@@ -87,15 +89,17 @@ class LMSController extends Controller
         // Handle attachments (unchanged)
         if ($request->hasFile('attachments')) {
             foreach ($request->file('attachments') as $file) {
-                $path = $file->store('attachments', 'public');
+                // Save using original filename from frontend
+                $originalName = $file->getClientOriginalName();
+                $storedPath = $file->storeAs('attachments', $originalName, 'public');
                 $mime = $file->getMimeType();
                 $type = str_contains($mime, 'pdf') ? 'pdf' : 'video';
 
                 attachments::create([
                     'course_id' => $course->id,
-                    'name' => $file->getClientOriginalName(),
+                    'name' => $originalName,
                     'type' => $type,
-                    'url' => Storage::url($path),
+                    'url' => Storage::url($storedPath),
                     'size' => $file->getSize(),
                 ]);
             }
@@ -199,7 +203,9 @@ class LMSController extends Controller
                     // Create new module
                     if ($request->hasFile("modules.{$index}.file")) {
                         $file = $request->file("modules.{$index}.file");
-                        $storedPath = $file->store('modules', 'public');
+                        // Save using original filename sent by the frontend
+                        $originalName = $file->getClientOriginalName();
+                        $storedPath = $file->storeAs('modules', $originalName, 'public');
                         $path = Storage::url($storedPath);
                     }
 
@@ -237,15 +243,17 @@ class LMSController extends Controller
 
             // Upload new files
             foreach ($request->file('attachments') as $file) {
-                $path = $file->store('attachments', 'public');
+                // Save using original filename from frontend
+                $originalName = $file->getClientOriginalName();
+                $storedPath = $file->storeAs('attachments', $originalName, 'public');
                 $mime = $file->getMimeType();
                 $type = str_contains($mime, 'pdf') ? 'pdf' : 'video';
 
                 attachments::create([
                     'course_id' => $course->id,
-                    'name' => $file->getClientOriginalName(),
+                    'name' => $originalName,
                     'type' => $type,
-                    'url' => Storage::url($path),
+                    'url' => Storage::url($storedPath),
                     'size' => $file->getSize(),
                 ]);
             }
