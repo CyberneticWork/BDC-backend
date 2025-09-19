@@ -43,8 +43,8 @@ class ExamController extends Controller
     public function store(Request $request)
     {
         // For testing: Comment out auth and use fixed user ID
-        // $userId = auth()->id();
-        $userId = 1;
+        $userId = auth()->id();
+        // $userId = 1;
 
         $validator = Validator::make($request->all(), [
             'title' => 'required|string|max:255',
