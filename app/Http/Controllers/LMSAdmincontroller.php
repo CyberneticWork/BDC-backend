@@ -25,9 +25,15 @@ class LMSAdmincontroller extends Controller
             ->with(['user', 'course:id,title', 'course.modules:id,course_id'])
             ->when($courseId, fn($q) => $q->where('course_id', $courseId))
             ->when($search, function ($q) use ($search) {
-                $q->whereHas('user', function ($uq) use ($search) {
-                    $uq->where('name', 'like', "%{$search}%")
-                        ->orWhere('email', 'like', "%{$search}%");
+                $q->where(function ($inner) use ($search) {
+                    $inner
+                        ->whereHas('user', function ($uq) use ($search) {
+                            $uq->where('name', 'like', "%{$search}%")
+                                ->orWhere('email', 'like', "%{$search}%");
+                        })
+                        ->orWhereHas('course', function ($cq) use ($search) {
+                            $cq->where('title', 'like', "%{$search}%");
+                        });
                 });
             })
             ->orderByDesc('enrolled_at');
@@ -83,9 +89,15 @@ class LMSAdmincontroller extends Controller
             ->with(['user:id,name,email', 'exam:id,title,passing_score'])
             ->when($examId, fn($q) => $q->where('exam_id', $examId))
             ->when($search, function ($q) use ($search) {
-                $q->whereHas('user', function ($uq) use ($search) {
-                    $uq->where('name', 'like', "%{$search}%")
-                        ->orWhere('email', 'like', "%{$search}%");
+                $q->where(function ($inner) use ($search) {
+                    $inner
+                        ->whereHas('user', function ($uq) use ($search) {
+                            $uq->where('name', 'like', "%{$search}%")
+                                ->orWhere('email', 'like', "%{$search}%");
+                        })
+                        ->orWhereHas('exam', function ($eq) use ($search) {
+                            $eq->where('title', 'like', "%{$search}%");
+                        });
                 });
             })
             ->orderByDesc('submitted_at');
