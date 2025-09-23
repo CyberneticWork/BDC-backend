@@ -38,7 +38,7 @@ class PmsController extends Controller
      */
     public function getCompanies()
     {
-        $companies = Company::select('id', 'name')->get();
+        $companies = company::select('id', 'name')->get();
         return response()->json($companies);
     }
 
@@ -47,7 +47,7 @@ class PmsController extends Controller
      */
     public function getDepartmentsByCompany($companyId)
     {
-        $departments = Departments::where('company_id', $companyId)
+        $departments = departments::where('company_id', $companyId)
             ->select('id', 'name')
             ->get();
         return response()->json($departments);
@@ -66,7 +66,7 @@ class PmsController extends Controller
             return response()->json(['message' => 'Company ID is required'], 400);
         }
 
-        $query = Employee::with('organizationAssignment')
+        $query = employee::with('organizationAssignment')
             ->whereHas('organizationAssignment', function($q) use ($companyId, $departmentId) {
                 $q->where('company_id', $companyId);
                 if ($departmentId) {
@@ -97,7 +97,7 @@ class PmsController extends Controller
             return response()->json([]);
         }
         
-        $employees = Employee::with(['organizationAssignment.department', 'organizationAssignment.company'])
+        $employees = employee::with(['organizationAssignment.department', 'organizationAssignment.company'])
             ->where('attendance_employee_no', 'like', "%{$search}%")
             ->select('id', 'full_name', 'attendance_employee_no')
             ->limit(10)
@@ -145,7 +145,7 @@ class PmsController extends Controller
 
         $assignments = [];
         foreach ($validated['assignees'] as $attendanceNo) {
-            $employee = Employee::where('attendance_employee_no', $attendanceNo)->first();
+            $employee = employee::where('attendance_employee_no', $attendanceNo)->first();
             if (!$employee) {
                 return response()->json(['error' => 'Employee not found: ' . $attendanceNo], 400);
             }
@@ -300,7 +300,7 @@ class PmsController extends Controller
         // Handle assignees update (this might require creating new assignments or updating existing)
         // For simplicity, assume updating the employee_id if assignees array has one item
         if (isset($validated['assignees']) && count($validated['assignees']) === 1) {
-            $employee = Employee::where('attendance_employee_no', $validated['assignees'][0])->first();
+            $employee = employee::where('attendance_employee_no', $validated['assignees'][0])->first();
             if (!$employee) {
                 return response()->json(['error' => 'Employee not found'], 400);
             }
@@ -366,7 +366,7 @@ class PmsController extends Controller
             
             // Try to find by attendance number first
             if (is_string($employeeId) && preg_match('/^EMP/i', $employeeId)) {
-                $employee = Employee::where('attendance_employee_no', $employeeId)->first();
+                $employee = employee::where('attendance_employee_no', $employeeId)->first();
                 \Log::info('Lookup by attendance number', [
                     'employeeId' => $employeeId, 
                     'found' => ($employee ? 'yes' : 'no')
@@ -375,7 +375,7 @@ class PmsController extends Controller
             
             // If not found and it's numeric, try by ID
             if (!$employee && is_numeric($employeeId)) {
-                $employee = Employee::find($employeeId);
+                $employee = employee::find($employeeId);
                 \Log::info('Lookup by numeric ID', [
                     'employeeId' => $employeeId, 
                     'found' => ($employee ? 'yes' : 'no')
@@ -384,7 +384,7 @@ class PmsController extends Controller
                 // If still not found, try formatted attendance number
                 if (!$employee) {
                     $formattedId = 'EMP' . str_pad($employeeId, 4, '0', STR_PAD_LEFT);
-                    $employee = Employee::where('attendance_employee_no', $formattedId)->first();
+                    $employee = employee::where('attendance_employee_no', $formattedId)->first();
                     \Log::info('Lookup by formatted attendance number', [
                         'formattedId' => $formattedId, 
                         'found' => ($employee ? 'yes' : 'no')
@@ -670,12 +670,12 @@ class PmsController extends Controller
             // Find employee by ID or attendance number
             $employee = null;
             if (is_string($employeeId) && preg_match('/^EMP/i', $employeeId)) {
-                $employee = Employee::where('attendance_employee_no', $employeeId)->first();
+                $employee = employee::where('attendance_employee_no', $employeeId)->first();
             } elseif (is_numeric($employeeId)) {
-                $employee = Employee::find($employeeId);
+                $employee = employee::find($employeeId);
                 if (!$employee) {
                     $formattedId = 'EMP' . str_pad($employeeId, 4, '0', STR_PAD_LEFT);
-                    $employee = Employee::where('attendance_employee_no', $formattedId)->first();
+                    $employee = employee::where('attendance_employee_no', $formattedId)->first();
                 }
             }
 
