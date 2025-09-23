@@ -550,6 +550,7 @@ class EmployeeController extends Controller
                 'employee_id' => $employee->id,
                 'is_reccurring' => true,
                 'reccurence_pattern' => 'annualy',
+                'date_from' => $organization['dateOfJoined'],
             ]);
 
             DB::commit();
