@@ -253,23 +253,19 @@ class ExamController extends Controller
         $result = exam_results::create([
             'user_id' => $userId,
             'exam_id' => $exam->id,
-            'attempt_number' => $attemptNumber, // added
             'score' => $score,
             'passed' => $passed,
-            'answers' => $results,              // added
             'submitted_at' => now(),
         ]);
 
         return response()->json([
             'exam_id' => $exam->id,
-            'attempt_number' => $attemptNumber, // added
             'score' => $score,
             'passed' => $passed,
             'correct_answers' => $correctCount,
             'total_questions' => $questions->count(),
             'results' => $results,
             'submitted_at' => $result->submitted_at,
-            'passing_score' => $exam->passing_score
         ]);
     }
 
