@@ -175,21 +175,26 @@ Route::get('/pms/kpi-task-assignments', [PmsController::class, 'getKpiTaskAssign
 Route::post('/pms/kpi-task-assignments', [PmsController::class, 'storeKpiTaskAssignment']);
 Route::put('/pms/kpi-task-assignments/{id}', [PmsController::class, 'updateKpiTaskAssignment']);
 Route::delete('/pms/kpi-task-assignments/{id}', [PmsController::class, 'destroy']);
-Route::get('/pms/employee-kpi-task-assignments/{employeeId}', [PmsController::class, 'getEmployeeKpiTaskAssignments']);
-Route::get('/pms/create-test-assignment/{employeeId}', [PmsController::class, 'createTestAssignment']);
 
-// PMS Task Progress Submissions
-Route::post('/pms/task-progress-submissions', [PmsController::class, 'storeTaskProgressSubmission']);
-Route::get('/pms/task-progress-submissions/assignment/{assignmentId}', [PmsController::class, 'getTaskProgressSubmissions']);
-Route::get('/pms/task-progress-submissions/employee/{employeeId}', [PmsController::class, 'getEmployeeTaskProgressSubmissions']);
-
-// PMS Performance Reviews
-Route::get('/pms/performance-reviews', [PmsController::class, 'getPerformanceReviews']);
-Route::get('/pms/performance-reviews/{assignmentId}/details', [PmsController::class, 'getPerformanceReviewDetails']);
-Route::get('/pms/performance-reviews/{assignmentId}/documents', [PmsController::class, 'getAssignmentDocuments']);
-Route::put('/pms/performance-reviews/{assignmentId}', [PmsController::class, 'updatePerformanceReview']);
+// Make sure these routes are within an auth middleware group
+Route::middleware(['auth:sanctum'])->group(function () {
+    // PMS Performance Reviews (require authentication)
+    Route::get('/pms/performance-reviews', [PmsController::class, 'getPerformanceReviews']);
+    Route::get('/pms/performance-reviews/{assignmentId}/details', [PmsController::class, 'getPerformanceReviewDetails']);
+    Route::get('/pms/performance-reviews/{assignmentId}/documents', [PmsController::class, 'getAssignmentDocuments']);
+    Route::put('/pms/performance-reviews/{assignmentId}', [PmsController::class, 'updatePerformanceReview']);
+    
+    // Other PMS routes that require authentication
+    Route::get('/pms/kpi-task-assignments/employee/{employeeId}', [PmsController::class, 'getEmployeeKpiTaskAssignments']);
+    Route::post('/pms/task-progress-submissions', [PmsController::class, 'storeTaskProgressSubmission']);
+    Route::get('/pms/task-progress-submissions/assignment/{assignmentId}', [PmsController::class, 'getTaskProgressSubmissions']);
+    Route::get('/pms/task-progress-submissions/employee/{employeeId}', [PmsController::class, 'getEmployeeTaskProgressSubmissions']);
+});
 
 // Employee Performance Evaluation endpoints
 Route::post('/pms/employee-performance/calculate', [PmsController::class, 'calculateEmployeePerformance']);
 Route::post('/pms/employee-performance/save', [PmsController::class, 'saveEmployeePerformance']);
 Route::get('/pms/employee-performance', [PmsController::class, 'getEmployeePerformanceEvaluations']);
+
+// Ensure employee-specific KPI assignments route exists (used by frontend)
+Route::get('/pms/employee-kpi-task-assignments/{employeeId}', [PmsController::class, 'getEmployeeKpiTaskAssignments']);

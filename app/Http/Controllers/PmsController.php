@@ -711,7 +711,46 @@ class PmsController extends Controller
             $perPage = (int)$request->query('per_page', 8);
             if ($perPage <= 0) { $perPage = 8; }
 
-            // Base query: only assignments having submissions
+            // Require authentication for this endpoint
+            $currentUser = auth()->user();
+            if (!$currentUser) {
+                \Log::warning('Performance reviews - User not authenticated');
+                return response()->json(['error' => 'User not authenticated'], 401);
+            }
+
+            \Log::info('Performance reviews - User authenticated', [
+                'user_id' => $currentUser->id,
+                'employee_id' => $currentUser->employee_id ?? 'null',
+                'role' => $currentUser->role ?? 'null'
+            ]);
+
+            // If user is not linked to an employee:
+            // - allow ADMIN to view all reviews
+            // - other users must be linked to an employee record
+            $isAdmin = strtolower($currentUser->role ?? '') === 'admin';
+
+            if (!$currentUser->employee_id && !$isAdmin) {
+                \Log::warning('Performance reviews - User has no employee_id and is not admin', [
+                    'user_id' => $currentUser->id
+                ]);
+                return response()->json([
+                    'error' => 'User account is not linked to an employee record',
+                    'message' => 'Please contact administrator to link your account to an employee profile'
+                ], 403);
+            }
+
+            $currentEmployee = null;
+            if ($currentUser->employee_id) {
+                $currentEmployee = employee::find($currentUser->employee_id);
+                if (!$currentEmployee) {
+                    \Log::warning('Performance reviews - Employee record not found', [
+                        'user_id' => $currentUser->id,
+                        'employee_id' => $currentUser->employee_id
+                    ]);
+                    return response()->json(['error' => 'Employee record not found'], 404);
+                }
+            }
+
             $query = KpiTaskAssignment::with([
                 'kpiTask:id,task_name',
                 'employee:id,full_name,attendance_employee_no',
@@ -722,22 +761,26 @@ class PmsController extends Controller
                     $q->orderBy('created_at', 'desc');
                 }
             ])
-            ->whereHas('progressSubmissions')
+            ->whereHas('progressSubmissions');
+
+            // If not admin, restrict to assignments for this employee only
+            if (!$isAdmin && $currentEmployee) {
+                $query->where('employee_id', $currentEmployee->id);
+            }
+
             // Subselect latest submission timestamp
-            ->addSelect([
+            $query->addSelect([
                 'latest_submission_at' => TaskProgressSubmission::select('created_at')
                     ->whereColumn('kpi_assignment_id', 'kpi_task_assignments.id')
                     ->latest()
                     ->limit(1),
-                // Subselect latest performance review update (if exists)
                 'latest_review_at' => PerformanceReview::select('updated_at')
                     ->whereColumn('kpi_assignment_id', 'kpi_task_assignments.id')
                     ->latest()
                     ->limit(1),
             ]);
 
-            // Order: coalesce latest review updated_at else latest submission
-            $query->orderByRaw('COALESCE(latest_review_at, latest_submission_at) DESC');
+            $query->orderByRaw('COALESCE(latest_submission_at, latest_review_at) DESC');
 
             $assignments = $query->paginate($perPage);
 
@@ -757,15 +800,15 @@ class PmsController extends Controller
                     'company' => $assignment->company->name ?? 'Unknown Company',
                     'manager' => $assignment->creatorRole->role_name ?? 'Supervisor',
                     'type' => 'Performance Review',
-                    'status' => $existingReview ? $existingReview->status : 'Pending Manager',
+                    'status' => $existingReview ? $existingReview->status : 'Pending',
                     'startDate' => $assignment->start_date?->toDateString(),
                     'dueDate' => $assignment->end_date?->toDateString(),
                     'completedDate' => $existingReview?->completed_date?->toDateString(),
                     'cycle' => $this->deriveCycle($assignment->start_date),
-                    'progress' => $existingReview ? (int)$existingReview->progress : 0, // supervisor progress
+                    'progress' => $existingReview ? (int)$existingReview->progress : 0,
                     'grade' => $existingReview?->grade,
                     'supervisorComments' => $existingReview?->supervisor_comments,
-                    'lastUpdated' => ($existingReview?->updated_at ?? $latestSubmission?->created_at)?->toISOString(),
+                    'lastUpdated' => ($latestSubmission?->created_at ?? $existingReview?->updated_at)?->toISOString(),
                     'performanceMetrics' => $existingReview?->performance_metrics,
                     'selfReportedProgress' => $latestSubmission?->progress_percentage ?? 0,
                     'selfReportedLastUpdated' => $latestSubmission?->created_at?->toISOString(),
@@ -796,6 +839,7 @@ class PmsController extends Controller
         } catch (\Exception $e) {
             \Log::error('Error fetching performance reviews', [
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
 
             return response()->json([
@@ -810,6 +854,26 @@ class PmsController extends Controller
     public function getPerformanceReviewDetails($assignmentId)
     {
         try {
+            $currentUser = auth()->user();
+            if (!$currentUser) {
+                return response()->json(['error' => 'User not authenticated'], 401);
+            }
+
+            $isAdmin = strtolower($currentUser->role ?? '') === 'admin';
+
+            // If user has employee_id, load it; if not and not admin -> deny
+            if (!$currentUser->employee_id && !$isAdmin) {
+                return response()->json([
+                    'error' => 'User account is not linked to an employee record',
+                    'message' => 'Please contact administrator to link your account to an employee profile'
+                ], 403);
+            }
+
+            $currentEmployee = $currentUser->employee_id ? employee::find($currentUser->employee_id) : null;
+            if ($currentUser->employee_id && !$currentEmployee) {
+                return response()->json(['error' => 'Employee record not found'], 404);
+            }
+
             $assignment = KpiTaskAssignment::with([
                 'kpiTask:id,task_name',
                 'employee:id,full_name,attendance_employee_no',
@@ -821,7 +885,15 @@ class PmsController extends Controller
                 }
             ])->findOrFail($assignmentId);
 
-            // Get existing performance review if it exists
+            if (!$isAdmin) {
+                $isAssigned = $assignment->employee_id === $currentEmployee->id;
+                $isCreator = false; // keep creator logic if you have creator-user mapping
+
+                if (!$isAssigned && !$isCreator) {
+                    return response()->json(['error' => 'Access denied. You can only view your own task reviews.'], 403);
+                }
+            }
+
             $existingReview = PerformanceReview::where('kpi_assignment_id', $assignmentId)->first();
             
             $submissions = $assignment->progressSubmissions->map(function($submission) {
@@ -847,21 +919,19 @@ class PmsController extends Controller
                     'employee_id' => $assignment->employee->attendance_employee_no ?? '',
                     'department' => $assignment->department->name ?? 'Unknown Department',
                     'company' => $assignment->company->name ?? 'Unknown Company',
-                    'creator_role' => $assignment->creatorRole->role_name ?? 'Supervisor',
-                    'start_date' => $assignment->start_date->toDateString(),
-                    'end_date' => $assignment->end_date->toDateString(),
-                    'priority' => $assignment->priority,
+                    'start_date' => $assignment->start_date?->toDateString(),
+                    'end_date' => $assignment->end_date?->toDateString(),
                     'description' => $assignment->description,
                     'weights' => $assignment->weights,
+                    'priority' => $assignment->priority,
                 ],
                 'submissions' => $submissions,
-                'performance_review' => $existingReview ? [
+                'supervisor_review' => $existingReview ? [
                     'progress' => $existingReview->progress,
                     'grade' => $existingReview->grade,
-                    'supervisor_comments' => $existingReview->supervisor_comments,
+                    'comments' => $existingReview->supervisor_comments,
                     'status' => $existingReview->status,
                     'performance_metrics' => $existingReview->performance_metrics,
-                    'completed_date' => $existingReview->completed_date?->toDateString(),
                     'last_updated' => $existingReview->updated_at->toISOString(),
                 ] : null,
                 'self_reported' => $latestSubmission ? [
