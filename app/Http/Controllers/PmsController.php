@@ -150,12 +150,30 @@ class PmsController extends Controller
                 return response()->json(['error' => 'Employee not found: ' . $attendanceNo], 400);
             }
 
+            // Determine department: prefer provided department_id, else derive from employee's organizationAssignment
+            $departmentId = $validated['department_id'] ?? null;
+            if (!$departmentId) {
+                try {
+                    $departmentId = $employee->organizationAssignment?->department_id ?? null;
+                    \Log::info('Derived department id from organizationAssignment', [
+                        'attendance_no' => $attendanceNo,
+                        'derived_department_id' => $departmentId
+                    ]);
+                } catch (\Throwable $e) {
+                    \Log::warning('Failed to derive department from organizationAssignment', [
+                        'attendance_no' => $attendanceNo,
+                        'error' => $e->getMessage()
+                    ]);
+                    $departmentId = null;
+                }
+            }
+
             $assignment = KpiTaskAssignment::create([
                 'kpi_task_id' => $kpiTask->id,
                 'creator_role_id' => $creatorRole->id,
                 'weights' => $validated['weights'] ?? [],
                 'company_id' => $validated['company_id'],
-                'department_id' => $validated['department_id'],
+                'department_id' => $departmentId,
                 'employee_id' => $employee->id,
                 'start_date' => $validated['start_date'],
                 'end_date' => $validated['end_date'],
