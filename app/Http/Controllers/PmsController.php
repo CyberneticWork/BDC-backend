@@ -11,7 +11,9 @@ use App\Models\employee;
 use App\Models\KpiTaskAssignment;
 use App\Models\TaskProgressSubmission;
 use App\Models\PerformanceReview;
-use App\Models\PerformanceEvaluation; // Make sure this is imported
+use App\Models\PerformanceEvaluation;
+use Illuminate\Support\Facades\Log;
+use Carbon\Carbon;
 
 class PmsController extends Controller
 {
@@ -1363,6 +1365,86 @@ class PmsController extends Controller
             return response()->json([
                 'error' => 'Failed to fetch employee performance evaluations: ' . $e->getMessage()
             ], 500);
+        }
+    }
+
+    /**
+     * Get KPI dashboard stats: on-target vs need-attention within a date range.
+     *
+     * Query params:
+     *  - start_date (YYYY-MM-DD) optional (defaults to first day of current month)
+     *  - end_date   (YYYY-MM-DD) optional (defaults to last day of current month)
+     *
+     * Logic:
+     *  - Need Attention: assignments in the date window that have NO progress submissions and not completed.
+     *  - On Target: assignments in the date window that have a completed performance review and the completed_date is
+     *               within the window and completed on or before the assignment's end_date (on-time).
+     */
+    public function getKpiPerformance(Request $request)
+    {
+        try {
+            $startDate = $request->query('start_date') ?? Carbon::now()->startOfMonth()->toDateString();
+            $endDate = $request->query('end_date') ?? Carbon::now()->endOfMonth()->toDateString();
+
+            Log::info('KPI performance request', ['start' => $startDate, 'end' => $endDate]);
+
+            // Get assignments that overlap the requested window
+            $assignmentsQuery = KpiTaskAssignment::whereNull('deleted_at')
+                ->where(function($q) use ($startDate, $endDate) {
+                    // Overlap: assignment.start <= end AND assignment.end >= start
+                    $q->where('start_date', '<=', $endDate)
+                      ->where('end_date', '>=', $startDate);
+                })
+                ->with([
+                    'progressSubmissions:id,kpi_assignment_id', 
+                    'performanceReviews' => function($q) {
+                        $q->where('status', 'Completed')->orderBy('completed_date', 'desc');
+                    },
+                    'kpiTask:id,task_name'
+                ]);
+
+            $assignments = $assignmentsQuery->get();
+
+            $needAttention = 0;
+            $onTarget = 0;
+
+            foreach ($assignments as $assignment) {
+                // Need Attention: no submissions and not completed
+                $hasSubmissions = ($assignment->progressSubmissions && $assignment->progressSubmissions->count() > 0);
+                $isCompleted = strtolower($assignment->completion_status ?? '') === 'completed';
+
+                if (!$hasSubmissions && !$isCompleted) {
+                    $needAttention++;
+                }
+
+                // On Target: has a completed review whose completed_date is in range and completed on or before assignment end_date
+                $completedReview = $assignment->performanceReviews->first(); // ordered by completed_date desc
+                if ($completedReview && $completedReview->completed_date) {
+                    $completedDate = Carbon::parse($completedReview->completed_date)->toDateString();
+                    $assignmentEnd = $assignment->end_date ? Carbon::parse($assignment->end_date)->toDateString() : $endDate;
+
+                    if ($completedDate >= $startDate && $completedDate <= $endDate && $completedDate <= $assignmentEnd) {
+                        $onTarget++;
+                    }
+                }
+            }
+
+            return response()->json([
+                'data' => [
+                    'onTarget' => $onTarget,
+                    'needAttention' => $needAttention,
+                    'totalInWindow' => $assignments->count(),
+                    'startDate' => $startDate,
+                    'endDate' => $endDate
+                ]
+            ], 200);
+
+        } catch (\Exception $e) {
+            Log::error('Error computing KPI performance stats', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return response()->json(['error' => 'Failed to compute KPI dashboard stats'], 500);
         }
     }
 

@@ -198,3 +198,4 @@ Route::get('/pms/employee-performance', [PmsController::class, 'getEmployeePerfo
 
 // Ensure employee-specific KPI assignments route exists (used by frontend)
 Route::get('/pms/employee-kpi-task-assignments/{employeeId}', [PmsController::class, 'getEmployeeKpiTaskAssignments']);
+Route::get('/pms/dashboard/KPIs', [PmsController::class, 'getKpiPerformance']);
