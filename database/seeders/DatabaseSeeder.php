@@ -22,6 +22,7 @@ use App\Models\sub_departments;
 use Illuminate\Database\Seeder;
 use App\Models\organization_assignment;
 
+
 class DatabaseSeeder extends Seeder
 {
     /**
@@ -179,6 +180,8 @@ class DatabaseSeeder extends Seeder
             // EmployeeSeeder::class,
             // AllowanceSeeder::class,
             // DeductionSeeder::class,
+            KpiTasksSeeder::class,
+            creator_roles::class,
         ]);
 
         $employees = employee::all();
@@ -267,6 +270,9 @@ class DatabaseSeeder extends Seeder
         //         'primary_emp_basic' => rand(0, 1) ? true : false,
         //     ]);
         // }
+      
+
+
 
 
 
