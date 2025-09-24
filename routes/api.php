@@ -157,14 +157,14 @@ Route::get('/salary/process/csv', [SalaryController::class, 'salaryCSV']);
 
 // LMS Routes
 
-Route::apiResource('courses', LMSController::class);  // Handles all CRUD: GET /courses (index), POST /courses (store), GET /courses/{id} (show), etc.
+// Handles all CRUD: GET /courses (index), POST /courses (store), GET /courses/{id} (show), etc.
 
 Route::middleware('auth:sanctum')->group(function () {
     // Exam routes
     Route::apiResource('exams', ExamController::class);
     Route::post('exams/{id}/submit', [ExamController::class, 'submitExam']);
     Route::get('exam-results', [ExamController::class, 'getResults']);
-
+    Route::apiResource('courses', LMSController::class);
     // Enrollment routes
     Route::get('enrollments', [EnrollmentController::class, 'index']);
     Route::post('courses/{courseId}/enroll', [EnrollmentController::class, 'enroll']);
