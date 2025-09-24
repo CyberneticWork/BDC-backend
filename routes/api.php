@@ -26,7 +26,7 @@ use App\Http\Controllers\SubDepartmentsController;
 use App\Http\Controllers\LMSController;
 use App\Http\Controllers\LMSAdmincontroller;
 use App\Http\Controllers\ExamController;
-
+use App\Http\Controllers\PmsController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -184,3 +184,32 @@ Route::middleware('auth:sanctum')->prefix('admin/lms')->group(function () {
     Route::get('stats', [LMSAdmincontroller::class, 'getLmsStats']);
 });
 
+// PMS Related Data Endpoints
+Route::get('/kpi-tasks', [PmsController::class, 'getKpiTasks']);
+Route::get('/creator-roles', [PmsController::class, 'getCreatorRoles']);
+Route::get('/pms/companies', [PmsController::class, 'getCompanies']);
+Route::get('/pms/departments/{companyId}', [PmsController::class, 'getDepartmentsByCompany']);
+Route::get('/pms/employees-by-company', [PmsController::class, 'getEmployeesByCompany']);
+Route::get('/pms/search-employees', [PmsController::class, 'searchEmployeesByAttendanceNo']);
+Route::get('/pms/kpi-task-assignments', [PmsController::class, 'getKpiTaskAssignments']);
+Route::post('/pms/kpi-task-assignments', [PmsController::class, 'storeKpiTaskAssignment']);
+Route::put('/pms/kpi-task-assignments/{id}', [PmsController::class, 'updateKpiTaskAssignment']);
+Route::delete('/pms/kpi-task-assignments/{id}', [PmsController::class, 'destroy']);
+Route::get('/pms/employee-kpi-task-assignments/{employeeId}', [PmsController::class, 'getEmployeeKpiTaskAssignments']);
+Route::get('/pms/create-test-assignment/{employeeId}', [PmsController::class, 'createTestAssignment']);
+
+// PMS Task Progress Submissions
+Route::post('/pms/task-progress-submissions', [PmsController::class, 'storeTaskProgressSubmission']);
+Route::get('/pms/task-progress-submissions/assignment/{assignmentId}', [PmsController::class, 'getTaskProgressSubmissions']);
+Route::get('/pms/task-progress-submissions/employee/{employeeId}', [PmsController::class, 'getEmployeeTaskProgressSubmissions']);
+
+// PMS Performance Reviews
+Route::get('/pms/performance-reviews', [PmsController::class, 'getPerformanceReviews']);
+Route::get('/pms/performance-reviews/{assignmentId}/details', [PmsController::class, 'getPerformanceReviewDetails']);
+Route::get('/pms/performance-reviews/{assignmentId}/documents', [PmsController::class, 'getAssignmentDocuments']);
+Route::put('/pms/performance-reviews/{assignmentId}', [PmsController::class, 'updatePerformanceReview']);
+
+// Employee Performance Evaluation endpoints
+Route::post('/pms/employee-performance/calculate', [PmsController::class, 'calculateEmployeePerformance']);
+Route::post('/pms/employee-performance/save', [PmsController::class, 'saveEmployeePerformance']);
+Route::get('/pms/employee-performance', [PmsController::class, 'getEmployeePerformanceEvaluations']);
