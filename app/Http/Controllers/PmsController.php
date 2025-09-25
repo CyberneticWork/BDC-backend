@@ -1459,4 +1459,165 @@ class PmsController extends Controller
         if ($percentage >= 21) return ['grade' => 'B-', 'label' => 'Below Average'];
         return ['grade' => 'C', 'label' => 'Poor Performance'];
     }
+
+    /**
+     * Get PMS dashboard statistics
+     */
+    public function getDashboardStats()
+    {
+        try {
+            $currentUser = auth()->user();
+            if (!$currentUser) {
+                return response()->json(['error' => 'User not authenticated'], 401);
+            }
+
+            $userRole = strtolower($currentUser->role ?? '');
+            $isAdmin = $userRole === 'admin';
+
+            // Base queries with role-based filtering
+            $kpiQuery = KpiTaskAssignment::whereNull('deleted_at');
+            $reviewsQuery = KpiTaskAssignment::whereHas('progressSubmissions');
+
+            // Apply role-based restrictions
+            if (!$isAdmin && $currentUser->employee_id) {
+                $currentEmployee = employee::find($currentUser->employee_id);
+                if ($currentEmployee) {
+                    if ($userRole === 'manager') {
+                        // Manager sees HR + supervisor tasks + assigned tasks
+                        $kpiQuery->where(function($q) use ($currentEmployee) {
+                            $q->whereHas('creatorRole', function($subQ) {
+                                $subQ->whereIn('role_name', ['HR', 'Human Resources', 'HR Manager', 'Supervisor', 'Operations', 'Management']);
+                            })->orWhere('employee_id', $currentEmployee->id);
+                        });
+                        $reviewsQuery->where(function($q) use ($currentEmployee) {
+                            $q->whereHas('creatorRole', function($subQ) {
+                                $subQ->whereIn('role_name', ['HR', 'Human Resources', 'HR Manager', 'Supervisor', 'Operations', 'Management']);
+                            })->orWhere('employee_id', $currentEmployee->id);
+                        });
+                    } elseif ($userRole === 'supervisor') {
+                        // Supervisor sees own created + assigned tasks
+                        $kpiQuery->where(function($q) use ($currentEmployee) {
+                            $q->where('employee_id', $currentEmployee->id)
+                              ->orWhereHas('creatorRole', function($subQ) {
+                                  $subQ->whereIn('role_name', ['Supervisor', 'Operations', 'Management']);
+                              });
+                        });
+                        $reviewsQuery->where(function($q) use ($currentEmployee) {
+                            $q->where('employee_id', $currentEmployee->id)
+                              ->orWhereHas('creatorRole', function($subQ) {
+                                  $subQ->whereIn('role_name', ['Supervisor', 'Operations', 'Management']);
+                              });
+                        });
+                    } else {
+                        // Default: only assigned tasks
+                        $kpiQuery->where('employee_id', $currentEmployee->id);
+                        $reviewsQuery->where('employee_id', $currentEmployee->id);
+                    }
+                }
+            }
+
+            // Count statistics
+            $totalKpiTasks = $kpiQuery->count();
+            $activeReviews = $reviewsQuery->count();
+            $completedTasks = (clone $kpiQuery)->where('completion_status', 'completed')->count();
+            $upcomingDeadlines = (clone $kpiQuery)->where('end_date', '>=', now())
+                                                   ->where('end_date', '<=', now()->addDays(30))
+                                                   ->count();
+
+            // Calculate goal progress percentage
+            $goalProgress = $totalKpiTasks > 0 ? round(($completedTasks / $totalKpiTasks) * 100) : 0;
+
+            return response()->json([
+                'activeReviews' => $activeReviews,
+                'goalProgress' => $goalProgress,
+                'upcomingDeadlines' => $upcomingDeadlines,
+                'totalKpiTasks' => $totalKpiTasks,
+                'completedTasks' => $completedTasks,
+                'progressIncrease' => 5, // Could calculate from historical data
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('Error fetching PMS dashboard stats', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'error' => 'Failed to fetch dashboard statistics'
+            ], 500);
+        }
+    }
+
+    /**
+     * Get upcoming deadlines for dashboard
+     */
+    public function getUpcomingDeadlines()
+    {
+        try {
+            $currentUser = auth()->user();
+            if (!$currentUser) {
+                return response()->json(['error' => 'User not authenticated'], 401);
+            }
+
+            $userRole = strtolower($currentUser->role ?? '');
+            $isAdmin = $userRole === 'admin';
+
+            $query = KpiTaskAssignment::with(['kpiTask:id,task_name', 'employee:id,full_name'])
+                ->whereNull('deleted_at')
+                ->where('end_date', '>=', now())
+                ->where('end_date', '<=', now()->addDays(30))
+                ->whereNotIn('completion_status', ['completed']);
+
+            // Apply role-based restrictions (same logic as dashboard stats)
+            if (!$isAdmin && $currentUser->employee_id) {
+                $currentEmployee = employee::find($currentUser->employee_id);
+                if ($currentEmployee) {
+                    if ($userRole === 'manager') {
+                        $query->where(function($q) use ($currentEmployee) {
+                            $q->whereHas('creatorRole', function($subQ) {
+                                $subQ->whereIn('role_name', ['HR', 'Human Resources', 'HR Manager', 'Supervisor', 'Operations', 'Management']);
+                            })->orWhere('employee_id', $currentEmployee->id);
+                        });
+                    } elseif ($userRole === 'supervisor') {
+                        $query->where(function($q) use ($currentEmployee) {
+                            $q->where('employee_id', $currentEmployee->id)
+                              ->orWhereHas('creatorRole', function($subQ) {
+                                  $subQ->whereIn('role_name', ['Supervisor', 'Operations', 'Management']);
+                              });
+                        });
+                    } else {
+                        $query->where('employee_id', $currentEmployee->id);
+                    }
+                }
+            }
+
+            $deadlines = $query->orderBy('end_date', 'asc')
+                              ->limit(10)
+                              ->get()
+                              ->map(function($assignment) {
+                                  $daysLeft = now()->diffInDays($assignment->end_date, false);
+                                  $type = $daysLeft <= 7 ? 'urgent' : ($daysLeft <= 14 ? 'review' : 'goals');
+                                  
+                                  return [
+                                      'id' => $assignment->id,
+                                      'name' => $assignment->kpiTask->task_name ?? 'Task',
+                                      'deadline' => $assignment->end_date->toDateString(),
+                                      'daysLeft' => max(0, $daysLeft),
+                                      'type' => $type,
+                                      'assignee' => $assignment->employee->full_name ?? 'Unknown'
+                                  ];
+                              });
+
+            return response()->json($deadlines);
+
+        } catch (\Exception $e) {
+            \Log::error('Error fetching upcoming deadlines', [
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'error' => 'Failed to fetch upcoming deadlines'
+            ], 500);
+        }
+    }
 }

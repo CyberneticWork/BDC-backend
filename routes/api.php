@@ -189,6 +189,11 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/pms/task-progress-submissions', [PmsController::class, 'storeTaskProgressSubmission']);
     Route::get('/pms/task-progress-submissions/assignment/{assignmentId}', [PmsController::class, 'getTaskProgressSubmissions']);
     Route::get('/pms/task-progress-submissions/employee/{employeeId}', [PmsController::class, 'getEmployeeTaskProgressSubmissions']);
+    
+    // PMS Dashboard endpoints - Move inside auth middleware
+    Route::get('/pms/dashboard/stats', [PmsController::class, 'getDashboardStats']);
+    Route::get('/pms/dashboard/upcoming-deadlines', [PmsController::class, 'getUpcomingDeadlines']);
+    Route::get('/pms/dashboard/KPIs', [PmsController::class, 'getKpiPerformance']);
 });
 
 // Employee Performance Evaluation endpoints
@@ -198,4 +203,3 @@ Route::get('/pms/employee-performance', [PmsController::class, 'getEmployeePerfo
 
 // Ensure employee-specific KPI assignments route exists (used by frontend)
 Route::get('/pms/employee-kpi-task-assignments/{employeeId}', [PmsController::class, 'getEmployeeKpiTaskAssignments']);
-Route::get('/pms/dashboard/KPIs', [PmsController::class, 'getKpiPerformance']);
