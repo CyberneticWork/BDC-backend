@@ -13,8 +13,9 @@ return new class extends Migration
     {
         Schema::create('kpi_tasks', function (Blueprint $table) {
             $table->id();
-            $table->string('task_name');
-            // $table->text('description')->nullable();
+            $table->string('task_name'); // Make task_name unique
+            $table->text('description')->nullable();
+            $table->softDeletes(); // Add soft delete capability
             $table->timestamps();
         });
     }

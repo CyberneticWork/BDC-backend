@@ -203,3 +203,10 @@ Route::get('/pms/employee-performance', [PmsController::class, 'getEmployeePerfo
 
 // Ensure employee-specific KPI assignments route exists (used by frontend)
 Route::get('/pms/employee-kpi-task-assignments/{employeeId}', [PmsController::class, 'getEmployeeKpiTaskAssignments']);
+
+// Add these routes near the existing KPI-related routes
+
+// KPI Tasks CRUD routes
+Route::post('/kpi-tasks', [PmsController::class, 'storeKpiTask']);
+Route::put('/kpi-tasks/{id}', [PmsController::class, 'updateKpiTask']);
+Route::delete('/kpi-tasks/{id}', [PmsController::class, 'destroyKpiTask']);

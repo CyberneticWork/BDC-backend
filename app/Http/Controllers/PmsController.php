@@ -14,6 +14,8 @@ use App\Models\PerformanceReview;
 use App\Models\PerformanceEvaluation;
 use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
+use Illuminate\Database\QueryException;
+use Illuminate\Validation\Rule;
 
 class PmsController extends Controller
 {
@@ -1617,6 +1619,137 @@ class PmsController extends Controller
 
             return response()->json([
                 'error' => 'Failed to fetch upcoming deadlines'
+            ], 500);
+        }
+    }
+
+    /**
+     * Store a newly created KPI task.
+     */
+    public function storeKpiTask(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'task_name'   => 'required|string|max:255|unique:kpi_tasks,task_name,NULL,id,deleted_at,NULL',
+                'description' => 'nullable|string|max:1000',
+            ], [
+                'task_name.required' => 'Task name is required',
+                'task_name.unique'   => 'A KPI task with this name already exists',
+                'task_name.max'      => 'Task name cannot exceed 255 characters',
+                'description.max'    => 'Description cannot exceed 1000 characters',
+            ]);
+
+            $kpiTask = KpiTask::create($validated);
+
+            \Log::info('KPI task created successfully', [
+                'task_name' => $kpiTask->task_name
+            ]);
+
+            return response()->json($kpiTask, 201);
+
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json(['errors' => $e->errors()], 422);
+        } catch (QueryException $qe) {
+            // Handle duplicate key gracefully
+            if ($qe->getCode() === '23000') {
+                return response()->json(['message' => 'A KPI task with this name already exists'], 422);
+            }
+            \Log::error('QueryException creating KPI task', ['error' => $qe->getMessage()]);
+            return response()->json(['error' => 'Database error creating KPI task'], 500);
+        } catch (\Exception $e) {
+            \Log::error('Error creating KPI task', ['data' => $request->all(), 'error' => $e->getMessage()]);
+            return response()->json(['error' => 'Failed to create KPI task'], 500);
+        }
+    }
+
+    /**
+     * Update the specified KPI task.
+     */
+    public function updateKpiTask(Request $request, $id)
+    {
+        try {
+            $kpiTask = KpiTask::findOrFail($id);
+
+            $validated = $request->validate([
+                'task_name'   => ['required','string','max:255',
+                    Rule::unique('kpi_tasks','task_name')->ignore($id)->whereNull('deleted_at')
+                ],
+                'description' => 'nullable|string|max:1000',
+            ], [
+                'task_name.required' => 'Task name is required',
+                'task_name.unique'   => 'A KPI task with this name already exists',
+                'task_name.max'      => 'Task name cannot exceed 255 characters',
+                'description.max'    => 'Description cannot exceed 1000 characters',
+            ]);
+
+            $kpiTask->update($validated);
+
+            \Log::info('KPI task updated successfully', [
+                'id' => $kpiTask->id,
+                'task_name' => $kpiTask->task_name
+            ]);
+
+            return response()->json($kpiTask, 200);
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json(['message' => 'KPI task not found'], 404);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json(['errors' => $e->errors()], 422);
+        } catch (QueryException $qe) {
+            if ($qe->getCode() === '23000') {
+                return response()->json(['message' => 'A KPI task with this name already exists'], 422);
+            }
+            \Log::error('QueryException updating KPI task', ['id' => $id, 'error' => $qe->getMessage()]);
+            return response()->json(['error' => 'Database error updating KPI task'], 500);
+        } catch (\Exception $e) {
+            \Log::error('Error updating KPI task', ['id' => $id, 'data' => $request->all(), 'error' => $e->getMessage()]);
+            return response()->json(['error' => 'Failed to update KPI task'], 500);
+        }
+    }
+
+    /**
+     * Remove the specified KPI task (soft delete).
+     */
+    public function destroyKpiTask($id)
+    {
+        try {
+            $kpiTask = KpiTask::findOrFail($id);
+
+            // Check if this task is being used in any assignments
+            $assignmentCount = KpiTaskAssignment::where('kpi_task_id', $id)
+                ->whereNull('deleted_at')
+                ->count();
+
+            if ($assignmentCount > 0) {
+                return response()->json([
+                    'message' => 'Cannot delete this KPI task as it is currently assigned to employees',
+                    'assignments_count' => $assignmentCount
+                ], 422);
+            }
+
+            $kpiTask->delete(); // This will soft delete due to SoftDeletes trait
+
+            \Log::info('KPI task deleted successfully', [
+                'id' => $id,
+                'task_name' => $kpiTask->task_name
+            ]);
+
+            return response()->json([
+                'message' => 'KPI task deleted successfully'
+            ], 200);
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json(['message' => 'KPI task not found'], 404);
+        } catch (\Exception $e) {
+            \Log::error('Error deleting KPI task', [
+                'id' => $id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to delete KPI task',
+                'error' => $e->getMessage()
             ], 500);
         }
     }
