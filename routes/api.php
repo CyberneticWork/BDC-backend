@@ -210,3 +210,8 @@ Route::get('/pms/employee-kpi-task-assignments/{employeeId}', [PmsController::cl
 Route::post('/kpi-tasks', [PmsController::class, 'storeKpiTask']);
 Route::put('/kpi-tasks/{id}', [PmsController::class, 'updateKpiTask']);
 Route::delete('/kpi-tasks/{id}', [PmsController::class, 'destroyKpiTask']);
+
+// Creator Roles CRUD
+Route::post('/creator-roles', [PmsController::class, 'storeCreatorRole']);
+Route::put('/creator-roles/{id}', [PmsController::class, 'updateCreatorRole']);
+Route::delete('/creator-roles/{id}', [PmsController::class, 'destroyCreatorRole']);

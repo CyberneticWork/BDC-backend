@@ -1753,4 +1753,107 @@ class PmsController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Store a new Creator Role.
+     */
+    public function storeCreatorRole(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'role_name' => ['required', 'string', 'max:255',
+                    Rule::unique('creator_roles', 'role_name')->whereNull('deleted_at')
+                ],
+            ], [
+                'role_name.required' => 'Role name is required',
+                'role_name.unique' => 'A creator role with this name already exists',
+                'role_name.max' => 'Role name cannot exceed 255 characters',
+            ]);
+
+            $role = CreatorRole::create([
+                'role_name' => $validated['role_name'],
+            ]);
+
+            return response()->json($role, 201);
+
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json(['errors' => $e->errors()], 422);
+        } catch (QueryException $qe) {
+            if ($qe->getCode() === '23000') {
+                return response()->json(['message' => 'A creator role with this name already exists'], 422);
+            }
+            \Log::error('QueryException creating CreatorRole', ['error' => $qe->getMessage()]);
+            return response()->json(['error' => 'Database error creating creator role'], 500);
+        } catch (\Exception $e) {
+            \Log::error('Error creating CreatorRole', ['error' => $e->getMessage(), 'data' => $request->all()]);
+            return response()->json(['error' => 'Failed to create creator role'], 500);
+        }
+    }
+
+    /**
+     * Update an existing Creator Role.
+     */
+    public function updateCreatorRole(Request $request, $id)
+    {
+        try {
+            $role = CreatorRole::findOrFail($id);
+
+            $validated = $request->validate([
+                'role_name' => ['required', 'string', 'max:255',
+                    Rule::unique('creator_roles', 'role_name')->ignore($id)->whereNull('deleted_at')
+                ],
+            ], [
+                'role_name.required' => 'Role name is required',
+                'role_name.unique' => 'A creator role with this name already exists',
+                'role_name.max' => 'Role name cannot exceed 255 characters',
+            ]);
+
+            $role->update(['role_name' => $validated['role_name']]);
+
+            return response()->json($role, 200);
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json(['message' => 'Creator role not found'], 404);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json(['errors' => $e->errors()], 422);
+        } catch (QueryException $qe) {
+            if ($qe->getCode() === '23000') {
+                return response()->json(['message' => 'A creator role with this name already exists'], 422);
+            }
+            \Log::error('QueryException updating CreatorRole', ['id' => $id, 'error' => $qe->getMessage()]);
+            return response()->json(['error' => 'Database error updating creator role'], 500);
+        } catch (\Exception $e) {
+            \Log::error('Error updating CreatorRole', ['id' => $id, 'error' => $e->getMessage(), 'data' => $request->all()]);
+            return response()->json(['error' => 'Failed to update creator role'], 500);
+        }
+    }
+
+    /**
+     * Soft-delete a Creator Role (prevents deletion if assigned).
+     */
+    public function destroyCreatorRole($id)
+    {
+        try {
+            $role = CreatorRole::findOrFail($id);
+
+            // Prevent deletion if assigned to any KPI assignments (not soft-deleted)
+            $assignmentCount = KpiTaskAssignment::where('creator_role_id', $id)->whereNull('deleted_at')->count();
+            if ($assignmentCount > 0) {
+                return response()->json([
+                    'message' => 'Cannot delete this creator role because it is assigned to KPIs',
+                    'assignments_count' => $assignmentCount
+                ], 422);
+            }
+
+            $role->delete(); // soft delete
+
+            return response()->json(['message' => 'Creator role deleted'], 200);
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json(['message' => 'Creator role not found'], 404);
+        } catch (\Exception $e) {
+            \Log::error('Error deleting CreatorRole', ['id' => $id, 'error' => $e->getMessage()]);
+            return response()->json(['error' => 'Failed to delete creator role'], 500);
+        }
+    }
 }
