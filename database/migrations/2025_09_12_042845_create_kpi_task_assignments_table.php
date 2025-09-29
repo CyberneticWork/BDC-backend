@@ -28,6 +28,8 @@ return new class extends Migration
             $table->timestamp('last_updated')->nullable();
             $table->timestamps();
             $table->softDeletes();
+            // approval_status is nullable so existing processes continue; default to 'pending'
+            $table->string('approval_status')->nullable()->default('pending');
         });
     }
 

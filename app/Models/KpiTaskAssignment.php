@@ -19,6 +19,7 @@ class KpiTaskAssignment extends Model
         'start_date',
         'end_date',
         'status',
+        'approval_status', // Add this line
         'priority',
         'description',
         'completion_status',

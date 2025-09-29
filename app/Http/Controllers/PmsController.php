@@ -257,6 +257,73 @@ class PmsController extends Controller
     }
 
     /**
+     * Get all KPI task assignments with approval status for the approval page.
+     * This is separate from getKpiTaskAssignments to avoid affecting other pages.
+     */
+    public function getKpiTaskAssignmentsForApproval(Request $request)
+    {
+        $assignments = KpiTaskAssignment::with([
+            'kpiTask:id,task_name',
+            'employee:id,full_name,attendance_employee_no',
+            'company:id,name',
+            'department:id,name',
+            'creatorRole:id,role_name'
+        ])
+        ->select([
+            'id',
+            'kpi_task_id',
+            'employee_id',
+            'company_id',
+            'department_id',
+            'creator_role_id',
+            'description',
+            'start_date',
+            'end_date',
+            'status',
+            'approval_status', // Include approval_status for the approval page
+            'priority',
+            'weights',
+            'completion_status',
+            'created_at'
+        ])
+        ->orderBy('created_at', 'desc') // Show recently added first
+        ->get();
+
+        // Transform to match frontend expectations with approval_status
+        $transformed = $assignments->map(function ($assignment) {
+            return [
+                'id' => $assignment->id,
+                'name' => $assignment->kpiTask->task_name ?? 'Unknown Task',
+                'description' => $assignment->description ?? '',
+                'company' => $assignment->company_id,
+                'departmentId' => $assignment->department_id,
+                'companyName' => $assignment->company->name ?? 'Unknown Company',
+                'departmentName' => $assignment->department->name ?? 'Unknown Department',
+                'department' => $assignment->department->name ?? 'Unknown Department',
+                'assignees' => [$assignment->employee->attendance_employee_no ?? ''],
+                'assigneeUpdates' => [], // Can be populated later if needed
+                'startDate' => $assignment->start_date->toDateString(),
+                'endDate' => $assignment->end_date->toDateString(),
+                'start_date' => $assignment->start_date->toDateString(), // Also include underscore version
+                'end_date' => $assignment->end_date->toDateString(), // Also include underscore version
+                'status' => $assignment->status ?? 'active',
+                'approval_status' => $assignment->approval_status ?? 'pending', // Include approval status
+                'priority' => $assignment->priority ?? 'medium',
+                'creator' => [
+                    'role' => $assignment->creatorRole->role_name ?? 'Unknown Role',
+                    'date' => $assignment->created_at->toISOString()
+                ],
+                'weights' => $assignment->weights ?? [],
+                'lastUpdated' => $assignment->created_at->toISOString(),
+                'frequency' => 'Monthly', // Default or add to table if needed
+                'category' => 'General' // Default or add to table if needed
+            ];
+        });
+
+        return response()->json($transformed);
+    }
+
+    /**
      * Update the specified KPI task assignment in storage.
      */
     public function updateKpiTaskAssignment(Request $request, $id)
@@ -359,142 +426,77 @@ class PmsController extends Controller
 
     /**
      * Get KPI task assignments for a specific employee.
+     *
+     * Returns only assignments that have approval_status = 'approved' for non-admin callers.
      */
     public function getEmployeeKpiTaskAssignments(Request $request, $employeeId)
     {
         try {
-            \Log::info('Fetching KPI assignments for employee', ['employeeId' => $employeeId]);
+            $currentUser = auth()->user();
+            $userRole = strtolower($currentUser->role ?? '');
+            $isAdmin = $userRole === 'admin';
 
-            // Employee lookup handling both ID and attendance number
-            $employee = null;
-            
-            // Try to find by attendance number first
-            if (is_string($employeeId) && preg_match('/^EMP/i', $employeeId)) {
-                $employee = employee::where('attendance_employee_no', $employeeId)->first();
-                \Log::info('Lookup by attendance number', [
-                    'employeeId' => $employeeId, 
-                    'found' => ($employee ? 'yes' : 'no')
-                ]);
-            }
-            
-            // If not found and it's numeric, try by ID
-            if (!$employee && is_numeric($employeeId)) {
-                $employee = employee::find($employeeId);
-                \Log::info('Lookup by numeric ID', [
-                    'employeeId' => $employeeId, 
-                    'found' => ($employee ? 'yes' : 'no')
-                ]);
-                
-                // If still not found, try formatted attendance number
-                if (!$employee) {
-                    $formattedId = 'EMP' . str_pad($employeeId, 4, '0', STR_PAD_LEFT);
-                    $employee = employee::where('attendance_employee_no', $formattedId)->first();
-                    \Log::info('Lookup by formatted attendance number', [
-                        'formattedId' => $formattedId, 
-                        'found' => ($employee ? 'yes' : 'no')
-                    ]);
-                }
+            // Build base query with useful relations
+            $query = KpiTaskAssignment::with([
+                'kpiTask:id,task_name',
+                'creatorRole:id,role_name',
+                'company:id,name',
+                'department:id,name',
+                'employee:id,full_name,attendance_employee_no'
+            ])->whereNull('deleted_at');
+
+            // Match by employee id (supports numeric id or attendance_no stored in employee_id)
+            $query->where(function($q) use ($employeeId) {
+                // keep simple equality; client-side sends the correct identifier
+                $q->where('employee_id', $employeeId);
+            });
+
+            // If caller is not admin, only show approved assignments to employees
+            if (! $isAdmin) {
+                $query->where('approval_status', 'approved');
             }
 
-            if (!$employee) {
-                \Log::warning('Employee not found', ['employeeId' => $employeeId]);
-                return response()->json([
-                    'error' => 'Employee not found',
-                    'employeeId' => $employeeId
-                ], 404);
+            // Optional filters: allow query params for status / date range if needed
+            if ($request->has('status')) {
+                $query->where('status', $request->query('status'));
+            }
+            if ($request->has('start_date')) {
+                $query->where('start_date', '>=', $request->query('start_date'));
+            }
+            if ($request->has('end_date')) {
+                $query->where('end_date', '<=', $request->query('end_date'));
             }
 
-            \Log::info('Found employee', [
-                'id' => $employee->id, 
-                'name' => $employee->full_name, 
-                'attendance_no' => $employee->attendance_employee_no
-            ]);
+            $assignments = $query->orderBy('start_date', 'desc')->get();
 
-            // Fetch assignments and log query details
-            $query = KpiTaskAssignment::where('employee_id', $employee->id)
-                ->whereNull('deleted_at');
-                
-            \Log::info('Executing query', [
-                'sql' => $query->toSql(),
-                'bindings' => $query->getBindings()
-            ]);
-            
-            $assignments = $query->get();
-
-            \Log::info('Retrieved assignments', ['count' => $assignments->count()]);
-
-            if ($assignments->isEmpty()) {
-                \Log::info('No assignments found for employee', ['employeeId' => $employeeId]);
-                return response()->json([], 200);
-            }
-
-            // Transform assignments manually (no eager loading)
-            $transformed = $assignments->map(function ($assignment) {
-                // Safely fetch related data (set to null if fails)
-                $kpiTask = null;
-                $company = null;
-                $department = null;
-                $creatorRole = null;
-
-                try {
-                    $kpiTask = KpiTask::find($assignment->kpi_task_id);
-                } catch (\Exception $e) {
-                    \Log::warning('Failed to fetch KpiTask', ['id' => $assignment->kpi_task_id, 'error' => $e->getMessage()]);
-                }
-
-                try {
-                    $company = company::find($assignment->company_id);
-                } catch (\Exception $e) {
-                    \Log::warning('Failed to fetch company', ['id' => $assignment->company_id, 'error' => $e->getMessage()]);
-                }
-
-                try {
-                    $department = departments::find($assignment->department_id);
-                } catch (\Exception $e) {
-                    \Log::warning('Failed to fetch department', ['id' => $assignment->department_id, 'error' => $e->getMessage()]);
-                }
-
-                try {
-                    $creatorRole = CreatorRole::find($assignment->creator_role_id);
-                } catch (\Exception $e) {
-                    \Log::warning('Failed to fetch CreatorRole', ['id' => $assignment->creator_role_id, 'error' => $e->getMessage()]);
-                }
-
-                // Build response with major data (other fields nullable)
+            $payload = $assignments->map(function($a) {
                 return [
-                    'id' => $assignment->id,
-                    'name' => $kpiTask ? $kpiTask->task_name : 'Unknown Task',
-                    'description' => $assignment->description ?? ($kpiTask ? $kpiTask->description : ''),
-
-                    'startDate' => $assignment->start_date ? $assignment->start_date->toDateString() : null,
-                    'endDate' => $assignment->end_date ? $assignment->end_date->toDateString() : null,
-                    'status' => $assignment->status ?? 'active',
-                    'priority' => $assignment->priority ?? 'medium',
-                    'completionStatus' => $assignment->completion_status ?? 'not-started',
-                    'weights' => $assignment->weights ?? [],
-                    'lastUpdated' => $assignment->last_updated ? $assignment->last_updated->toISOString() : 
-                                    ($assignment->created_at ? $assignment->created_at->toISOString() : null),
-                    'documentCount' => 0, // As requested, ignore document data
-                    'assignees' => [$employee->attendance_employee_no ?? ''],
-                    'assigneeUpdates' => [], // As requested, ignore submission data
-                    'company' => $company ? $company->name : null,
-                    'department' => $department ? $department->name : null,
-                    'creatorRole' => $creatorRole ? $creatorRole->role_name : null,
+                    'id' => $a->id,
+                    'kpi_task_id' => $a->kpi_task_id,
+                    'name' => $a->kpiTask->task_name ?? null,
+                    'description' => $a->description,
+                    'start_date' => $a->start_date ? $a->start_date->toDateString() : null,
+                    'end_date' => $a->end_date ? $a->end_date->toDateString() : null,
+                    'status' => $a->status,
+                    'approval_status' => $a->approval_status,
+                    'priority' => $a->priority,
+                    'completion_status' => $a->completion_status,
+                    'weights' => $a->weights,
+                    'company' => $a->company->name ?? null,
+                    'department' => $a->department->name ?? null,
+                    'creator_role' => $a->creatorRole->role_name ?? null,
+                    'employee' => [
+                        'id' => $a->employee->id ?? null,
+                        'full_name' => $a->employee->full_name ?? null,
+                        'attendance_employee_no' => $a->employee->attendance_employee_no ?? null,
+                    ],
                 ];
             });
 
-            return response()->json($transformed, 200);
+            return response()->json($payload);
         } catch (\Exception $e) {
-            \Log::error('Error fetching KPI assignments', [
-                'employeeId' => $employeeId,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-
-            return response()->json([
-                'error' => 'Failed to fetch KPI assignments',
-                'message' => $e->getMessage()
-            ], 500);
+            \Log::error('getEmployeeKpiTaskAssignments error: '.$e->getMessage(), ['trace' => $e->getTraceAsString()]);
+            return response()->json([], 500);
         }
     }
 
@@ -1854,6 +1856,80 @@ class PmsController extends Controller
         } catch (\Exception $e) {
             \Log::error('Error deleting CreatorRole', ['id' => $id, 'error' => $e->getMessage()]);
             return response()->json(['error' => 'Failed to delete creator role'], 500);
+        }
+    }
+
+    /**
+     * Approve a KPI task assignment.
+     */
+    public function approveKpiTask($id)
+    {
+        try {
+            $assignment = KpiTaskAssignment::findOrFail($id);
+            $assignment->approval_status = 'approved';
+            $assignment->save();
+
+            \Log::info('KPI task approved', ['id' => $id]);
+
+            return response()->json([
+                'message' => 'KPI task approved successfully',
+                'assignment' => $assignment
+            ]);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json(['message' => 'KPI task not found'], 404);
+        } catch (\Exception $e) {
+            \Log::error('Error approving KPI task', [
+                'id' => $id,
+                'error' => $e->getMessage()
+            ]);
+            
+            return response()->json([
+                'message' => 'Failed to approve KPI task',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Reject a KPI task assignment with optional reason.
+     */
+    public function rejectKpiTask(Request $request, $id)
+    {
+        try {
+            // reason is optional now
+            $reason = $request->input('reason', null);
+
+            $assignment = KpiTaskAssignment::findOrFail($id);
+            $assignment->approval_status = 'rejected';
+
+            // store reason if provided (notes field exists)
+            if (!empty($reason)) {
+                $assignment->notes = $reason;
+            }
+
+            $assignment->save();
+
+            \Log::info('KPI task rejected', [
+                'id' => $id,
+                'reason' => $reason
+            ]);
+
+            return response()->json([
+                'message' => 'KPI task rejected successfully',
+                'assignment' => $assignment
+            ]);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json(['message' => 'KPI task not found'], 404);
+        } catch (\Exception $e) {
+            \Log::error('Error rejecting KPI task', [
+                'id' => $id,
+                'error' => $e->getMessage()
+            ]);
+            
+            return response()->json([
+                'message' => 'Failed to reject KPI task',
+                'error' => $e->getMessage()
+            ], 500);
         }
     }
 }

@@ -215,3 +215,16 @@ Route::delete('/kpi-tasks/{id}', [PmsController::class, 'destroyKpiTask']);
 Route::post('/creator-roles', [PmsController::class, 'storeCreatorRole']);
 Route::put('/creator-roles/{id}', [PmsController::class, 'updateCreatorRole']);
 Route::delete('/creator-roles/{id}', [PmsController::class, 'destroyCreatorRole']);
+
+// Approval list (used by frontend TaskApproval)
+Route::get('/pms/kpi-task-assignments-for-approval', [PmsController::class, 'getKpiTaskAssignmentsForApproval']);
+
+// Generic assignments list (keeps backwards compatibility)
+Route::get('/pms/kpi-task-assignments', [PmsController::class, 'getKpiTaskAssignments']);
+
+// Approve / reject endpoints (POST)
+Route::post('/pms/kpi-tasks/{id}/approve', [PmsController::class, 'approveKpiTask']);
+Route::post('/pms/kpi-tasks/{id}/reject', [PmsController::class, 'rejectKpiTask']);
+
+// Employee-specific assignments (used by employee view)
+Route::get('/pms/employee-kpi-task-assignments/{employeeId}', [PmsController::class, 'getEmployeeKpiTaskAssignments']);
