@@ -1092,11 +1092,34 @@ class PmsController extends Controller
             $existingReview = PerformanceReview::where('kpi_assignment_id', $assignmentId)->first();
             
             $submissions = $assignment->progressSubmissions->map(function($submission) {
+                // Extract task-specific performance from performance_metrics JSON
+                $taskName = $submission->kpiAssignment->kpiTask->task_name ?? 'Unknown Task';
+                $taskSpecificProgress = 0;
+                
+                // Look for the task name in performance_metrics
+                if ($submission->performance_metrics && is_array($submission->performance_metrics)) {
+                    // First try direct task name match
+                    if (isset($submission->performance_metrics[$taskName])) {
+                        $taskSpecificProgress = (int) $submission->performance_metrics[$taskName];
+                    } else {
+                        // If no direct match, look for the highest value (likely the task-specific one)
+                        $maxValue = 0;
+                        foreach ($submission->performance_metrics as $key => $value) {
+                            if (is_numeric($value) && $value > $maxValue) {
+                                $maxValue = (int) $value;
+                            }
+                        }
+                        $taskSpecificProgress = $maxValue;
+                    }
+                }
+                
                 return [
                     'id' => $submission->id,
                     'note' => $submission->note,
                     'progress_percentage' => $submission->progress_percentage,
+                    'task_specific_progress' => $taskSpecificProgress, // Add task-specific progress
                     'performance_metrics' => $submission->performance_metrics,
+                    'task_name' => $taskName, // Include task name
                     'document_name' => $submission->document_name,
                     'document_path' => $submission->document_path,
                     'created_at' => $submission->created_at->toISOString(),
@@ -1105,6 +1128,22 @@ class PmsController extends Controller
             });
 
             $latestSubmission = $assignment->progressSubmissions->first();
+
+            // Process supervisor review performance metrics
+            $supervisorTaskProgress = 0;
+            if ($existingReview && $existingReview->performance_metrics) {
+                $taskName = $assignment->kpiTask->task_name ?? 'Unknown Task';
+                
+                if (is_array($existingReview->performance_metrics)) {
+                    // Look for task-specific progress in supervisor's performance_metrics
+                    if (isset($existingReview->performance_metrics[$taskName])) {
+                        $supervisorTaskProgress = (int) $existingReview->performance_metrics[$taskName];
+                    } else {
+                        // Fallback to the progress field
+                        $supervisorTaskProgress = (int) $existingReview->progress;
+                    }
+                }
+            }
 
             return response()->json([
                 'assignment' => [
@@ -1122,18 +1161,22 @@ class PmsController extends Controller
                 ],
                 'submissions' => $submissions,
                 'supervisor_review' => $existingReview ? [
-                    'progress' => (int) $existingReview->progress, // Ensure integer for supervisor progress
+                    'progress' => (int) $existingReview->progress, // Overall supervisor progress
+                    'task_specific_progress' => $supervisorTaskProgress, // Task-specific progress
                     'grade' => $existingReview->grade,
                     'comments' => $existingReview->supervisor_comments,
                     'status' => $existingReview->status,
-                    'performance_metrics' => $existingReview->performance_metrics, // Include full metrics
+                    'performance_metrics' => $existingReview->performance_metrics, // Full metrics JSON
+                    'task_name' => $assignment->kpiTask->task_name ?? 'Unknown Task', // Task name
                     'last_updated' => $existingReview->updated_at->toISOString(),
                 ] : null,
                 'self_reported' => $latestSubmission ? [
-                    'progress' => (int) $latestSubmission->progress_percentage, // Employee's self-reported progress
+                    'progress' => (int) $latestSubmission->progress_percentage, // Employee's overall progress
+                    'task_specific_progress' => $submissions->first()['task_specific_progress'] ?? 0, // Task-specific progress
                     'last_updated' => $latestSubmission->created_at->toISOString(),
                     'author' => $latestSubmission->employee->full_name ?? 'Employee',
                     'performance_metrics' => $latestSubmission->performance_metrics,
+                    'task_name' => $assignment->kpiTask->task_name ?? 'Unknown Task', // Task name
                 ] : null
             ], 200);
 
@@ -1220,35 +1263,28 @@ class PmsController extends Controller
                 'supervisor_comments' => 'nullable|string',
                 'status' => 'required|string|in:Draft,In Progress,Pending Manager,Pending Employee,Completed',
                 'performance_metrics' => 'required|array',
-                // Add validation for individual metric fields
-                'performance_metrics.jobKnowledge' => 'integer|min:0|max:100',
-                'performance_metrics.qualityOfWork' => 'integer|min:0|max:100',
-                'performance_metrics.productivity' => 'integer|min:0|max:100',
-                'performance_metrics.communicationSkills' => 'integer|min:0|max:100',
-                'performance_metrics.teamwork' => 'integer|min:0|max:100',
-                'performance_metrics.behaviorAtWork' => 'integer|min:0|max:100',
-                'performance_metrics.problemSolving' => 'integer|min:0|max:100',
-                'performance_metrics.attendance' => 'integer|min:0|max:100',
-                'performance_metrics.adaptability' => 'integer|min:0|max:100',
-                'performance_metrics.selfDevelopment' => 'integer|min:0|max:100',
-                'performance_metrics.discipline' => 'integer|min:0|max:100',
-                'performance_metrics.adherenceToGuidelines' => 'integer|min:0|max:100',
             ]);
             
-            // Clean and ensure all metrics are integers
+            // Get the assignment with task information
+            $assignment = KpiTaskAssignment::with([
+                'kpiTask:id,task_name',
+                'employee', 
+                'progressSubmissions' => function($query) {
+                    $query->orderBy('created_at', 'desc');
+                }
+            ])->findOrFail($assignmentId);
+            
+            // Get task name for performance metrics
+            $taskName = $assignment->kpiTask->task_name ?? 'Unknown Task';
+            
+            // Clean and ensure all metrics are integers, and add task-specific progress
             $cleanMetrics = [];
             foreach ($validated['performance_metrics'] as $key => $value) {
                 $cleanMetrics[$key] = (int) $value;
             }
             
-            // Get the assignment with all related data
-            $assignment = KpiTaskAssignment::with([
-                'employee', 
-                'creatorRole',
-                'progressSubmissions' => function($query) {
-                    $query->orderBy('created_at', 'desc');
-                }
-            ])->findOrFail($assignmentId);
+            // Add the specific task progress to performance metrics
+            $cleanMetrics[$taskName] = $validated['progress'];
             
             // Get the latest submission for self-reported data
             $latestSubmission = $assignment->progressSubmissions->first();
@@ -1266,7 +1302,7 @@ class PmsController extends Controller
                     'grade' => $validated['grade'],
                     'supervisor_comments' => $validated['supervisor_comments'],
                     'status' => $validated['status'],
-                    'performance_metrics' => $cleanMetrics, // Store clean metrics as JSON
+                    'performance_metrics' => $cleanMetrics, // Store clean metrics as JSON with task name
                     'review_type' => 'performance',
                     'review_cycle' => $this->deriveCycle($assignment->start_date),
                     'start_date' => $assignment->start_date,
@@ -1294,6 +1330,7 @@ class PmsController extends Controller
             // Log for debugging
             \Log::info('Performance review saved', [
                 'assignment_id' => $assignmentId,
+                'task_name' => $taskName,
                 'progress' => $validated['progress'],
                 'performance_metrics' => $cleanMetrics,
                 'review_id' => $review->id
@@ -1303,24 +1340,6 @@ class PmsController extends Controller
                 'message' => 'Performance review updated successfully',
                 'review' => $review->load(['employee', 'supervisor', 'kpiAssignment'])
             ]);
-            
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            \Log::error('Performance review validation failed', [
-                'errors' => $e->errors(),
-                'input' => $request->except(['performance_metrics'])
-            ]);
-            
-            return response()->json([
-                'error' => 'Validation failed',
-                'message' => $e->getMessage(),
-                'errors' => $e->errors()
-            ], 422);
-            
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json([
-                'error' => 'Assignment not found',
-                'message' => 'The specified assignment does not exist'
-            ], 404);
             
         } catch (\Exception $e) {
             \Log::error('Error updating performance review', [
@@ -1599,69 +1618,232 @@ class PmsController extends Controller
 
     /**
      * Get KPI dashboard stats: on-target vs need-attention within a date range.
-     *
-     * Query params:
-     *  - start_date (YYYY-MM-DD) optional (defaults to first day of current month)
-     *  - end_date   (YYYY-MM-DD) optional (defaults to last day of current month)
-     *
-     * Logic:
-     *  - Need Attention: assignments in the date window that have NO progress submissions and not completed.
-     *  - On Target: assignments in the date window that have a completed performance review and the completed_date is
-     *               within the window and completed on or before the assignment's end_date (on-time).
      */
     public function getKpiPerformance(Request $request)
     {
         try {
+            // Get current authenticated user
+            $currentUser = auth()->user();
+            if (!$currentUser) {
+                return response()->json(['error' => 'User not authenticated'], 401);
+            }
+            
+            $userRole = strtolower($currentUser->role ?? '');
+            $isAdmin = $userRole === 'admin';
+            $isHR = $userRole === 'hr';
+            $isManager = $userRole === 'manager';
+            
             $startDate = $request->query('start_date') ?? Carbon::now()->startOfMonth()->toDateString();
             $endDate = $request->query('end_date') ?? Carbon::now()->endOfMonth()->toDateString();
 
-            Log::info('KPI performance request', ['start' => $startDate, 'end' => $endDate]);
+            Log::info('KPI performance request', [
+                'start' => $startDate, 
+                'end' => $endDate,
+                'user_id' => $currentUser->id,
+                'user_role' => $userRole
+            ]);
 
-            // Get assignments that overlap the requested window
+            // Base query with date range filters
             $assignmentsQuery = KpiTaskAssignment::whereNull('deleted_at')
                 ->where(function($q) use ($startDate, $endDate) {
-                    // Overlap: assignment.start <= end AND assignment.end >= start
+                    // Task overlaps with date range: assignment.start <= end AND assignment.end >= start
                     $q->where('start_date', '<=', $endDate)
                       ->where('end_date', '>=', $startDate);
                 })
                 ->with([
-                    'progressSubmissions:id,kpi_assignment_id', 
+                    'progressSubmissions' => function($q) use ($startDate, $endDate) {
+                        // Load ALL submissions for this assignment (not just within date range)
+                        // We need to check if ANY submission exists for need attention logic
+                        $q->orderBy('created_at', 'desc');
+                    }, 
                     'performanceReviews' => function($q) {
                         $q->where('status', 'Completed')->orderBy('completed_date', 'desc');
                     },
-                    'kpiTask:id,task_name'
+                    'kpiTask:id,task_name',
+                    'employee:id,full_name,attendance_employee_no'
                 ]);
+
+            // Apply role-based filtering - SAME AS getKpiTaskAssignments
+            if ($isAdmin) {
+                // Admin sees ALL tasks - no filtering needed
+            } elseif ($isHR) {
+                // HR can see:
+                // 1. Tasks they created themselves
+                // 2. Tasks created by users with 'supervisor' role 
+                // BUT NOT tasks created by other HR users
+                $assignmentsQuery->where(function($q) use ($currentUser) {
+                    // Tasks created by this HR user only
+                    $q->where('creator_id', $currentUser->id);
+                    
+                    // OR tasks created by users with 'supervisor' role
+                    $q->orWhereHas('creator', function($subQ) {
+                        $subQ->where('role', 'supervisor');
+                    });
+                });
+                
+                // EXCLUDE tasks where this HR user is assigned as employee
+                if ($currentUser->employee_id) {
+                    $currentEmployee = employee::find($currentUser->employee_id);
+                    if ($currentEmployee) {
+                        $assignmentsQuery->where('employee_id', '!=', $currentEmployee->id);
+                    }
+                }
+                
+            } elseif ($userRole === 'supervisor') {
+                // Supervisor can ONLY see tasks they created themselves
+                // They cannot see tasks created by other supervisors
+                $assignmentsQuery->where('creator_id', $currentUser->id);
+                
+                // EXCLUDE tasks where this supervisor is assigned as employee  
+                if ($currentUser->employee_id) {
+                    $currentEmployee = employee::find($currentUser->employee_id);
+                    if ($currentEmployee) {
+                        $assignmentsQuery->where('employee_id', '!=', $currentEmployee->id);
+                    }
+                }
+                
+            } elseif ($isManager) {
+                // Manager sees tasks created by HR + supervisor users + their own
+                $assignmentsQuery->where(function($q) use ($currentUser) {
+                    // Tasks created by users with HR role
+                    $q->whereHas('creator', function($subQ) {
+                        $subQ->where('role', 'hr');
+                    });
+                    
+                    // OR tasks created by users with supervisor role
+                    $q->orWhereHas('creator', function($subQ) {
+                        $subQ->where('role', 'supervisor');
+                    });
+                    
+                    // OR tasks created by this manager
+                    $q->orWhere('creator_id', $currentUser->id);
+                });
+                
+                // EXCLUDE tasks where this manager is assigned as employee
+                if ($currentUser->employee_id) {
+                    $currentEmployee = employee::find($currentUser->employee_id);
+                    if ($currentEmployee) {
+                        $assignmentsQuery->where('employee_id', '!=', $currentEmployee->id);
+                    }
+                }
+                
+            } else {
+                // Default for other roles (regular employees, users)
+                // Only see tasks they created (if any)
+                $assignmentsQuery->where('creator_id', $currentUser->id);
+                
+                // EXCLUDE tasks where they are assigned as employee
+                if ($currentUser->employee_id) {
+                    $currentEmployee = employee::find($currentUser->employee_id);
+                    if ($currentEmployee) {
+                        $assignmentsQuery->where('employee_id', '!=', $currentEmployee->id);
+                    }
+                }
+            }
 
             $assignments = $assignmentsQuery->get();
 
             $needAttention = 0;
             $onTarget = 0;
+            $inProgress = 0;
 
             foreach ($assignments as $assignment) {
-                // Need Attention: no submissions and not completed
-                $hasSubmissions = ($assignment->progressSubmissions && $assignment->progressSubmissions->count() > 0);
-                $isCompleted = strtolower($assignment->completion_status ?? '') === 'completed';
-
-                if (!$hasSubmissions && !$isCompleted) {
-                    $needAttention++;
-                }
-
-                // On Target: has a completed review whose completed_date is in range and completed on or before assignment end_date
-                $completedReview = $assignment->performanceReviews->first(); // ordered by completed_date desc
-                if ($completedReview && $completedReview->completed_date) {
-                    $completedDate = Carbon::parse($completedReview->completed_date)->toDateString();
-                    $assignmentEnd = $assignment->end_date ? Carbon::parse($assignment->end_date)->toDateString() : $endDate;
-
-                    if ($completedDate >= $startDate && $completedDate <= $endDate && $completedDate <= $assignmentEnd) {
-                        $onTarget++;
+                $taskEndDate = Carbon::parse($assignment->end_date);
+                $now = Carbon::now();
+                
+                // Check if task has ANY submissions (not just within date range)
+                $hasAnySubmissions = $assignment->progressSubmissions->count() > 0;
+                
+                // Check if any submission was made before task end date
+                $hasSubmissionBeforeEnd = false;
+                foreach ($assignment->progressSubmissions as $submission) {
+                    if (Carbon::parse($submission->created_at)->lte($taskEndDate)) {
+                        $hasSubmissionBeforeEnd = true;
+                        break;
                     }
                 }
+                
+                // Check completion status
+                $isCompleted = strtolower($assignment->completion_status ?? '') === 'completed';
+
+                // Check if task is "On Target" (has completed review within timeline)
+                $completedReview = $assignment->performanceReviews->first();
+                $isOnTarget = false;
+                
+                if ($completedReview && $completedReview->completed_date) {
+                    $completedDate = Carbon::parse($completedReview->completed_date);
+                    $assignmentEnd = Carbon::parse($assignment->end_date);
+                    $rangeStart = Carbon::parse($startDate);
+                    $rangeEnd = Carbon::parse($endDate);
+
+                    // On target if: completed within date range AND before/on task end date
+                    if ($completedDate->between($rangeStart, $rangeEnd) && 
+                        $completedDate->lte($assignmentEnd)) {
+                        $onTarget++;
+                        $isOnTarget = true;
+                    }
+                }
+
+                // Alternative: if no completed review but has timely submission AND is completed, also count as on target
+                if (!$isOnTarget && $hasSubmissionBeforeEnd && $isCompleted) {
+                    $onTarget++;
+                    $isOnTarget = true;
+                }
+
+                // Only categorize as "Need Attention" or "In Progress" if NOT already "On Target"
+                if (!$isOnTarget) {
+                    // Need Attention: No submissions at all (regardless of task status)
+                    if (!$hasAnySubmissions) {
+                        $needAttention++;
+                    } else {
+                        // Has submissions but not yet completed or not meeting timeline - count as in progress
+                        $inProgress++;
+                    }
+                }
+            }
+
+            // Verify that our counts add up to the total
+            $totalCounted = $needAttention + $onTarget + $inProgress;
+            $totalTasks = $assignments->count();
+            
+            // Log for debugging
+            Log::info('KPI stats calculation', [
+                'user_role' => $userRole,
+                'user_id' => $currentUser->id,
+                'date_range' => [$startDate, $endDate],
+                'needAttention' => $needAttention,
+                'onTarget' => $onTarget,
+                'inProgress' => $inProgress,
+                'totalCounted' => $totalCounted,
+                'totalTasks' => $totalTasks,
+                'filtering_logic' => $isAdmin ? 'admin_all' : ($isHR ? 'hr_filter' : ($userRole === 'supervisor' ? 'supervisor_created_only' : 'default')),
+                'sample_tasks' => $assignments->take(3)->map(function($a) {
+                    return [
+                        'task_name' => $a->kpiTask?->task_name,
+                        'assignee' => $a->employee?->full_name,
+                        'submissions_count' => $a->progressSubmissions->count(),
+                        'completion_status' => $a->completion_status,
+                        'end_date' => $a->end_date,
+                        'creator_id' => $a->creator_id
+                    ];
+                })
+            ]);
+            
+            if ($totalCounted !== $totalTasks) {
+                Log::warning('KPI stats count mismatch', [
+                    'needAttention' => $needAttention,
+                    'onTarget' => $onTarget,
+                    'inProgress' => $inProgress,
+                    'totalCounted' => $totalCounted,
+                    'totalTasks' => $totalTasks
+                ]);
             }
 
             return response()->json([
                 'data' => [
                     'onTarget' => $onTarget,
                     'needAttention' => $needAttention,
+                    'inProgress' => $inProgress,
                     'totalInWindow' => $assignments->count(),
                     'startDate' => $startDate,
                     'endDate' => $endDate
