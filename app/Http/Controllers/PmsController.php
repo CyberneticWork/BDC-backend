@@ -150,26 +150,76 @@ class PmsController extends Controller
         // Get current user ID for creator_id
         $creatorId = auth()->id();
 
-        $assignments = [];
+        // Check for duplicate assignments before creating
+        $duplicateEmployees = [];
+        $validAssignments = [];
+        
         foreach ($validated['assignees'] as $attendanceNo) {
             $employee = employee::where('attendance_employee_no', $attendanceNo)->first();
             if (!$employee) {
                 return response()->json(['error' => 'Employee not found: ' . $attendanceNo], 400);
             }
 
+            // Check for existing assignment with same task, employee, and overlapping date range
+            $existingAssignment = KpiTaskAssignment::where('kpi_task_id', $kpiTask->id)
+                ->where('employee_id', $employee->id)
+                ->where(function($query) use ($validated) {
+                    // Check for date range overlap
+                    // Overlap exists if: (start1 <= end2) AND (start2 <= end1)
+                    $query->where(function($q) use ($validated) {
+                        $q->where('start_date', '<=', $validated['end_date'])
+                          ->where('end_date', '>=', $validated['start_date']);
+                    });
+                })
+                ->whereNull('deleted_at') // Only check non-deleted assignments
+                ->first();
+
+            if ($existingAssignment) {
+                // Found duplicate - add to list
+                $duplicateEmployees[] = [
+                    'employee' => $employee->full_name,
+                    'attendance_no' => $attendanceNo,
+                    'existing_start' => $existingAssignment->start_date->toDateString(),
+                    'existing_end' => $existingAssignment->end_date->toDateString(),
+                    'new_start' => $validated['start_date'],
+                    'new_end' => $validated['end_date']
+                ];
+            } else {
+                // No duplicate found - add to valid assignments
+                $validAssignments[] = $employee;
+            }
+        }
+
+        // If duplicates found, return error with details
+        if (!empty($duplicateEmployees)) {
+            $errorMessage = "Duplicate KPI task assignments detected for the following employees:\n\n";
+            foreach ($duplicateEmployees as $duplicate) {
+                $errorMessage .= "• {$duplicate['employee']} ({$duplicate['attendance_no']})\n";
+                $errorMessage .= "  Existing: {$duplicate['existing_start']} to {$duplicate['existing_end']}\n";
+                $errorMessage .= "  New: {$duplicate['new_start']} to {$duplicate['new_end']}\n\n";
+            }
+            $errorMessage .= "Please choose different date ranges that don't overlap with existing assignments.";
+
+            return response()->json([
+                'error' => 'Duplicate assignments found',
+                'message' => $errorMessage,
+                'duplicates' => $duplicateEmployees
+            ], 422);
+        }
+
+        // If no duplicates, proceed with creating assignments
+        $assignments = [];
+        foreach ($validAssignments as $employee) {
             // Determine department: prefer provided department_id, else derive from employee's organizationAssignment
             $departmentId = $validated['department_id'] ?? null;
             if (!$departmentId) {
                 try {
                     $departmentId = $employee->organizationAssignment?->department_id ?? null;
-                    \Log::info('Derived department id from organizationAssignment', [
-                        'derived_department_id' => $departmentId
-                    ]);
                 } catch (\Throwable $e) {
-                    \Log::warning('Failed to derive department from organizationAssignment', [
+                    \Log::warning('Failed to get department from employee organizationAssignment', [
+                        'employee_id' => $employee->id,
                         'error' => $e->getMessage()
                     ]);
-                    $departmentId = null;
                 }
             }
 
@@ -193,7 +243,19 @@ class PmsController extends Controller
             $assignments[] = $assignment;
         }
 
-        return response()->json($assignments, 201);
+        // Log successful creation
+        \Log::info('KPI task assignments created successfully', [
+            'task_name' => $validated['task_name'],
+            'creator_id' => $creatorId,
+            'assignments_count' => count($assignments),
+            'date_range' => $validated['start_date'] . ' to ' . $validated['end_date']
+        ]);
+
+        return response()->json([
+            'message' => 'KPI task assignments created successfully',
+            'assignments' => $assignments,
+            'total_created' => count($assignments)
+        ], 201);
     }
 
     /**
