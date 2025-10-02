@@ -23,6 +23,7 @@ class TimeCardController extends Controller
     public function index(Request $request)
     {
         $cards = time_card::with(['employee.organizationAssignment.department'])
+            ->whereNull('deleted_at') // exclude soft-deleted rows
             ->get()
             ->map(function ($card) {
                 return [
@@ -767,6 +768,7 @@ class TimeCardController extends Controller
         // Fetch time cards for this employee, ordered by date and time (latest first)
         $cards = time_card::with(['employee.organizationAssignment.department'])
             ->where('employee_id', $employee->id)
+            ->whereNull('deleted_at') // exclude soft-deleted rows
             ->orderBy('date', 'desc')
             ->orderBy('time', 'desc')
             ->get()
@@ -887,32 +889,370 @@ class TimeCardController extends Controller
     //     ]);
     // }
 
-//     public function update(Request $request, $id)
-//     {
-//         $validated = $request->validate([
-//             'date' => 'required|date',
-//             'time' => 'required',
-//             'entry' => 'required|in:0,1,2',
-//             'status' => 'required|in:IN,OUT,Absent,Leave',
-//         ]);
+    public function update(Request $request, $id)
+    {
+        $validated = $request->validate([
+            'date' => 'required|date',
+            'time' => 'required',
+            'entry' => 'required|in:0,1,2',
+            'status' => 'required|in:IN,OUT,Absent,Leave',
+        ]);
 
-//         $timeCard = TimeCard::findOrFail($id);
-//         $timeCard->date = $validated['date'];
-//         $timeCard->time = $validated['time'];
-//         $timeCard->entry = $validated['entry'];
-//         $timeCard->status = $validated['status'];
-//         $timeCard->save();
+        $timeCard = time_card::findOrFail($id);
+        $employee = $timeCard->employee;
+        
+        if (!$employee) {
+            return response()->json(['message' => 'Employee not found'], 404);
+        }
+        
+        $org = $employee->organizationAssignment;
+        if (!$org) {
+            return response()->json(['message' => 'Organization assignment not found'], 404);
+        }
 
-//         return response()->json(['message' => 'Time card updated successfully', 'data' => $timeCard]);
-//     }
+        // Find roster for this employee for the given date (same logic as store)
+        $roster = roster::where('employee_id', $employee->id)
+            ->whereNull('deleted_at')
+            ->where(function ($q) use ($validated) {
+                $q->whereNull('date_from')->orWhere('date_from', '<=', $validated['date']);
+            })
+            ->where(function ($q) use ($validated) {
+                $q->whereNull('date_to')->orWhere('date_to', '>=', $validated['date']);
+            })
+            ->first();
+        if (!$roster && $org->sub_department_id) {
+            $roster = roster::where('sub_department_id', $org->sub_department_id)
+                ->whereNull('employee_id')
+                ->whereNull('deleted_at')
+                ->where(function ($q) use ($validated) {
+                    $q->where(function ($q2) use ($validated) {
+                        $q2->whereNull('date_from')->orWhere('date_from', '<=', $validated['date']);
+                    });
+                    $q->where(function ($q2) use ($validated) {
+                        $q2->whereNull('date_to')->orWhere('date_to', '>=', $validated['date']);
+                    });
+                })
+                ->first();
+        }
+        if (!$roster && $org->department_id) {
+            $roster = roster::where('department_id', $org->department_id)
+                ->whereNull('employee_id')
+                ->whereNull('sub_department_id')
+                ->whereNull('deleted_at')
+                ->where(function ($q) use ($validated) {
+                    $q->where(function ($q2) use ($validated) {
+                        $q2->whereNull('date_from')->orWhere('date_from', '<=', $validated['date']);
+                    });
+                    $q->where(function ($q2) use ($validated) {
+                        $q2->whereNull('date_to')->orWhere('date_to', '>=', $validated['date']);
+                    });
+                })
+                ->first();
+        }
+        if (!$roster && $org->company_id) {
+            $roster = roster::where('company_id', $org->company_id)
+                ->whereNull('employee_id')
+                ->whereNull('sub_department_id')
+                ->whereNull('department_id')
+                ->whereNull('deleted_at')
+                ->where(function ($q) use ($validated) {
+                    $q->where(function ($q2) use ($validated) {
+                        $q2->whereNull('date_from')->orWhere('date_from', '<=', $validated['date']);
+                    });
+                    $q->where(function ($q2) use ($validated) {
+                        $q2->whereNull('date_to')->orWhere('date_to', '>=', $validated['date']);
+                    });
+                })
+                ->first();
+        }
 
-//     public function destroy($id)
-//     {
-//         $timeCard = TimeCard::findOrFail($id);
-//         $timeCard->delete();
+        if (!$roster) {
+            return response()->json(['message' => 'No shift/roster assigned for this employee on this date'], 422);
+        }
 
-//         return response()->json(['message' => 'Time card deleted successfully']);
-//     }
+        $shift = shifts::find($roster->shift_code);
+        if (!$shift) {
+            return response()->json(['message' => 'Shift not found'], 404);
+        }
+
+        // Parse time input (same logic as store)
+        try {
+            $inputTime = Carbon::createFromFormat('H:i:s', $validated['time']);
+        } catch (\Exception $e) {
+            // Try H:i format if H:i:s fails
+            try {
+                $inputTime = Carbon::createFromFormat('H:i', $validated['time']);
+            } catch (\Exception $ex) {
+                return response()->json(['message' => 'Invalid time format. Please use HH:mm or HH:mm:ss'], 422);
+            }
+        }
+        $storeTime = $inputTime->format('H:i:s');
+        $shiftEnd = Carbon::parse($shift->end_time);
+
+        $entryType = (int)$validated['entry'];
+        $status = strtoupper($validated['status']);
+        $working_hours = null;
+        $actual_date = null;
+
+        // Same logic as store function for calculating working hours and status
+        if ($status === 'OUT') {
+            $morningOutRecord = Carbon::parse($validated['time'])->hour < 12;
+            
+            if ($morningOutRecord) {
+                $previousDayIN = time_card::where('employee_id', $employee->id)
+                    ->where('status', 'IN')
+                    ->where('date', '<', $validated['date'])
+                    ->whereNotExists(function($query) {
+                        $query->select(DB::raw(1))
+                              ->from('time_cards as tc')
+                              ->whereRaw('tc.actual_date = time_cards.date')
+                              ->where('tc.status', 'OUT');
+                    })
+                    ->orderBy('date', 'desc')
+                    ->orderBy('time', 'desc')
+                    ->first();
+                    
+                if ($previousDayIN) {
+                    $lastInCard = $previousDayIN;
+                } else {
+                    $lastInCard = time_card::where('employee_id', $employee->id)
+                        ->where('date', $validated['date'])
+                        ->where('status', 'IN')
+                        ->where('time', '<', $validated['time']) // Only IN records before this OUT time
+                        ->where('id', '!=', $timeCard->id) // Exclude current record
+                        ->orderBy('time', 'desc')
+                        ->first();
+                        
+                    // If no same-day IN before this OUT time, look for any previous IN
+                    if (!$lastInCard) {
+                        $lastInCard = time_card::where('employee_id', $employee->id)
+                            ->where('status', 'IN')
+                            ->where('date', '<', $validated['date'])
+                            ->orderBy('date', 'desc')
+                            ->orderBy('time', 'desc')
+                            ->first();
+                    }
+                }
+            } else {
+                $lastInCard = time_card::where('employee_id', $employee->id)
+                    ->where('date', $validated['date'])
+                    ->where('status', 'IN')
+                    ->where('id', '!=', $timeCard->id) // Exclude current record
+                    ->orderBy('time', 'desc')
+                    ->first();
+            
+                if (!$lastInCard) {
+                    $lastInCard = time_card::where('employee_id', $employee->id)
+                        ->where('status', 'IN')
+                        ->where('date', '<', $validated['date'])
+                        ->orderBy('date', 'desc')
+                        ->orderBy('time', 'desc')
+                        ->first();
+                }
+            }
+
+            if ($lastInCard) {
+                $lastInDate = Carbon::parse($lastInCard->date);
+                $currentDate = Carbon::parse($validated['date']);
+
+                if ($lastInDate->eq($currentDate)) {
+                    // Same day: normal OUT/Leave logic
+                    $inTime = Carbon::parse($lastInCard->time);
+                    $outTime = $inputTime;
+                    $working_hours = round($inTime->floatDiffInHours($outTime), 2);
+
+                    if ($outTime->lt($shiftEnd)) {
+                        $entryType = 0; // Leave
+                        $status = 'Leave';
+                    } else {
+                        $entryType = 2; // OUT
+                        $status = 'OUT';
+                    }
+                } else {
+                    // Different day: cross-day OUT
+                    $inDateTime = Carbon::parse($lastInCard->date . ' ' . $lastInCard->time);
+                    $outDateTime = Carbon::parse($validated['date'] . ' ' . $validated['time']);
+                    $working_hours = round($inDateTime->floatDiffInHours($outDateTime), 2);
+
+                    $entryType = 2; // OUT
+                    $status = 'OUT';
+                    $actual_date = $lastInCard->date;
+                }
+            }
+        } else {
+            $entryType = 1;
+            $status = 'IN';
+            $working_hours = null;
+        }
+
+        // Check for duplicates (excluding current record)
+        $duplicate = time_card::where('employee_id', $employee->id)
+            ->where('date', $validated['date'])
+            ->where('time', $storeTime)
+            ->where('entry', $entryType)
+            ->where('status', $status)
+            ->where('id', '!=', $timeCard->id)
+            ->exists();
+
+        if ($duplicate) {
+            return response()->json([
+                'message' => 'Duplicate attendance record. This entry already exists.',
+            ], 409);
+        }
+
+        // Delete existing overtime record if it exists
+        over_time::where('time_cards_id', $timeCard->id)->delete();
+
+        // Update the time card
+        $timeCard->update([
+            'time' => $storeTime,
+            'date' => $validated['date'],
+            'working_hours' => $working_hours,
+            'entry' => $entryType,
+            'status' => $status,
+            'actual_date' => $actual_date,
+        ]);
+
+        // Recalculate overtime if this is an OUT record (same logic as store)
+        if ($status == "OUT") {
+            $shift_code = null;
+            
+            if ($actual_date) {
+                $dateToCheck = $actual_date;
+            } else {
+                $dateToCheck = $validated['date'];
+            }
+            
+            $employeeRoster = roster::where('employee_id', $employee->id)
+                ->whereNull('deleted_at')
+                ->where(function ($q) use ($dateToCheck) {
+                    $q->whereNull('date_from')->orWhere('date_from', '<=', $dateToCheck);
+                })
+                ->where(function ($q) use ($dateToCheck) {
+                    $q->whereNull('date_to')->orWhere('date_to', '>=', $dateToCheck);
+                })
+                ->first();
+            
+            if ($employeeRoster) {
+                $shift_code = $employeeRoster->shift_code;
+            } else {
+                $shift_code = $employee->rosters()->first()->shift_code ?? null;
+            }
+            
+            $shift = shifts::find($shift_code);
+            
+            if ($actual_date) {
+                // Cross-day scenario
+                $lastInRecord = time_card::where('employee_id', $employee->id)
+                    ->where('date', $actual_date)
+                    ->where('status', 'IN')
+                    ->orderBy('time', 'desc')
+                    ->first();
+                
+                $morning_ot = 0;
+                $afternoon_ot = 0;
+                $ot_time = 0;
+                
+                if ($lastInRecord && $shift) {
+                    $inTimeOnly = Carbon::parse($lastInRecord->time)->format('H:i:s');
+                    $inDateTime = Carbon::parse($actual_date . ' ' . $inTimeOnly);
+                    $shiftStartTime = Carbon::parse($shift->start_time)->format('H:i:s');
+                    $shiftStartDateTime = Carbon::parse($actual_date . ' ' . $shiftStartTime);
+                    
+                    if ($inDateTime->lt($shiftStartDateTime)) {
+                        $morning_ot = abs(round($inDateTime->floatDiffInHours($shiftStartDateTime), 2));
+                    }
+                    
+                    $shiftTimeOnly = Carbon::parse($shift->end_time)->format('H:i:s');
+                    $shiftEndDateTime = Carbon::parse($actual_date . ' ' . $shiftTimeOnly);
+                    $checkoutDateTime = Carbon::parse($validated['date'] . ' ' . $validated['time']);
+                    
+                    if ($checkoutDateTime->gt($shiftEndDateTime)) {
+                        $afternoon_ot = abs(round($checkoutDateTime->floatDiffInHours($shiftEndDateTime), 2));
+                    }
+                    
+                    $ot_time = $morning_ot + $afternoon_ot;
+                }
+                
+                if ($morning_ot >= 1.0 || $afternoon_ot >= 1.0) {
+                    over_time::create([
+                        'employee_id' => $employee->id,
+                        'shift_code' => $shift_code,
+                        'time_cards_id' => $timeCard->id,
+                        'ot_hours' => $ot_time,
+                        'morning_ot' => $morning_ot,
+                        'afternoon_ot' => $afternoon_ot,
+                        'status' => 'pending'
+                    ]);
+                }
+            } else {
+                // Same day scenario
+                $lastInRecord = time_card::where('employee_id', $employee->id)
+                    ->where('date', $validated['date'])
+                    ->where('status', 'IN')
+                    ->where('id', '!=', $timeCard->id) // Exclude current record
+                    ->orderBy('time', 'desc')
+                    ->first();
+            
+                $morning_ot = 0;
+                $afternoon_ot = 0;
+                $ot_time = 0;
+                
+                if ($lastInRecord && $shift) {
+                    $inTimeOnly = Carbon::parse($lastInRecord->time)->format('H:i:s');
+                    $inDateTime = Carbon::parse($validated['date'] . ' ' . $inTimeOnly);
+                    $shiftStartTime = Carbon::parse($shift->start_time)->format('H:i:s');
+                    $shiftStartDateTime = Carbon::parse($validated['date'] . ' ' . $shiftStartTime);
+                    
+                    if ($inDateTime->lt($shiftStartDateTime)) {
+                        $morning_ot = abs(round($inDateTime->floatDiffInHours($shiftStartDateTime), 2));
+                    }
+                    
+                    $shiftTimeOnly = Carbon::parse($shift->end_time)->format('H:i:s');
+                    $shiftEndDateTime = Carbon::parse($validated['date'] . ' ' . $shiftTimeOnly);
+                    $checkoutDateTime = Carbon::parse($validated['date'] . ' ' . $validated['time']);
+                    
+                    if ($checkoutDateTime->gt($shiftEndDateTime)) {
+                        $afternoon_ot = abs(round($checkoutDateTime->floatDiffInHours($shiftEndDateTime), 2));
+                    }
+                    
+                    $ot_time = $morning_ot + $afternoon_ot;
+                }
+                
+                if ($morning_ot >= 1.0 || $afternoon_ot >= 1.0) {
+                    over_time::create([
+                        'employee_id' => $employee->id,
+                        'shift_code' => $shift_code,
+                        'time_cards_id' => $timeCard->id,
+                        'ot_hours' => $ot_time,
+                        'morning_ot' => $morning_ot,
+                        'afternoon_ot' => $afternoon_ot,
+                        'status' => 'pending'
+                    ]);
+                }
+            }
+        }
+
+        return response()->json(['message' => 'Time card updated successfully', 'data' => $timeCard]);
+    }
+
+    public function destroy($id)
+    {
+        $timeCard = time_card::findOrFail($id);
+
+        // Soft-delete associated overtime records by setting deleted_at
+        \App\Models\over_time::where('time_cards_id', $timeCard->id)
+            ->whereNull('deleted_at')
+            ->update(['deleted_at' => now()]);
+
+        // Soft-delete the time card by setting deleted_at (do not hard delete)
+        if (is_null($timeCard->deleted_at)) {
+            $timeCard->deleted_at = now();
+            $timeCard->save();
+        }
+
+        return response()->json(['message' => 'Time card soft-deleted successfully']);
+    }
 
     public function importExcel(Request $request)
     {

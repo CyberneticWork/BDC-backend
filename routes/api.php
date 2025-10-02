@@ -26,7 +26,7 @@ use App\Http\Controllers\SubDepartmentsController;
 use App\Http\Controllers\LMSController;
 use App\Http\Controllers\LMSAdmincontroller;
 use App\Http\Controllers\ExamController;
-
+use App\Http\Controllers\PmsController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -157,8 +157,8 @@ Route::get('/salary/process/csv', [SalaryController::class, 'salaryCSV']);
 
 // LMS Routes
 
-// Handles all CRUD: GET /courses (index), POST /courses (store), GET /courses/{id} (show), etc.
-
+Route::apiResource('courses', LMSController::class);  // Handles all CRUD: GET /courses (index), POST /courses (store), GET /courses/{id} (show), etc.
+Route::delete('/attachments/{id}', [LMSController::class, 'removeAttachment']);
 Route::middleware('auth:sanctum')->group(function () {
     // Exam routes
     Route::apiResource('exams', ExamController::class);
@@ -184,3 +184,67 @@ Route::middleware('auth:sanctum')->prefix('admin/lms')->group(function () {
     Route::get('stats', [LMSAdmincontroller::class, 'getLmsStats']);
 });
 
+// PMS Related Data Endpoints
+Route::get('/kpi-tasks', [PmsController::class, 'getKpiTasks']);
+Route::get('/creator-roles', [PmsController::class, 'getCreatorRoles']);
+Route::get('/pms/companies', [PmsController::class, 'getCompanies']);
+Route::get('/pms/departments/{companyId}', [PmsController::class, 'getDepartmentsByCompany']);
+Route::get('/pms/employees-by-company', [PmsController::class, 'getEmployeesByCompany']);
+Route::get('/pms/search-employees', [PmsController::class, 'searchEmployeesByAttendanceNo']);
+Route::get('/pms/kpi-task-assignments', [PmsController::class, 'getKpiTaskAssignments']);
+Route::post('/pms/kpi-task-assignments', [PmsController::class, 'storeKpiTaskAssignment']);
+Route::put('/pms/kpi-task-assignments/{id}', [PmsController::class, 'updateKpiTaskAssignment']);
+Route::delete('/pms/kpi-task-assignments/{id}', [PmsController::class, 'destroy']);
+
+// Make sure these routes are within an auth middleware group
+Route::middleware(['auth:sanctum'])->group(function () {
+    // PMS Performance Reviews (require authentication)
+    Route::get('/pms/performance-reviews', [PmsController::class, 'getPerformanceReviews']);
+    Route::get('/pms/performance-reviews/{assignmentId}/details', [PmsController::class, 'getPerformanceReviewDetails']);
+    Route::get('/pms/performance-reviews/{assignmentId}/documents', [PmsController::class, 'getAssignmentDocuments']);
+    Route::put('/pms/performance-reviews/{assignmentId}', [PmsController::class, 'updatePerformanceReview']);
+
+    // Other PMS routes that require authentication
+    Route::get('/pms/kpi-task-assignments/employee/{employeeId}', [PmsController::class, 'getEmployeeKpiTaskAssignments']);
+    Route::post('/pms/task-progress-submissions', [PmsController::class, 'storeTaskProgressSubmission']);
+    Route::get('/pms/task-progress-submissions/assignment/{assignmentId}', [PmsController::class, 'getTaskProgressSubmissions']);
+    Route::get('/pms/task-progress-submissions/employee/{employeeId}', [PmsController::class, 'getEmployeeTaskProgressSubmissions']);
+
+    // PMS Dashboard endpoints - Move inside auth middleware
+    Route::get('/pms/dashboard/stats', [PmsController::class, 'getDashboardStats']);
+    Route::get('/pms/dashboard/upcoming-deadlines', [PmsController::class, 'getUpcomingDeadlines']);
+    Route::get('/pms/dashboard/KPIs', [PmsController::class, 'getKpiPerformance']);
+});
+
+// Employee Performance Evaluation endpoints
+Route::post('/pms/employee-performance/calculate', [PmsController::class, 'calculateEmployeePerformance']);
+Route::post('/pms/employee-performance/save', [PmsController::class, 'saveEmployeePerformance']);
+Route::get('/pms/employee-performance', [PmsController::class, 'getEmployeePerformanceEvaluations']);
+
+// Ensure employee-specific KPI assignments route exists (used by frontend)
+Route::get('/pms/employee-kpi-task-assignments/{employeeId}', [PmsController::class, 'getEmployeeKpiTaskAssignments']);
+
+// Add these routes near the existing KPI-related routes
+
+// KPI Tasks CRUD routes
+Route::post('/kpi-tasks', [PmsController::class, 'storeKpiTask']);
+Route::put('/kpi-tasks/{id}', [PmsController::class, 'updateKpiTask']);
+Route::delete('/kpi-tasks/{id}', [PmsController::class, 'destroyKpiTask']);
+
+// Creator Roles CRUD
+Route::post('/creator-roles', [PmsController::class, 'storeCreatorRole']);
+Route::put('/creator-roles/{id}', [PmsController::class, 'updateCreatorRole']);
+Route::delete('/creator-roles/{id}', [PmsController::class, 'destroyCreatorRole']);
+
+// Approval list (used by frontend TaskApproval)
+Route::get('/pms/kpi-task-assignments-for-approval', [PmsController::class, 'getKpiTaskAssignmentsForApproval']);
+
+// Generic assignments list (keeps backwards compatibility)
+Route::get('/pms/kpi-task-assignments', [PmsController::class, 'getKpiTaskAssignments']);
+
+// Approve / reject endpoints (POST)
+Route::post('/pms/kpi-tasks/{id}/approve', [PmsController::class, 'approveKpiTask']);
+Route::post('/pms/kpi-tasks/{id}/reject', [PmsController::class, 'rejectKpiTask']);
+
+// Employee-specific assignments (used by employee view)
+Route::get('/pms/employee-kpi-task-assignments/{employeeId}', [PmsController::class, 'getEmployeeKpiTaskAssignments']);
