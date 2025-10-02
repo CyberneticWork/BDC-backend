@@ -15,6 +15,7 @@ return new class extends Migration
             $table->id();
             $table->foreignId('kpi_task_id')->constrained('kpi_tasks');
             $table->foreignId('creator_role_id')->constrained('creator_roles');
+            $table->unsignedBigInteger('creator_id')->nullable(); // Remove ->after() when creating table
             $table->json('weights'); // Store performance criteria weights as JSON
             $table->foreignId('company_id')->constrained('companies')->onDelete('cascade'); // Link to company table
             $table->foreignId('department_id')->nullable()->constrained('departments')->onDelete('set null'); // Link to department table
@@ -25,11 +26,13 @@ return new class extends Migration
             $table->string('priority')->default('medium'); // high, medium, low
             $table->text('description')->nullable();
             $table->string('completion_status')->default('not-started'); // not-started, pending, in-progress, completed
+            $table->string('approval_status')->nullable()->default('pending'); // Move this before timestamps
             $table->timestamp('last_updated')->nullable();
             $table->timestamps();
             $table->softDeletes();
-            // approval_status is nullable so existing processes continue; default to 'pending'
-            $table->string('approval_status')->nullable()->default('pending');
+            
+            // Add foreign key constraint for creator_id
+            $table->foreign('creator_id')->references('id')->on('users')->nullOnDelete();
         });
     }
 
