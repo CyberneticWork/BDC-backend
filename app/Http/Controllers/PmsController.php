@@ -12,6 +12,8 @@ use App\Models\KpiTaskAssignment;
 use App\Models\TaskProgressSubmission;
 use App\Models\PerformanceReview;
 use App\Models\PerformanceEvaluation;
+use App\Models\PracticalFeedback;
+use App\Models\User;
 use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 use Illuminate\Database\QueryException;
@@ -1119,73 +1121,52 @@ class PmsController extends Controller
             $assignment = KpiTaskAssignment::with([
                 'kpiTask:id,task_name',
                 'employee:id,full_name,attendance_employee_no',
+                'employee.contactDetail:employee_id,email',
                 'company:id,name',
                 'department:id,name',
-                'creator:id,role,name',
                 'creatorRole:id,role_name',
                 'progressSubmissions' => function($query) {
                     $query->orderBy('created_at', 'desc');
-                }
+                },
+                'progressSubmissions.employee:id,full_name,attendance_employee_no'
             ])->findOrFail($assignmentId);
 
             if (!$isAdmin) {
-                $isAssigned = $currentEmployee ? ($assignment->employee_id === $currentEmployee->id) : false;
-                $isCreator = $assignment->creator_id && ($assignment->creator_id === $currentUser->id);
-
-                // Allow HR to view:
-                //  - tasks they created, OR
-                //  - tasks created by supervisors (so HR can view supervisor-added assignee reviews)
-                $callerRole = strtolower($currentUser->role ?? '');
-                $creatorRole = strtolower($assignment->creator?->role ?? '');
-
-                if ($callerRole === 'hr') {
-                    $hrAllowed = $isCreator || ($creatorRole === 'supervisor') || $isAssigned;
-                    if (!$hrAllowed) {
-                        return response()->json(['error' => 'Access denied. You can only view your own task reviews.'], 403);
+                // Check if user has access to this assignment
+                $hasAccess = false;
+                
+                if ($currentEmployee) {
+                    // Employee can see their own assignments
+                    if ($assignment->employee_id === $currentEmployee->id) {
+                        $hasAccess = true;
                     }
-                } else {
-                    // Non-admin, non-HR: only creator or assignee can view
-                    if (! $isCreator && ! $isAssigned) {
-                        return response()->json(['error' => 'Access denied. You can only view your own task reviews.'], 403);
+                    
+                    // HR/Manager/Supervisor can see assignments in their scope
+                    $userRole = strtolower($currentUser->role ?? '');
+                    if (in_array($userRole, ['hr', 'manager', 'supervisor'])) {
+                        $hasAccess = true;
                     }
+                }
+                
+                if (!$hasAccess) {
+                    return response()->json(['error' => 'Access denied'], 403);
                 }
             }
 
             $existingReview = PerformanceReview::where('kpi_assignment_id', $assignmentId)->first();
             
             $submissions = $assignment->progressSubmissions->map(function($submission) {
-                // Extract task-specific performance from performance_metrics JSON
-                $taskName = $submission->kpiAssignment->kpiTask->task_name ?? 'Unknown Task';
-                $taskSpecificProgress = 0;
-                
-                // Look for the task name in performance_metrics
-                if ($submission->performance_metrics && is_array($submission->performance_metrics)) {
-                    // First try direct task name match
-                    if (isset($submission->performance_metrics[$taskName])) {
-                        $taskSpecificProgress = (int) $submission->performance_metrics[$taskName];
-                    } else {
-                        // If no direct match, look for the highest value (likely the task-specific one)
-                        $maxValue = 0;
-                        foreach ($submission->performance_metrics as $key => $value) {
-                            if (is_numeric($value) && $value > $maxValue) {
-                                $maxValue = (int) $value;
-                            }
-                        }
-                        $taskSpecificProgress = $maxValue;
-                    }
-                }
-                
                 return [
                     'id' => $submission->id,
                     'note' => $submission->note,
-                    'progress_percentage' => $submission->progress_percentage,
-                    'task_specific_progress' => $taskSpecificProgress, // Add task-specific progress
-                    'performance_metrics' => $submission->performance_metrics,
-                    'task_name' => $taskName, // Include task name
-                    'document_name' => $submission->document_name,
-                    'document_path' => $submission->document_path,
-                    'created_at' => $submission->created_at->toISOString(),
-                    'employee_name' => $submission->employee->full_name ?? 'Employee'
+                    'progressPercentage' => $submission->progress_percentage,
+                    'performanceMetrics' => $submission->performance_metrics,
+                    'documentName' => $submission->document_name,
+                    'documentSize' => $submission->document_size,
+                    'documentType' => $submission->document_type,
+                    'documentPath' => $submission->document_path,
+                    'author' => $submission->employee->full_name ?? 'Employee',
+                    'date' => $submission->created_at->toISOString(),
                 ];
             });
 
@@ -1194,58 +1175,56 @@ class PmsController extends Controller
             // Process supervisor review performance metrics
             $supervisorTaskProgress = 0;
             if ($existingReview && $existingReview->performance_metrics) {
-                $taskName = $assignment->kpiTask->task_name ?? 'Unknown Task';
+                $metrics = is_string($existingReview->performance_metrics) 
+                    ? json_decode($existingReview->performance_metrics, true) 
+                    : $existingReview->performance_metrics;
                 
-                if (is_array($existingReview->performance_metrics)) {
-                    // Look for task-specific progress in supervisor's performance_metrics
-                    if (isset($existingReview->performance_metrics[$taskName])) {
-                        $supervisorTaskProgress = (int) $existingReview->performance_metrics[$taskName];
-                    } else {
-                        // Fallback to the progress field
-                        $supervisorTaskProgress = (int) $existingReview->progress;
-                    }
+                if (is_array($metrics) && !empty($metrics)) {
+                    $taskName = $assignment->kpiTask->task_name ?? null;
+                    $supervisorTaskProgress = $taskName && isset($metrics[$taskName]) ? $metrics[$taskName] : 0;
                 }
             }
 
+            // Get employee's user account email
+            $employeeUser = User::where('employee_id', $assignment->employee_id)->first();
+
             return response()->json([
-                'assignment' => [
-                    'id' => $assignment->id,
-                    'task_name' => $assignment->kpiTask->task_name ?? 'Unknown Task',
-                    'employee_name' => $assignment->employee->full_name ?? 'Unknown Employee',
-                    'employee_id' => $assignment->employee->attendance_employee_no ?? '',
-                    'department' => $assignment->department->name ?? 'Unknown Department',
-                    'company' => $assignment->company->name ?? 'Unknown Company',
-                    'start_date' => $assignment->start_date?->toDateString(),
-                    'end_date' => $assignment->end_date?->toDateString(),
-                    'description' => $assignment->description,
-                    'weights' => $assignment->weights,
-                    'priority' => $assignment->priority,
-                ],
+                'id' => $assignment->id,
+                'taskName' => $assignment->kpiTask->task_name ?? null,
+                'employee' => $assignment->employee,
+                'employeeUser' => $employeeUser ? ['email' => $employeeUser->email] : null,
+                'company' => $assignment->company,
+                'department' => $assignment->department,
+                'creatorRole' => $assignment->creatorRole,
+                'description' => $assignment->description,
+                'startDate' => $assignment->start_date,
+                'endDate' => $assignment->end_date,
+                'status' => $assignment->status,
+                'priority' => $assignment->priority,
+                'weights' => $assignment->weights,
                 'submissions' => $submissions,
-                'supervisor_review' => $existingReview ? [
-                    'progress' => (int) $existingReview->progress, // Overall supervisor progress
-                    'task_specific_progress' => $supervisorTaskProgress, // Task-specific progress
-                    'grade' => $existingReview->grade,
-                    'comments' => $existingReview->supervisor_comments,
-                    'status' => $existingReview->status,
-                    'performance_metrics' => $existingReview->performance_metrics, // Full metrics JSON
-                    'task_name' => $assignment->kpiTask->task_name ?? 'Unknown Task', // Task name
-                    'last_updated' => $existingReview->updated_at->toISOString(),
-                ] : null,
-                'self_reported' => $latestSubmission ? [
-                    'progress' => (int) $latestSubmission->progress_percentage, // Employee's overall progress
-                    'task_specific_progress' => $submissions->first()['task_specific_progress'] ?? 0, // Task-specific progress
-                    'last_updated' => $latestSubmission->created_at->toISOString(),
+                'latestSubmission' => $latestSubmission ? [
+                    'note' => $latestSubmission->note,
+                    'progressPercentage' => $latestSubmission->progress_percentage,
                     'author' => $latestSubmission->employee->full_name ?? 'Employee',
-                    'performance_metrics' => $latestSubmission->performance_metrics,
-                    'task_name' => $assignment->kpiTask->task_name ?? 'Unknown Task', // Task name
+                    'date' => $latestSubmission->created_at->toISOString(),
+                ] : null,
+                'performanceReview' => $existingReview ? [
+                    'id' => $existingReview->id,
+                    'progress' => $existingReview->progress ?? $supervisorTaskProgress,
+                    'grade' => $existingReview->grade,
+                    'supervisorComments' => $existingReview->supervisor_comments,
+                    'status' => $existingReview->status,
+                    'performanceMetrics' => $existingReview->performance_metrics,
+                    'createdAt' => $existingReview->created_at->toISOString(),
                 ] : null
             ], 200);
 
         } catch (\Exception $e) {
             \Log::error('Error fetching performance review details', [
                 'assignment_id' => $assignmentId,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
 
             return response()->json([
@@ -2066,7 +2045,7 @@ class PmsController extends Controller
 
             $deadlines = $query->orderBy('end_date', 'asc')
                               ->limit(10)
- ->get()
+                              ->get()
                               ->map(function($assignment) {
                                   $daysLeft = now()->diffInDays($assignment->end_date, false);
                                   $type = $daysLeft <= 7 ? 'urgent' : ($daysLeft <= 14 ? 'review' : 'goals');
@@ -2401,6 +2380,145 @@ class PmsController extends Controller
                 'message' => 'Failed to reject KPI task',
                 'error' => $e->getMessage()
             ], 500);
+        }
+    }
+
+    /**
+     * Submit practical feedback for a performance review
+     */
+    public function submitPracticalFeedback(Request $request, $assignmentId)
+    {
+        try {
+            $validated = $request->validate([
+                'feedback' => 'required|string|min:10|max:2000',
+                'email' => 'required|email',
+                'subject' => 'required|string|min:5|max:255',
+                'taskName' => 'nullable|string'
+            ]);
+
+            // Get the assignment with employee details
+            $assignment = KpiTaskAssignment::with([
+                'employee.contactDetail:employee_id,email',
+                'employee:id,full_name,attendance_employee_no',
+                'kpiTask:id,task_name'
+            ])->findOrFail($assignmentId);
+
+            // Get sender (current user) email
+            $currentUser = auth()->user();
+            $senderEmail = $currentUser->email ?? 'system@company.com';
+
+            // Get recipient email - prioritize employee's user account email, then contact detail
+            $employee = $assignment->employee;
+            $employeeUser = User::where('employee_id', $employee->id)->first();
+            $recipientEmail = $employeeUser ? $employeeUser->email : 
+                             ($employee->contactDetail ? $employee->contactDetail->email : $validated['email']);
+            
+            $employeeName = $employee->full_name ?? 'Employee';
+            $taskName = $validated['taskName'] ?? $assignment->kpiTask->task_name ?? 'Task';
+
+            // Create practical feedback record
+            $feedback = PracticalFeedback::create([
+                'employee_id' => $assignment->employee_id,
+                'kpi_assignment_id' => $assignmentId,
+                'task_name' => $taskName,
+                'from_email' => $senderEmail,
+                'to_email' => $recipientEmail,
+                'subject' => $validated['subject'],
+                'feedback_content' => $validated['feedback'],
+                'created_by' => $currentUser->id
+            ]);
+
+            // Here you would implement actual email sending
+            // Mail::to($recipientEmail)->send(new PracticalFeedbackMail($feedback));
+            
+            \Log::info('Practical feedback created successfully', [
+                'feedback_id' => $feedback->id,
+                'assignment_id' => $assignmentId,
+                'from' => $senderEmail,
+                'to' => $recipientEmail,
+                'subject' => $validated['subject'],
+                'employee' => $employeeName,
+                'task' => $taskName
+            ]);
+
+            return response()->json([
+                'message' => 'Practical feedback sent successfully',
+                'data' => [
+                    'feedback_id' => $feedback->id,
+                    'sent_from' => $senderEmail,
+                    'sent_to' => $recipientEmail,
+                    'subject' => $validated['subject'],
+                    'employee_name' => $employeeName,
+                    'task_name' => $taskName,
+                    'created_at' => $feedback->formatted_created_at
+                ]
+            ], 200);
+
+        } catch (\Exception $e) {
+            \Log::error('Error submitting practical feedback', [
+                'assignment_id' => $assignmentId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'error' => 'Failed to submit practical feedback',
+                'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get practical feedback history
+     */
+    public function getPracticalFeedbackHistory(Request $request)
+    {
+        try {
+            $query = PracticalFeedback::with(['employee:id,full_name', 'creator:id,name'])
+                ->orderBy('created_at', 'desc');
+
+            // Filter by employee if provided
+            if ($request->has('employee_id')) {
+                $query->forEmployee($request->employee_id);
+            }
+
+            // Filter by creator if provided
+            if ($request->has('created_by')) {
+                $query->byCreator($request->created_by);
+            }
+
+            // Filter by status if provided
+            if ($request->has('status')) {
+                $query->where('email_status', $request->status);
+            }
+
+            $feedbacks = $query->paginate(15);
+
+            return response()->json($feedbacks);
+
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Failed to fetch feedback history'], 500);
+        }
+    }
+
+    /**
+     * Get feedback statistics
+     */
+    public function getFeedbackStats()
+    {
+        try {
+            $stats = [
+                'total_sent' => PracticalFeedback::sent()->count(),
+                'total_pending' => PracticalFeedback::pending()->count(),
+                'total_failed' => PracticalFeedback::failed()->count(),
+                'this_month' => PracticalFeedback::whereMonth('created_at', now()->month)->count(),
+                'this_week' => PracticalFeedback::whereBetween('created_at', [now()->startOfWeek(), now()->endOfWeek()])->count()
+            ];
+
+            return response()->json($stats);
+
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Failed to fetch feedback statistics'], 500);
         }
     }
 }

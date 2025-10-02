@@ -184,6 +184,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/pms/performance-reviews/{assignmentId}/documents', [PmsController::class, 'getAssignmentDocuments']);
     Route::put('/pms/performance-reviews/{assignmentId}', [PmsController::class, 'updatePerformanceReview']);
     
+    
     // Other PMS routes that require authentication
     Route::get('/pms/kpi-task-assignments/employee/{employeeId}', [PmsController::class, 'getEmployeeKpiTaskAssignments']);
     Route::post('/pms/task-progress-submissions', [PmsController::class, 'storeTaskProgressSubmission']);
@@ -214,6 +215,11 @@ Route::middleware(['auth:sanctum'])->group(function () {
     // Approve / reject endpoints (POST)
     Route::post('/pms/kpi-tasks/{id}/approve', [PmsController::class, 'approveKpiTask']);
     Route::post('/pms/kpi-tasks/{id}/reject', [PmsController::class, 'rejectKpiTask']);
+
+    // Practical Feedback routes
+    Route::post('/pms/performance-reviews/{assignmentId}/practical-feedback', [PmsController::class, 'submitPracticalFeedback']);
+    Route::get('/pms/practical-feedback/history', [PmsController::class, 'getPracticalFeedbackHistory']);
+    Route::get('/pms/practical-feedback/stats', [PmsController::class, 'getFeedbackStats']);
 });
 
 // Employee Performance Evaluation endpoints (these can remain public if needed)
