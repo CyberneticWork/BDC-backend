@@ -177,9 +177,9 @@ class DatabaseSeeder extends Seeder
 
 
         $this->call([
-            // EmployeeSeeder::class,
-            // AllowanceSeeder::class,
-            // DeductionSeeder::class,
+            EmployeeSeeder::class,
+                // AllowanceSeeder::class,
+                // DeductionSeeder::class,
             KpiTasksSeeder::class,
             creator_roles::class,
         ]);
@@ -270,7 +270,7 @@ class DatabaseSeeder extends Seeder
         //         'primary_emp_basic' => rand(0, 1) ? true : false,
         //     ]);
         // }
-      
+
 
 
 
