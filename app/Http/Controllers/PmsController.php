@@ -807,7 +807,7 @@ class PmsController extends Controller
             $submission = TaskProgressSubmission::create($submissionData);
 
             // Update the KPI assignment's completion status based on progress
-            $assignment = KpiTaskAssignment::find($validated['kpi_assignment_id']);
+            $assignment = KpiTaskAssignment::with('kpiTask:id,task_name')->find($validated['kpi_assignment_id']);
             if ($assignment) {
                 if ($progressPercentage >= 100) {
                     $assignment->completion_status = 'completed';
@@ -818,6 +818,22 @@ class PmsController extends Controller
                 }
                 $assignment->last_updated = now();
                 $assignment->save();
+
+                // Send notification to the creator of the task
+                if ($assignment->creator_id) {
+                    $taskName = $assignment->kpiTask ? $assignment->kpiTask->task_name : 'KPI Task';
+                    Notification::create([
+                        'user_id' => $assignment->creator_id,
+                        'type' => 'task_progress',
+                        'title' => 'Task Progress Submitted',
+                        'message' => "Progress has been submitted for your KPI task: {$taskName} (Assignment ID: {$assignment->id})",
+                        'data' => [
+                            'assignment_id' => $assignment->id,
+                            'submission_id' => $submission->id,
+                            'progress_percentage' => $progressPercentage
+                        ]
+                    ]);
+                }
             }
 
             return response()->json([
