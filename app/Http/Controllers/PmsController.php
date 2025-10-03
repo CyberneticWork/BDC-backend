@@ -454,34 +454,46 @@ class PmsController extends Controller
 
             // Transform to match frontend expectations with null safety
             $transformed = $assignments->map(function ($assignment) {
+                // Clean weights: only include weights that exist in current template
+                $cleanedWeights = [];
+                if ($assignment->weights) {
+                    $currentTemplateWeights = KpiWeight::all()->pluck('id')->toArray();
+                    
+                    foreach ($assignment->weights as $weight) {
+                        // Only include if weight ID exists in current templates OR has assigned percentage > 0
+                        $weightId = $weight['id'] ?? null;
+                        $hasPercentage = isset($weight['percentage']) && $weight['percentage'] > 0;
+                        
+                        if ($weightId && (in_array($weightId, $currentTemplateWeights) || $hasPercentage)) {
+                            $cleanedWeights[] = $weight;
+                        }
+                    }
+                }
+
                 return [
                     'id' => $assignment->id,
-                    'name' => $assignment->kpiTask?->task_name ?? 'Unknown Task',
-                    'description' => $assignment->description ?? '',
+                    'name' => $assignment->kpiTask->task_name ?? 'Unknown Task',
+                    'description' => $assignment->description,
+                    'assignees' => $assignment->employee ? [$assignment->employee->attendance_employee_no] : [],
+                    'assigneeNames' => $assignment->employee ? [$assignment->employee->full_name] : [],
                     'company' => $assignment->company_id,
+                    'companyName' => $assignment->company->name ?? 'Unknown Company',
+                    'department' => $assignment->department_id,
                     'departmentId' => $assignment->department_id,
-                    'companyName' => $assignment->company?->name ?? 'Unknown Company',
-                    'departmentName' => $assignment->department?->name ?? 'Unknown Department',
-                    'department' => $assignment->department?->name ?? 'Unknown Department',
-                    'assignees' => [$assignment->employee?->attendance_employee_no ?? 'Unknown'],
-                    'assigneeUpdates' => [], // Can be populated later if needed
-                    'startDate' => $assignment->start_date?->toDateString() ?? null,
-                    'endDate' => $assignment->end_date?->toDateString() ?? null,
+                    'departmentName' => $assignment->department->name ?? 'No Department',
+                    'startDate' => $assignment->start_date,
+                    'endDate' => $assignment->end_date,
                     'status' => $assignment->status ?? 'active',
                     'priority' => $assignment->priority ?? 'medium',
                     'creator' => [
-                        'role' => $assignment->creatorRole?->role_name ?? 'Unknown Role',
-                        'date' => $assignment->created_at?->toISOString() ?? null,
-                        'id' => $assignment->creator_id // Include creator ID
+                        'role' => $assignment->creatorRole->role_name ?? 'Unknown Role'
                     ],
-                    'weights' => $assignment->weights ?? [],
-                    'lastUpdated' => $assignment->created_at?->toISOString() ?? null,
-                    'frequency' => 'Monthly', // Default or add to table if needed
-                    'category' => 'General', // Default or add to table if needed
-                    'approval_status' => $assignment->approval_status ?? 'pending',
+                    'creatorRole' => $assignment->creatorRole->role_name ?? 'Unknown Role',
+                    'weights' => $cleanedWeights, // Use cleaned weights
+                    'lastUpdated' => $assignment->last_updated ? $assignment->last_updated->toISOString() : $assignment->updated_at->toISOString(),
+                    'assigneeUpdates' => [],
                     'completion_status' => $assignment->completion_status ?? 'not-started',
-                    'employee_id' => $assignment->employee?->id ?? null,
-                    'employee_name' => $assignment->employee?->full_name ?? 'Unknown Employee'
+                    'approval_status' => $assignment->approval_status ?? 'pending',
                 ];
             });
 
@@ -559,7 +571,7 @@ class PmsController extends Controller
                     'date' => $assignment->created_at->toISOString()
                 ],
                 'weights' => $assignment->weights ?? [],
-                'lastUpdated' => $assignment->created_at->toISOString(),
+                'lastUpdated' => $assignment->created_at->toISOString() ?? null,
                 'frequency' => 'Monthly', // Default or add to table if needed
                 'category' => 'General' // Default or add to table if needed
             ];
@@ -580,7 +592,7 @@ class PmsController extends Controller
             'department_id' => 'nullable|exists:departments,id',
             'creator_role_name' => 'sometimes|required|string',
             'assignees' => 'sometimes|required|array|min:1',
-            'assignees.*' => 'required|string', // attendance_employee_no
+            'assignees.*' => 'required|string',
             'start_date' => 'sometimes|required|date',
             'end_date' => 'sometimes|required|date|after:start_date',
             'weights' => 'nullable|array',
@@ -621,6 +633,62 @@ class PmsController extends Controller
                 return response()->json(['error' => 'Employee not found'], 400);
             }
             $assignment->employee_id = $employee->id;
+        }
+
+        // If weights are being updated, merge with template weights
+        if (isset($validated['weights'])) {
+            // Get incoming weights from request
+            $incomingWeights = $validated['weights'];
+            
+            // Load current template weights (excludes deleted weights)
+            $templateWeights = KpiWeight::all()->map(function($w) {
+                return [
+                    'id' => $w->id,
+                    'title' => $w->name,
+                    'description' => $w->description ?? '',
+                    'percentage' => 0
+                ];
+            })->toArray();
+            
+            // Build lookup maps
+            $incomingById = [];
+            $incomingByName = [];
+            foreach ($incomingWeights as $w) {
+                $idKey = isset($w['id']) ? (string)$w['id'] : null;
+                $nameKey = isset($w['title']) ? strtolower(trim($w['title'])) : (isset($w['name']) ? strtolower(trim($w['name'])) : null);
+                if ($idKey) $incomingById[$idKey] = $w;
+                if ($nameKey) $incomingByName[$nameKey] = $w;
+            }
+            
+            // Merge: only include weights that exist in current templates
+            $mergedWeights = [];
+            foreach ($templateWeights as $tpl) {
+                $percent = 0;
+                // match by id first
+                if ($tpl['id'] && isset($incomingById[(string)$tpl['id']])) {
+                    $w = $incomingById[(string)$tpl['id']];
+                    $percent = isset($w['percentage']) ? (int)$w['percentage'] : (isset($w['percent']) ? (int)$w['percent'] : 0);
+                } else {
+                    // try match by name/title
+                    $key = strtolower(trim($tpl['title'] ?? ''));
+                    if ($key && isset($incomingByName[$key])) {
+                        $w = $incomingByName[$key];
+                        $percent = isset($w['percentage']) ? (int)$w['percentage'] : (isset($w['percent']) ? (int)$w['percent'] : 0);
+                    }
+                }
+                $mergedWeights[] = [
+                    'id' => $tpl['id'],
+                    'title' => $tpl['title'],
+                    'description' => $tpl['description'],
+                    'percentage' => $percent
+                ];
+            }
+            
+            // Note: We're NOT appending custom incoming weights that aren't in templates
+            // This ensures deleted weights are completely removed
+            
+            // Update with merged weights (only current template weights)
+            $assignment->weights = $mergedWeights;
         }
 
         $assignment->last_updated = now();
@@ -1778,7 +1846,7 @@ class PmsController extends Controller
                 // Admin sees ALL tasks - no filtering needed
             } elseif ($isHR) {
                 // HR can see:
-                // 1. Tasks they created themselves
+                // 1. Tasks they created themselves (creator_id = current user)
                 // 2. Tasks created by users with 'supervisor' role 
                 // BUT NOT tasks created by other HR users
                 $assignmentsQuery->where(function($q) use ($currentUser) {
