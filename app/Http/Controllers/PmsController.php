@@ -1394,6 +1394,33 @@ class PmsController extends Controller
                 $assignment->save();
             }
 
+            // Send notification to the employee's user account about the review update
+            try {
+                if ($assignment->employee && $assignment->employee->id) {
+                    $employeeUser = \App\Models\User::where('employee_id', $assignment->employee->id)->first();
+                    if ($employeeUser) {
+                        \App\Models\Notification::create([
+                            'user_id' => $employeeUser->id,
+                            'type' => 'performance_review_updated',
+                            'title' => 'Performance Review Updated',
+                            'message' => "Your performance review for task '{$taskName}' has been updated (Status: {$validated['status']}).",
+                            'data' => [
+                                'assignment_id' => $assignment->id,
+                                'review_id' => $review->id,
+                                'status' => $validated['status'],
+                                'progress' => $validated['progress']
+                            ]
+                        ]);
+                    }
+                }
+            } catch (\Throwable $notifyEx) {
+                \Log::warning('Failed to create performance review notification', [
+                    'assignment_id' => $assignment->id ?? null,
+                    'review_id' => $review->id ?? null,
+                    'error' => $notifyEx->getMessage()
+                ]);
+            }
+
             // Log for debugging
             \Log::info('Performance review saved', [
                 'assignment_id' => $assignmentId,
