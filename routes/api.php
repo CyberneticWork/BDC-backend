@@ -220,6 +220,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/pms/performance-reviews/{assignmentId}/practical-feedback', [PmsController::class, 'submitPracticalFeedback']);
     Route::get('/pms/practical-feedback/history', [PmsController::class, 'getPracticalFeedbackHistory']);
     Route::get('/pms/practical-feedback/stats', [PmsController::class, 'getFeedbackStats']);
+    Route::get('/pms/kpi-weights', [PmsController::class, 'getKpiWeights']);
+    Route::post('/pms/kpi-weights', [PmsController::class, 'createKpiWeight']);
+    Route::put('/pms/kpi-weights/{id}', [PmsController::class, 'updateKpiWeight']);
+    Route::delete('/pms/kpi-weights/{id}', [PmsController::class, 'deleteKpiWeight']);
 });
 
 // Employee Performance Evaluation endpoints (these can remain public if needed)
