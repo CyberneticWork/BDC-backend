@@ -15,6 +15,7 @@ use App\Models\PerformanceEvaluation;
 use App\Models\PracticalFeedback;
 use App\Models\Notification;
 use App\Models\User;
+use App\Models\KpiWeight; // Import the KpiWeight model
 use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 use Illuminate\Database\QueryException;
@@ -212,6 +213,85 @@ class PmsController extends Controller
 
         // If no duplicates, proceed with creating assignments
         $assignments = [];
+
+        // Merge incoming weights with DB templates so all template weights are stored.
+        // Incoming may be e.g. [{id, title, percentage}, {title, percentage}, ...]
+        $incomingWeights = $validated['weights'] ?? [];
+        // Load template weights
+        $templateWeights = KpiWeight::all()->map(function ($w) {
+            return [
+                'id' => $w->id,
+                'title' => $w->name,
+                'description' => $w->description ?? '',
+                'percentage' => 0
+            ];
+        })->toArray();
+
+        // Build lookup of incoming weights by id and by normalized title
+        $incomingById = [];
+        $incomingByName = [];
+        foreach ($incomingWeights as $w) {
+            $idKey = isset($w['id']) ? (string) $w['id'] : null;
+            $nameKey = isset($w['title']) ? strtolower(trim($w['title'])) : (isset($w['name']) ? strtolower(trim($w['name'])) : null);
+            if ($idKey)
+                $incomingById[$idKey] = $w;
+            if ($nameKey)
+                $incomingByName[$nameKey] = $w;
+        }
+
+        // Merge: prefer incoming percentage if present, else 0
+        $mergedWeights = [];
+        foreach ($templateWeights as $tpl) {
+            $percent = 0;
+            // match by id first
+            if ($tpl['id'] && isset($incomingById[(string) $tpl['id']])) {
+                $w = $incomingById[(string) $tpl['id']];
+                $percent = isset($w['percentage']) ? (int) $w['percentage'] : (isset($w['percent']) ? (int) $w['percent'] : 0);
+            } else {
+                // try match by name/title
+                $key = strtolower(trim($tpl['title'] ?? ''));
+                if ($key && isset($incomingByName[$key])) {
+                    $w = $incomingByName[$key];
+                    $percent = isset($w['percentage']) ? (int) $w['percentage'] : (isset($w['percent']) ? (int) $w['percent'] : 0);
+                }
+            }
+            $mergedWeights[] = [
+                'id' => $tpl['id'],
+                'title' => $tpl['title'],
+                'description' => $tpl['description'],
+                'percentage' => $percent
+            ];
+        }
+
+        // Append any custom incoming weights not present in templates
+        foreach ($incomingWeights as $w) {
+            $matched = false;
+            if (isset($w['id'])) {
+                foreach ($mergedWeights as $m) {
+                    if ($m['id'] && (string) $m['id'] === (string) $w['id']) {
+                        $matched = true;
+                        break;
+                    }
+                }
+            } else {
+                $nameKey = isset($w['title']) ? strtolower(trim($w['title'])) : (isset($w['name']) ? strtolower(trim($w['name'])) : null);
+                foreach ($mergedWeights as $m) {
+                    if ($nameKey && strtolower(trim($m['title'])) === $nameKey) {
+                        $matched = true;
+                        break;
+                    }
+                }
+            }
+            if (!$matched) {
+                $mergedWeights[] = [
+                    'id' => $w['id'] ?? null,
+                    'title' => $w['title'] ?? ($w['name'] ?? 'Custom'),
+                    'description' => $w['description'] ?? '',
+                    'percentage' => isset($w['percentage']) ? (int) $w['percentage'] : 0
+                ];
+            }
+        }
+
         foreach ($validAssignments as $employee) {
             // Determine department: prefer provided department_id, else derive from employee's organizationAssignment
             $departmentId = $validated['department_id'] ?? null;
@@ -230,7 +310,8 @@ class PmsController extends Controller
                 'kpi_task_id' => $kpiTask->id,
                 'creator_role_id' => $creatorRole->id,
                 'creator_id' => $creatorId, // Store current user as creator
-                'weights' => $validated['weights'] ?? [],
+                // Store merged weights: all template entries + any custom incoming weights
+                'weights' => $mergedWeights,
                 'company_id' => $validated['company_id'],
                 'department_id' => $departmentId,
                 'employee_id' => $employee->id,
@@ -386,34 +467,46 @@ class PmsController extends Controller
 
             // Transform to match frontend expectations with null safety
             $transformed = $assignments->map(function ($assignment) {
+                // Clean weights: only include weights that exist in current template
+                $cleanedWeights = [];
+                if ($assignment->weights) {
+                    $currentTemplateWeights = KpiWeight::all()->pluck('id')->toArray();
+
+                    foreach ($assignment->weights as $weight) {
+                        // Only include if weight ID exists in current templates OR has assigned percentage > 0
+                        $weightId = $weight['id'] ?? null;
+                        $hasPercentage = isset($weight['percentage']) && $weight['percentage'] > 0;
+
+                        if ($weightId && (in_array($weightId, $currentTemplateWeights) || $hasPercentage)) {
+                            $cleanedWeights[] = $weight;
+                        }
+                    }
+                }
+
                 return [
                     'id' => $assignment->id,
-                    'name' => $assignment->kpiTask?->task_name ?? 'Unknown Task',
-                    'description' => $assignment->description ?? '',
+                    'name' => $assignment->kpiTask->task_name ?? 'Unknown Task',
+                    'description' => $assignment->description,
+                    'assignees' => $assignment->employee ? [$assignment->employee->attendance_employee_no] : [],
+                    'assigneeNames' => $assignment->employee ? [$assignment->employee->full_name] : [],
                     'company' => $assignment->company_id,
+                    'companyName' => $assignment->company->name ?? 'Unknown Company',
+                    'department' => $assignment->department_id,
                     'departmentId' => $assignment->department_id,
-                    'companyName' => $assignment->company?->name ?? 'Unknown Company',
-                    'departmentName' => $assignment->department?->name ?? 'Unknown Department',
-                    'department' => $assignment->department?->name ?? 'Unknown Department',
-                    'assignees' => [$assignment->employee?->attendance_employee_no ?? 'Unknown'],
-                    'assigneeUpdates' => [], // Can be populated later if needed
-                    'startDate' => $assignment->start_date?->toDateString() ?? null,
-                    'endDate' => $assignment->end_date?->toDateString() ?? null,
+                    'departmentName' => $assignment->department->name ?? 'No Department',
+                    'startDate' => $assignment->start_date,
+                    'endDate' => $assignment->end_date,
                     'status' => $assignment->status ?? 'active',
                     'priority' => $assignment->priority ?? 'medium',
                     'creator' => [
-                        'role' => $assignment->creatorRole?->role_name ?? 'Unknown Role',
-                        'date' => $assignment->created_at?->toISOString() ?? null,
-                        'id' => $assignment->creator_id // Include creator ID
+                        'role' => $assignment->creatorRole->role_name ?? 'Unknown Role'
                     ],
-                    'weights' => $assignment->weights ?? [],
-                    'lastUpdated' => $assignment->created_at?->toISOString() ?? null,
-                    'frequency' => 'Monthly', // Default or add to table if needed
-                    'category' => 'General', // Default or add to table if needed
-                    'approval_status' => $assignment->approval_status ?? 'pending',
+                    'creatorRole' => $assignment->creatorRole->role_name ?? 'Unknown Role',
+                    'weights' => $cleanedWeights, // Use cleaned weights
+                    'lastUpdated' => $assignment->last_updated ? $assignment->last_updated->toISOString() : $assignment->updated_at->toISOString(),
+                    'assigneeUpdates' => [],
                     'completion_status' => $assignment->completion_status ?? 'not-started',
-                    'employee_id' => $assignment->employee?->id ?? null,
-                    'employee_name' => $assignment->employee?->full_name ?? 'Unknown Employee'
+                    'approval_status' => $assignment->approval_status ?? 'pending',
                 ];
             });
 
@@ -481,8 +574,6 @@ class PmsController extends Controller
                 'assigneeUpdates' => [], // Can be populated later if needed
                 'startDate' => $assignment->start_date->toDateString(),
                 'endDate' => $assignment->end_date->toDateString(),
-                'start_date' => $assignment->start_date->toDateString(), // Also include underscore version
-                'end_date' => $assignment->end_date->toDateString(), // Also include underscore version
                 'status' => $assignment->status ?? 'active',
                 'approval_status' => $assignment->approval_status ?? 'pending', // Include approval status
                 'priority' => $assignment->priority ?? 'medium',
@@ -491,7 +582,7 @@ class PmsController extends Controller
                     'date' => $assignment->created_at->toISOString()
                 ],
                 'weights' => $assignment->weights ?? [],
-                'lastUpdated' => $assignment->created_at->toISOString(),
+                'lastUpdated' => $assignment->created_at->toISOString() ?? null,
                 'frequency' => 'Monthly', // Default or add to table if needed
                 'category' => 'General' // Default or add to table if needed
             ];
@@ -512,7 +603,7 @@ class PmsController extends Controller
             'department_id' => 'nullable|exists:departments,id',
             'creator_role_name' => 'sometimes|required|string',
             'assignees' => 'sometimes|required|array|min:1',
-            'assignees.*' => 'required|string', // attendance_employee_no
+            'assignees.*' => 'required|string',
             'start_date' => 'sometimes|required|date',
             'end_date' => 'sometimes|required|date|after:start_date',
             'weights' => 'nullable|array',
@@ -560,6 +651,64 @@ class PmsController extends Controller
                 return response()->json(['error' => 'Employee not found'], 400);
             }
             $assignment->employee_id = $employee->id;
+        }
+
+        // If weights are being updated, merge with template weights
+        if (isset($validated['weights'])) {
+            // Get incoming weights from request
+            $incomingWeights = $validated['weights'];
+
+            // Load current template weights (excludes deleted weights)
+            $templateWeights = KpiWeight::all()->map(function ($w) {
+                return [
+                    'id' => $w->id,
+                    'title' => $w->name,
+                    'description' => $w->description ?? '',
+                    'percentage' => 0
+                ];
+            })->toArray();
+
+            // Build lookup maps
+            $incomingById = [];
+            $incomingByName = [];
+            foreach ($incomingWeights as $w) {
+                $idKey = isset($w['id']) ? (string) $w['id'] : null;
+                $nameKey = isset($w['title']) ? strtolower(trim($w['title'])) : (isset($w['name']) ? strtolower(trim($w['name'])) : null);
+                if ($idKey)
+                    $incomingById[$idKey] = $w;
+                if ($nameKey)
+                    $incomingByName[$nameKey] = $w;
+            }
+
+            // Merge: only include weights that exist in current templates
+            $mergedWeights = [];
+            foreach ($templateWeights as $tpl) {
+                $percent = 0;
+                // match by id first
+                if ($tpl['id'] && isset($incomingById[(string) $tpl['id']])) {
+                    $w = $incomingById[(string) $tpl['id']];
+                    $percent = isset($w['percentage']) ? (int) $w['percentage'] : (isset($w['percent']) ? (int) $w['percent'] : 0);
+                } else {
+                    // try match by name/title
+                    $key = strtolower(trim($tpl['title'] ?? ''));
+                    if ($key && isset($incomingByName[$key])) {
+                        $w = $incomingByName[$key];
+                        $percent = isset($w['percentage']) ? (int) $w['percentage'] : (isset($w['percent']) ? (int) $w['percent'] : 0);
+                    }
+                }
+                $mergedWeights[] = [
+                    'id' => $tpl['id'],
+                    'title' => $tpl['title'],
+                    'description' => $tpl['description'],
+                    'percentage' => $percent
+                ];
+            }
+
+            // Note: We're NOT appending custom incoming weights that aren't in templates
+            // This ensures deleted weights are completely removed
+
+            // Update with merged weights (only current template weights)
+            $assignment->weights = $mergedWeights;
         }
 
         $assignment->last_updated = now();
@@ -1762,7 +1911,7 @@ class PmsController extends Controller
                 // Admin sees ALL tasks - no filtering needed
             } elseif ($isHR) {
                 // HR can see:
-                // 1. Tasks they created themselves
+                // 1. Tasks they created themselves (creator_id = current user)
                 // 2. Tasks created by users with 'supervisor' role
                 // BUT NOT tasks created by other HR users
                 $assignmentsQuery->where(function ($q) use ($currentUser) {
@@ -1903,6 +2052,9 @@ class PmsController extends Controller
             $totalTasks = $assignments->count();
 
             // Log for debugging
+
+
+
             Log::info('KPI stats calculation', [
                 'user_role' => $userRole,
                 'user_id' => $currentUser->id,
@@ -2667,5 +2819,131 @@ class PmsController extends Controller
             ->count();
 
         return response()->json(['unread_count' => $count]);
+    }
+    public function getKpiWeights()
+    {
+        try {
+            // Only fetch non-deleted weights
+            $weights = KpiWeight::whereNull('deleted_at')
+                ->select('id', 'name', 'description')
+                ->orderBy('name')
+                ->get();
+
+            return response()->json($weights);
+        } catch (\Exception $e) {
+            \Log::error('Error fetching KPI weights', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'error' => 'Failed to fetch KPI weights'
+            ], 500);
+        }
+    }
+
+    /**
+     * Create a new KPI weight
+     */
+    public function createKpiWeight(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'name' => 'required|string|max:255|unique:kpi_weights,name,NULL,id,deleted_at,NULL',
+                'description' => 'nullable|string|max:1000'
+            ], [
+                'name.required' => 'Weight name is required',
+                'name.unique' => 'A weight with this name already exists',
+                'name.max' => 'Weight name cannot exceed 255 characters',
+                'description.max' => 'Description cannot exceed 1000 characters'
+            ]);
+
+            $weight = KpiWeight::create($validated);
+
+            \Log::info('KPI weight created successfully', [
+                'weight_id' => $weight->id,
+                'name' => $weight->name
+            ]);
+
+            return response()->json($weight, 201);
+        } catch (\Exception $e) {
+            \Log::error('Error creating KPI weight', [
+                'data' => $request->all(),
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'error' => 'Failed to create KPI weight'
+            ], 500);
+        }
+    }
+
+    /**
+     * Update a KPI weight
+     */
+    public function updateKpiWeight(Request $request, $id)
+    {
+        try {
+            $weight = KpiWeight::findOrFail($id);
+
+            $validated = $request->validate([
+                'name' => 'required|string|max:255|unique:kpi_weights,name,' . $id . ',id,deleted_at,NULL',
+                'description' => 'nullable|string|max:1000'
+            ], [
+                'name.required' => 'Weight name is required',
+                'name.unique' => 'A weight with this name already exists',
+                'name.max' => 'Weight name cannot exceed 255 characters',
+                'description.max' => 'Description cannot exceed 1000 characters'
+            ]);
+
+            $weight->update($validated);
+
+            \Log::info('KPI weight updated successfully', [
+                'weight_id' => $weight->id,
+                'name' => $weight->name
+            ]);
+
+            return response()->json($weight);
+        } catch (\Exception $e) {
+            \Log::error('Error updating KPI weight', [
+                'id' => $id,
+                'data' => $request->all(),
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'error' => 'Failed to update KPI weight'
+            ], 500);
+        }
+    }
+
+    /**
+     * Soft delete a KPI weight with optional force parameter
+     */
+    public function deleteKpiWeight(Request $request, $id)
+    {
+        try {
+            $weight = KpiWeight::findOrFail($id);
+
+            // Force soft delete without checking usage
+            $weight->delete();
+
+            \Log::info('KPI weight soft deleted successfully', [
+                'weight_id' => $id,
+                'name' => $weight->name
+            ]);
+
+            return response()->json(['message' => 'Weight deleted successfully']);
+        } catch (\Exception $e) {
+            \Log::error('Error deleting KPI weight', [
+                'id' => $id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'error' => 'Failed to delete KPI weight: ' . $e->getMessage()
+            ], 500);
+        }
     }
 }

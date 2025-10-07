@@ -246,6 +246,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/notifications/{notificationId}/read', [PmsController::class, 'markNotificationRead']);
     Route::post('/notifications/mark-all-read', [PmsController::class, 'markAllNotificationsRead']);
     Route::get('/notifications/unread-count', [PmsController::class, 'getUnreadCount']);
+    Route::get('/pms/kpi-weights', [PmsController::class, 'getKpiWeights']);
+    Route::post('/pms/kpi-weights', [PmsController::class, 'createKpiWeight']);
+    Route::put('/pms/kpi-weights/{id}', [PmsController::class, 'updateKpiWeight']);
+    Route::delete('/pms/kpi-weights/{id}', [PmsController::class, 'deleteKpiWeight']);
 });
 
 // Employee Performance Evaluation endpoints (these can remain public if needed)
