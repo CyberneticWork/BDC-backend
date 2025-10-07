@@ -177,7 +177,7 @@ class DatabaseSeeder extends Seeder
 
 
         $this->call([
-            // EmployeeSeeder::class,
+            EmployeeSeeder::class,
             // AllowanceSeeder::class,
             // DeductionSeeder::class,
             KpiTasksSeeder::class,
