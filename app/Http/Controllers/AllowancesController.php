@@ -18,7 +18,7 @@ class AllowancesController extends Controller
         return response()->json(['data' => $allowances], 200);
     }
 
-    public function store(Request $request)
+     public function store(Request $request)
     {
         $validator = Validator::make($request->all(), [
             'allowance_code' => 'required|unique:allowances,allowance_code',
@@ -27,7 +27,7 @@ class AllowancesController extends Controller
             'category' => 'nullable|in:travel,bonus,performance,health,other',
             'allowance_type' => 'nullable|in:fixed,variable',
             'company_id' => 'required|exists:companies,id',
-            'amount' => 'required|numeric|min:0',
+            'amount' => 'nullable|numeric',
             'department_id' => [
                 'nullable',
                 'exists:departments,id',
@@ -74,6 +74,9 @@ class AllowancesController extends Controller
         // Prepare data based on allowance type
         $data = $validator->validated();
 
+        if ($data['amount'] == null) {
+            $data['amount'] = 0.00;
+        }
         if ($data['allowance_type'] === 'fixed') {
             $data['variable_from'] = null;
             $data['variable_to'] = null;
