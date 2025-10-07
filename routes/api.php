@@ -240,6 +240,12 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/pms/performance-reviews/{assignmentId}/practical-feedback', [PmsController::class, 'submitPracticalFeedback']);
     Route::get('/pms/practical-feedback/history', [PmsController::class, 'getPracticalFeedbackHistory']);
     Route::get('/pms/practical-feedback/stats', [PmsController::class, 'getFeedbackStats']);
+
+    // Notification routes
+    Route::get('/notifications', [PmsController::class, 'getUserNotifications']);
+    Route::post('/notifications/{notificationId}/read', [PmsController::class, 'markNotificationRead']);
+    Route::post('/notifications/mark-all-read', [PmsController::class, 'markAllNotificationsRead']);
+    Route::get('/notifications/unread-count', [PmsController::class, 'getUnreadCount']);
     Route::get('/pms/kpi-weights', [PmsController::class, 'getKpiWeights']);
     Route::post('/pms/kpi-weights', [PmsController::class, 'createKpiWeight']);
     Route::put('/pms/kpi-weights/{id}', [PmsController::class, 'updateKpiWeight']);

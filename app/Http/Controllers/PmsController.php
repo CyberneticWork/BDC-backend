@@ -217,7 +217,7 @@ class PmsController extends Controller
         // Incoming may be e.g. [{id, title, percentage}, {title, percentage}, ...]
         $incomingWeights = $validated['weights'] ?? [];
         // Load template weights
-        $templateWeights = KpiWeight::all()->map(function($w) {
+        $templateWeights = KpiWeight::all()->map(function ($w) {
             return [
                 'id' => $w->id,
                 'title' => $w->name,
@@ -230,10 +230,12 @@ class PmsController extends Controller
         $incomingById = [];
         $incomingByName = [];
         foreach ($incomingWeights as $w) {
-            $idKey = isset($w['id']) ? (string)$w['id'] : null;
+            $idKey = isset($w['id']) ? (string) $w['id'] : null;
             $nameKey = isset($w['title']) ? strtolower(trim($w['title'])) : (isset($w['name']) ? strtolower(trim($w['name'])) : null);
-            if ($idKey) $incomingById[$idKey] = $w;
-            if ($nameKey) $incomingByName[$nameKey] = $w;
+            if ($idKey)
+                $incomingById[$idKey] = $w;
+            if ($nameKey)
+                $incomingByName[$nameKey] = $w;
         }
 
         // Merge: prefer incoming percentage if present, else 0
@@ -241,15 +243,15 @@ class PmsController extends Controller
         foreach ($templateWeights as $tpl) {
             $percent = 0;
             // match by id first
-            if ($tpl['id'] && isset($incomingById[(string)$tpl['id']])) {
-                $w = $incomingById[(string)$tpl['id']];
-                $percent = isset($w['percentage']) ? (int)$w['percentage'] : (isset($w['percent']) ? (int)$w['percent'] : 0);
+            if ($tpl['id'] && isset($incomingById[(string) $tpl['id']])) {
+                $w = $incomingById[(string) $tpl['id']];
+                $percent = isset($w['percentage']) ? (int) $w['percentage'] : (isset($w['percent']) ? (int) $w['percent'] : 0);
             } else {
                 // try match by name/title
                 $key = strtolower(trim($tpl['title'] ?? ''));
                 if ($key && isset($incomingByName[$key])) {
                     $w = $incomingByName[$key];
-                    $percent = isset($w['percentage']) ? (int)$w['percentage'] : (isset($w['percent']) ? (int)$w['percent'] : 0);
+                    $percent = isset($w['percentage']) ? (int) $w['percentage'] : (isset($w['percent']) ? (int) $w['percent'] : 0);
                 }
             }
             $mergedWeights[] = [
@@ -264,22 +266,32 @@ class PmsController extends Controller
         foreach ($incomingWeights as $w) {
             $matched = false;
             if (isset($w['id'])) {
-                foreach ($mergedWeights as $m) { if ($m['id'] && (string)$m['id'] === (string)$w['id']) { $matched = true; break; } }
+                foreach ($mergedWeights as $m) {
+                    if ($m['id'] && (string) $m['id'] === (string) $w['id']) {
+                        $matched = true;
+                        break;
+                    }
+                }
             } else {
                 $nameKey = isset($w['title']) ? strtolower(trim($w['title'])) : (isset($w['name']) ? strtolower(trim($w['name'])) : null);
-                foreach ($mergedWeights as $m) { if ($nameKey && strtolower(trim($m['title'])) === $nameKey) { $matched = true; break; } }
+                foreach ($mergedWeights as $m) {
+                    if ($nameKey && strtolower(trim($m['title'])) === $nameKey) {
+                        $matched = true;
+                        break;
+                    }
+                }
             }
             if (!$matched) {
                 $mergedWeights[] = [
                     'id' => $w['id'] ?? null,
                     'title' => $w['title'] ?? ($w['name'] ?? 'Custom'),
                     'description' => $w['description'] ?? '',
-                    'percentage' => isset($w['percentage']) ? (int)$w['percentage'] : 0
+                    'percentage' => isset($w['percentage']) ? (int) $w['percentage'] : 0
                 ];
             }
         }
- 
-         foreach ($validAssignments as $employee) {
+
+        foreach ($validAssignments as $employee) {
             // Determine department: prefer provided department_id, else derive from employee's organizationAssignment
             $departmentId = $validated['department_id'] ?? null;
             if (!$departmentId) {
@@ -458,12 +470,12 @@ class PmsController extends Controller
                 $cleanedWeights = [];
                 if ($assignment->weights) {
                     $currentTemplateWeights = KpiWeight::all()->pluck('id')->toArray();
-                    
+
                     foreach ($assignment->weights as $weight) {
                         // Only include if weight ID exists in current templates OR has assigned percentage > 0
                         $weightId = $weight['id'] ?? null;
                         $hasPercentage = isset($weight['percentage']) && $weight['percentage'] > 0;
-                        
+
                         if ($weightId && (in_array($weightId, $currentTemplateWeights) || $hasPercentage)) {
                             $cleanedWeights[] = $weight;
                         }
@@ -637,9 +649,9 @@ class PmsController extends Controller
         if (isset($validated['weights'])) {
             // Get incoming weights from request
             $incomingWeights = $validated['weights'];
-            
+
             // Load current template weights (excludes deleted weights)
-            $templateWeights = KpiWeight::all()->map(function($w) {
+            $templateWeights = KpiWeight::all()->map(function ($w) {
                 return [
                     'id' => $w->id,
                     'title' => $w->name,
@@ -647,31 +659,33 @@ class PmsController extends Controller
                     'percentage' => 0
                 ];
             })->toArray();
-            
+
             // Build lookup maps
             $incomingById = [];
             $incomingByName = [];
             foreach ($incomingWeights as $w) {
-                $idKey = isset($w['id']) ? (string)$w['id'] : null;
+                $idKey = isset($w['id']) ? (string) $w['id'] : null;
                 $nameKey = isset($w['title']) ? strtolower(trim($w['title'])) : (isset($w['name']) ? strtolower(trim($w['name'])) : null);
-                if ($idKey) $incomingById[$idKey] = $w;
-                if ($nameKey) $incomingByName[$nameKey] = $w;
+                if ($idKey)
+                    $incomingById[$idKey] = $w;
+                if ($nameKey)
+                    $incomingByName[$nameKey] = $w;
             }
-            
+
             // Merge: only include weights that exist in current templates
             $mergedWeights = [];
             foreach ($templateWeights as $tpl) {
                 $percent = 0;
                 // match by id first
-                if ($tpl['id'] && isset($incomingById[(string)$tpl['id']])) {
-                    $w = $incomingById[(string)$tpl['id']];
-                    $percent = isset($w['percentage']) ? (int)$w['percentage'] : (isset($w['percent']) ? (int)$w['percent'] : 0);
+                if ($tpl['id'] && isset($incomingById[(string) $tpl['id']])) {
+                    $w = $incomingById[(string) $tpl['id']];
+                    $percent = isset($w['percentage']) ? (int) $w['percentage'] : (isset($w['percent']) ? (int) $w['percent'] : 0);
                 } else {
                     // try match by name/title
                     $key = strtolower(trim($tpl['title'] ?? ''));
                     if ($key && isset($incomingByName[$key])) {
                         $w = $incomingByName[$key];
-                        $percent = isset($w['percentage']) ? (int)$w['percentage'] : (isset($w['percent']) ? (int)$w['percent'] : 0);
+                        $percent = isset($w['percentage']) ? (int) $w['percentage'] : (isset($w['percent']) ? (int) $w['percent'] : 0);
                     }
                 }
                 $mergedWeights[] = [
@@ -681,10 +695,10 @@ class PmsController extends Controller
                     'percentage' => $percent
                 ];
             }
-            
+
             // Note: We're NOT appending custom incoming weights that aren't in templates
             // This ensures deleted weights are completely removed
-            
+
             // Update with merged weights (only current template weights)
             $assignment->weights = $mergedWeights;
         }
@@ -2661,8 +2675,63 @@ class PmsController extends Controller
     }
 
     /**
-     * Get KPI weight templates (only non-deleted ones)
+     * Get user's notifications
      */
+    public function getUserNotifications(Request $request)
+    {
+        $user = auth()->user();
+        $limit = $request->query('limit', 20);
+
+        $notifications = \App\Models\Notification::where('user_id', $user->id)
+            ->orderBy('created_at', 'desc')
+            ->limit($limit)
+            ->get();
+
+        return response()->json($notifications);
+    }
+
+    /**
+     * Mark notification as read
+     */
+    public function markNotificationRead($notificationId)
+    {
+        $notification = \App\Models\Notification::where('user_id', auth()->id())
+            ->findOrFail($notificationId);
+
+        $notification->update([
+            'is_read' => true,
+            'read_at' => now()
+        ]);
+
+        return response()->json(['message' => 'Notification marked as read']);
+    }
+
+    /**
+     * Mark all notifications as read
+     */
+    public function markAllNotificationsRead()
+    {
+        \App\Models\Notification::where('user_id', auth()->id())
+            ->where('is_read', false)
+            ->update([
+                'is_read' => true,
+                'read_at' => now()
+            ]);
+
+        return response()->json(['message' => 'All notifications marked as read']);
+    }
+
+    /**
+     * Get unread notification count
+     */
+    public function getUnreadCount()
+    {
+        $count = \App\Models\Notification::where('user_id', auth()->id())
+            ->where('is_read', false)
+            ->count();
+
+        return response()->json(['unread_count' => $count]);
+    }
     public function getKpiWeights()
     {
         try {
@@ -2671,14 +2740,14 @@ class PmsController extends Controller
                 ->select('id', 'name', 'description')
                 ->orderBy('name')
                 ->get();
-            
+
             return response()->json($weights);
         } catch (\Exception $e) {
             \Log::error('Error fetching KPI weights', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
+
             return response()->json([
                 'error' => 'Failed to fetch KPI weights'
             ], 500);
@@ -2714,7 +2783,7 @@ class PmsController extends Controller
                 'data' => $request->all(),
                 'error' => $e->getMessage()
             ]);
-            
+
             return response()->json([
                 'error' => 'Failed to create KPI weight'
             ], 500);
@@ -2728,7 +2797,7 @@ class PmsController extends Controller
     {
         try {
             $weight = KpiWeight::findOrFail($id);
-            
+
             $validated = $request->validate([
                 'name' => 'required|string|max:255|unique:kpi_weights,name,' . $id . ',id,deleted_at,NULL',
                 'description' => 'nullable|string|max:1000'
@@ -2753,7 +2822,7 @@ class PmsController extends Controller
                 'data' => $request->all(),
                 'error' => $e->getMessage()
             ]);
-            
+
             return response()->json([
                 'error' => 'Failed to update KPI weight'
             ], 500);
@@ -2767,7 +2836,7 @@ class PmsController extends Controller
     {
         try {
             $weight = KpiWeight::findOrFail($id);
-            
+
             // Force soft delete without checking usage
             $weight->delete();
 
@@ -2783,7 +2852,7 @@ class PmsController extends Controller
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
+
             return response()->json([
                 'error' => 'Failed to delete KPI weight: ' . $e->getMessage()
             ], 500);
