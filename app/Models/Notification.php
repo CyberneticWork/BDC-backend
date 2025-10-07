@@ -12,6 +12,7 @@ class Notification extends Model
         'title',
         'message',
         'data',
+
         'is_read',
         'read_at',
     ];
