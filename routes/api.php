@@ -92,6 +92,7 @@ Route::prefix('apiData')->group(function () {
     Route::get('/departments', [ApiDataController::class, 'departments']);
     Route::get('/subDepartments', [ApiDataController::class, 'subDepartments']);
     Route::get('/designations', [ApiDataController::class, 'designations']);
+    Route::post('/addNewDesignation', [ApiDataController::class, 'addNewDesignation']);
     Route::get('/companies/{id}/employees', [ApiDataController::class, 'employeesByCompany']);
     Route::get('/companies/{id}', [ApiDataController::class, 'companiesById']);
     Route::get('/departments/{id}', [ApiDataController::class, 'departmentsById']);
@@ -203,14 +204,14 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/pms/performance-reviews/{assignmentId}/details', [PmsController::class, 'getPerformanceReviewDetails']);
     Route::get('/pms/performance-reviews/{assignmentId}/documents', [PmsController::class, 'getAssignmentDocuments']);
     Route::put('/pms/performance-reviews/{assignmentId}', [PmsController::class, 'updatePerformanceReview']);
-    
-    
+
+
     // Other PMS routes that require authentication
     Route::get('/pms/kpi-task-assignments/employee/{employeeId}', [PmsController::class, 'getEmployeeKpiTaskAssignments']);
     Route::post('/pms/task-progress-submissions', [PmsController::class, 'storeTaskProgressSubmission']);
     Route::get('/pms/task-progress-submissions/assignment/{assignmentId}', [PmsController::class, 'getTaskProgressSubmissions']);
     Route::get('/pms/task-progress-submissions/employee/{employeeId}', [PmsController::class, 'getEmployeeTaskProgressSubmissions']);
-    
+
     // PMS Dashboard endpoints
     Route::get('/pms/dashboard/stats', [PmsController::class, 'getDashboardStats']);
     Route::get('/pms/dashboard/upcoming-deadlines', [PmsController::class, 'getUpcomingDeadlines']);
