@@ -215,8 +215,7 @@ class ExamController extends Controller
 
         $validator = Validator::make($request->all(), [
             'answers' => 'required|array',
-            // Allow -1 to represent unanswered questions from the frontend
-            'answers.*' => 'integer|min:-1|max:3',
+            'answers.*' => 'integer|min:0|max:3', // Assuming 4 options (0-3)
         ]);
 
         if ($validator->fails()) {
@@ -229,18 +228,15 @@ class ExamController extends Controller
         $results = [];
 
         foreach ($questions as $index => $question) {
-            $userAnswer = $answers[$index] ?? -1; // Default to -1 (unanswered)
-            $isUnanswered = ($userAnswer === -1);
-            $isCorrect = !$isUnanswered && ($userAnswer === $question->correct_answer);
-            if ($isCorrect) {
+            $userAnswer = $answers[$index] ?? null;
+            $isCorrect = $userAnswer === $question->correct_answer;
+            if ($isCorrect)
                 $correctCount++;
-            }
             $results[] = [
                 'question_id' => $question->id,
-                'user_answer' => $userAnswer,        // -1 indicates unanswered
+                'user_answer' => $userAnswer,
                 'correct_answer' => $question->correct_answer,
                 'is_correct' => $isCorrect,
-                'is_unanswered' => $isUnanswered,
                 'explanation' => $question->explanation,
             ];
         }

@@ -36,9 +36,6 @@ class LMSController extends Controller
      */
     public function store(Request $request)
     {
-        // Use same auth pattern as ExamController
-        $userId = auth()->id();
-
         // Validate the request data (updated to include module files)
         $validator = Validator::make($request->all(), [
             'title' => 'required|string|max:255',
@@ -64,7 +61,7 @@ class LMSController extends Controller
             'title' => $request->title,
             'description' => $request->description,
             'duration' => $request->duration,
-            'created_by' => $userId,
+            'created_by' => 1, // Or use Auth::id() if authentication is set up
         ]);
 
         // Create modules if provided
@@ -124,10 +121,10 @@ class LMSController extends Controller
     {
         if ($id) {
             $course = courses::findOrFail($id);
-            $course->load(['modules', 'attachments', 'creator']);
+            $course->load(['modules', 'attachments']);
             return response()->json($course);
         } else {
-            $courses = courses::with(['modules', 'attachments', 'creator'])->orderBy("id", "desc")->get();
+            $courses = courses::with(['modules', 'attachments'])->orderBy("id", "desc")->get();
             return response()->json($courses);
         }
     }
