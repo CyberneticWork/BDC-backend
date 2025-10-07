@@ -164,7 +164,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('exams', ExamController::class);
     Route::post('exams/{id}/submit', [ExamController::class, 'submitExam']);
     Route::get('exam-results', [ExamController::class, 'getResults']);
-
+    Route::apiResource('courses', LMSController::class);
     // Enrollment routes
     Route::get('enrollments', [EnrollmentController::class, 'index']);
     Route::post('courses/{courseId}/enroll', [EnrollmentController::class, 'enroll']);
@@ -203,14 +203,14 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/pms/performance-reviews/{assignmentId}/details', [PmsController::class, 'getPerformanceReviewDetails']);
     Route::get('/pms/performance-reviews/{assignmentId}/documents', [PmsController::class, 'getAssignmentDocuments']);
     Route::put('/pms/performance-reviews/{assignmentId}', [PmsController::class, 'updatePerformanceReview']);
-    
-    
+
+
     // Other PMS routes that require authentication
     Route::get('/pms/kpi-task-assignments/employee/{employeeId}', [PmsController::class, 'getEmployeeKpiTaskAssignments']);
     Route::post('/pms/task-progress-submissions', [PmsController::class, 'storeTaskProgressSubmission']);
     Route::get('/pms/task-progress-submissions/assignment/{assignmentId}', [PmsController::class, 'getTaskProgressSubmissions']);
     Route::get('/pms/task-progress-submissions/employee/{employeeId}', [PmsController::class, 'getEmployeeTaskProgressSubmissions']);
-    
+
     // PMS Dashboard endpoints
     Route::get('/pms/dashboard/stats', [PmsController::class, 'getDashboardStats']);
     Route::get('/pms/dashboard/upcoming-deadlines', [PmsController::class, 'getUpcomingDeadlines']);
@@ -244,6 +244,12 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/pms/kpi-weights', [PmsController::class, 'createKpiWeight']);
     Route::put('/pms/kpi-weights/{id}', [PmsController::class, 'updateKpiWeight']);
     Route::delete('/pms/kpi-weights/{id}', [PmsController::class, 'deleteKpiWeight']);
+
+    // Notification routes
+    Route::get('/notifications', [PmsController::class, 'getUserNotifications']);
+    Route::post('/notifications/{notificationId}/read', [PmsController::class, 'markNotificationRead']);
+    Route::post('/notifications/mark-all-read', [PmsController::class, 'markAllNotificationsRead']);
+    Route::get('/notifications/unread-count', [PmsController::class, 'getUnreadCount']);
 });
 
 // Employee Performance Evaluation endpoints (these can remain public if needed)
