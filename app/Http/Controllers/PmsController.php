@@ -2549,7 +2549,7 @@ class PmsController extends Controller
                         'user_id' => $user->id,
                         'type' => 'kpi_approved',
                         'title' => 'KPI Task Approved',
-                        'message' => "Your KPI task '{$assignment->kpiTask->task_name}' has been approved.",
+                        'message' => "Your KPI task '{$assignment->kpiTask->task_name}' has been approved. Check your my KPI tasks for details.",
                         'data' => [
                             'task_id' => $assignment->id,
                             'task_name' => $assignment->kpiTask->task_name,
