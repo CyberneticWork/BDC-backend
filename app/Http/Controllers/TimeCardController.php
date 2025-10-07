@@ -252,6 +252,7 @@ class TimeCardController extends Controller
             ->where('time', $storeTime)
             ->where('entry', $entryType)
             ->where('status', $status)
+            ->whereNull('deleted_at')  // Add this line to exclude soft-deleted records
             ->exists();
 
         if ($duplicate) {
@@ -571,6 +572,7 @@ class TimeCardController extends Controller
             ->where('time', $storeTime)
             ->where('entry', $entryType)
             ->where('status', $status)
+            ->whereNull('deleted_at')  // Add this line to exclude soft-deleted records
             ->exists();
 
         if ($duplicate) {
@@ -1092,6 +1094,7 @@ class TimeCardController extends Controller
             ->where('entry', $entryType)
             ->where('status', $status)
             ->where('id', '!=', $timeCard->id)
+            ->whereNull('deleted_at')
             ->exists();
 
         if ($duplicate) {
@@ -1522,6 +1525,7 @@ class TimeCardController extends Controller
                         ->where('time', $time)
                         ->where('entry', $entryType)
                         ->where('status', $statusUpper)
+                        ->whereNull('deleted_at')
                         ->exists();
 
                     if (!$exists) {

@@ -3,11 +3,14 @@
 namespace App\Models;
 use Illuminate\Http\Request;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Maatwebsite\Excel\Facades\Excel;
 use Illuminate\Support\Facades\DB;
 
 class time_card extends Model
 {
+    use SoftDeletes; // Add this trait
+    
     protected $fillable = [
         'employee_id', 'time', 'date', 'working_hours', 'entry', 'status','fingerprint_clock','actual_date'
     ];
