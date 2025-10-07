@@ -12,6 +12,9 @@ use App\Models\KpiTaskAssignment;
 use App\Models\TaskProgressSubmission;
 use App\Models\PerformanceReview;
 use App\Models\PerformanceEvaluation;
+use App\Models\PracticalFeedback;
+use App\Models\User;
+use App\Models\KpiWeight; // Import the KpiWeight model
 use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 use Illuminate\Database\QueryException;
@@ -147,35 +150,155 @@ class PmsController extends Controller
             return response()->json(['error' => 'Creator role not found'], 400);
         }
 
-        $assignments = [];
+        // Get current user ID for creator_id
+        $creatorId = auth()->id();
+
+        // Check for duplicate assignments before creating
+        $duplicateEmployees = [];
+        $validAssignments = [];
+        
         foreach ($validated['assignees'] as $attendanceNo) {
             $employee = employee::where('attendance_employee_no', $attendanceNo)->first();
             if (!$employee) {
                 return response()->json(['error' => 'Employee not found: ' . $attendanceNo], 400);
             }
 
+            // Check for existing assignment with same task, employee, and overlapping date range
+            $existingAssignment = KpiTaskAssignment::where('kpi_task_id', $kpiTask->id)
+                ->where('employee_id', $employee->id)
+                ->where(function($query) use ($validated) {
+                    // Check for date range overlap
+                    // Overlap exists if: (start1 <= end2) AND (start2 <= end1)
+                    $query->where(function($q) use ($validated) {
+                        $q->where('start_date', '<=', $validated['end_date'])
+                          ->where('end_date', '>=', $validated['start_date']);
+                    });
+                })
+                ->whereNull('deleted_at') // Only check non-deleted assignments
+                ->first();
+
+            if ($existingAssignment) {
+                // Found duplicate - add to list
+                $duplicateEmployees[] = [
+                    'employee' => $employee->full_name,
+                    'attendance_no' => $attendanceNo,
+                    'existing_start' => $existingAssignment->start_date->toDateString(),
+                    'existing_end' => $existingAssignment->end_date->toDateString(),
+                    'new_start' => $validated['start_date'],
+                    'new_end' => $validated['end_date']
+                ];
+            } else {
+                // No duplicate found - add to valid assignments
+                $validAssignments[] = $employee;
+            }
+        }
+
+        // If duplicates found, return error with details
+        if (!empty($duplicateEmployees)) {
+            $errorMessage = "Duplicate KPI task assignments detected for the following employees:\n\n";
+            foreach ($duplicateEmployees as $duplicate) {
+                $errorMessage .= "• {$duplicate['employee']} ({$duplicate['attendance_no']})\n";
+                $errorMessage .= "  Existing: {$duplicate['existing_start']} to {$duplicate['existing_end']}\n";
+                $errorMessage .= "  New: {$duplicate['new_start']} to {$duplicate['new_end']}\n\n";
+            }
+            $errorMessage .= "Please choose different date ranges that don't overlap with existing assignments.";
+
+            return response()->json([
+                'error' => 'Duplicate assignments found',
+                'message' => $errorMessage,
+                'duplicates' => $duplicateEmployees
+            ], 422);
+        }
+
+        // If no duplicates, proceed with creating assignments
+        $assignments = [];
+
+        // Merge incoming weights with DB templates so all template weights are stored.
+        // Incoming may be e.g. [{id, title, percentage}, {title, percentage}, ...]
+        $incomingWeights = $validated['weights'] ?? [];
+        // Load template weights
+        $templateWeights = KpiWeight::all()->map(function($w) {
+            return [
+                'id' => $w->id,
+                'title' => $w->name,
+                'description' => $w->description ?? '',
+                'percentage' => 0
+            ];
+        })->toArray();
+
+        // Build lookup of incoming weights by id and by normalized title
+        $incomingById = [];
+        $incomingByName = [];
+        foreach ($incomingWeights as $w) {
+            $idKey = isset($w['id']) ? (string)$w['id'] : null;
+            $nameKey = isset($w['title']) ? strtolower(trim($w['title'])) : (isset($w['name']) ? strtolower(trim($w['name'])) : null);
+            if ($idKey) $incomingById[$idKey] = $w;
+            if ($nameKey) $incomingByName[$nameKey] = $w;
+        }
+
+        // Merge: prefer incoming percentage if present, else 0
+        $mergedWeights = [];
+        foreach ($templateWeights as $tpl) {
+            $percent = 0;
+            // match by id first
+            if ($tpl['id'] && isset($incomingById[(string)$tpl['id']])) {
+                $w = $incomingById[(string)$tpl['id']];
+                $percent = isset($w['percentage']) ? (int)$w['percentage'] : (isset($w['percent']) ? (int)$w['percent'] : 0);
+            } else {
+                // try match by name/title
+                $key = strtolower(trim($tpl['title'] ?? ''));
+                if ($key && isset($incomingByName[$key])) {
+                    $w = $incomingByName[$key];
+                    $percent = isset($w['percentage']) ? (int)$w['percentage'] : (isset($w['percent']) ? (int)$w['percent'] : 0);
+                }
+            }
+            $mergedWeights[] = [
+                'id' => $tpl['id'],
+                'title' => $tpl['title'],
+                'description' => $tpl['description'],
+                'percentage' => $percent
+            ];
+        }
+
+        // Append any custom incoming weights not present in templates
+        foreach ($incomingWeights as $w) {
+            $matched = false;
+            if (isset($w['id'])) {
+                foreach ($mergedWeights as $m) { if ($m['id'] && (string)$m['id'] === (string)$w['id']) { $matched = true; break; } }
+            } else {
+                $nameKey = isset($w['title']) ? strtolower(trim($w['title'])) : (isset($w['name']) ? strtolower(trim($w['name'])) : null);
+                foreach ($mergedWeights as $m) { if ($nameKey && strtolower(trim($m['title'])) === $nameKey) { $matched = true; break; } }
+            }
+            if (!$matched) {
+                $mergedWeights[] = [
+                    'id' => $w['id'] ?? null,
+                    'title' => $w['title'] ?? ($w['name'] ?? 'Custom'),
+                    'description' => $w['description'] ?? '',
+                    'percentage' => isset($w['percentage']) ? (int)$w['percentage'] : 0
+                ];
+            }
+        }
+ 
+         foreach ($validAssignments as $employee) {
             // Determine department: prefer provided department_id, else derive from employee's organizationAssignment
             $departmentId = $validated['department_id'] ?? null;
             if (!$departmentId) {
                 try {
                     $departmentId = $employee->organizationAssignment?->department_id ?? null;
-                    \Log::info('Derived department id from organizationAssignment', [
-                        'attendance_no' => $attendanceNo,
-                        'derived_department_id' => $departmentId
-                    ]);
                 } catch (\Throwable $e) {
-                    \Log::warning('Failed to derive department from organizationAssignment', [
-                        'attendance_no' => $attendanceNo,
+                    \Log::warning('Failed to get department from employee organizationAssignment', [
+                        'employee_id' => $employee->id,
                         'error' => $e->getMessage()
                     ]);
-                    $departmentId = null;
                 }
             }
 
             $assignment = KpiTaskAssignment::create([
                 'kpi_task_id' => $kpiTask->id,
                 'creator_role_id' => $creatorRole->id,
-                'weights' => $validated['weights'] ?? [],
+                'creator_id' => $creatorId, // Store current user as creator
+                // Store merged weights: all template entries + any custom incoming weights
+                'weights' => $mergedWeights,
                 'company_id' => $validated['company_id'],
                 'department_id' => $departmentId,
                 'employee_id' => $employee->id,
@@ -191,7 +314,19 @@ class PmsController extends Controller
             $assignments[] = $assignment;
         }
 
-        return response()->json($assignments, 201);
+        // Log successful creation
+        \Log::info('KPI task assignments created successfully', [
+            'task_name' => $validated['task_name'],
+            'creator_id' => $creatorId,
+            'assignments_count' => count($assignments),
+            'date_range' => $validated['start_date'] . ' to ' . $validated['end_date']
+        ]);
+
+        return response()->json([
+            'message' => 'KPI task assignments created successfully',
+            'assignments' => $assignments,
+            'total_created' => count($assignments)
+        ], 201);
     }
 
     /**
@@ -199,61 +334,183 @@ class PmsController extends Controller
      */
     public function getKpiTaskAssignments(Request $request)
     {
-        $assignments = KpiTaskAssignment::with([
-            'kpiTask:id,task_name',
-            'employee:id,full_name,attendance_employee_no',
-            'company:id,name',
-            'department:id,name',
-            'creatorRole:id,role_name'
-        ])
-        ->select([
-            'id',
-            'kpi_task_id',
-            'employee_id',
-            'company_id',
-            'department_id',
-            'creator_role_id',
-            'description',
-            'start_date',
-            'end_date',
-            'status',
-            'priority',
-            'weights',
-            'completion_status',
-            'created_at'
-        ])
-        ->orderBy('created_at', 'desc') // Show recently added first
-        ->get();
+        try {
+            // Get current user and role
+            $currentUser = auth()->user();
+            if (!$currentUser) {
+                return response()->json(['error' => 'User not authenticated'], 401);
+            }
+            
+            $userRole = strtolower($currentUser->role ?? '');
+            
+            // Build the base query with relations
+            $query = KpiTaskAssignment::with([
+                'kpiTask:id,task_name',
+                'employee:id,full_name,attendance_employee_no',
+                'company:id,name',
+                'department:id,name',
+                'creator:id,role,name',
+                'creatorRole:id,role_name'
+            ])->whereNull('deleted_at');
 
-        // Transform to match frontend expectations
-        $transformed = $assignments->map(function ($assignment) {
-            return [
-                'id' => $assignment->id,
-                'name' => $assignment->kpiTask->task_name ?? 'Unknown Task',
-                'description' => $assignment->description ?? '',
-                'company' => $assignment->company_id,
-                'departmentId' => $assignment->department_id,
-                'companyName' => $assignment->company->name ?? 'Unknown Company',
-                'departmentName' => $assignment->department->name ?? 'Unknown Department',
-                'department' => $assignment->department->name ?? 'Unknown Department',
-                'assignees' => [$assignment->employee->attendance_employee_no ?? ''],
-                'assigneeUpdates' => [], // Can be populated later if needed
-                'startDate' => $assignment->start_date->toDateString(),
-                'endDate' => $assignment->end_date->toDateString(),
-                'status' => $assignment->status ?? 'active',
-                'priority' => $assignment->priority ?? 'medium',
-                'creator' => [
-                    'role' => $assignment->creatorRole->role_name ?? 'Unknown Role',
-                    'date' => $assignment->created_at->toISOString()
-                ],
-                'weights' => $assignment->weights ?? [],
-                'lastUpdated' => $assignment->created_at->toISOString(),
-                'frequency' => 'Monthly', // Default or add to table if needed
-                'category' => 'General' // Default or add to table if needed
-            ];
-        });
+            // Apply role-based filtering based on USER ROLES from users table
+            if ($userRole === 'admin') {
+                // Admin sees ALL tasks - no filtering needed
+            } elseif ($userRole === 'hr') {
+                // HR can see:
+                // 1. Tasks they created themselves (creator_id = current user)
+                // 2. Tasks created by users with 'supervisor' role 
+                // BUT NOT tasks created by other HR users
+                // AND NOT tasks where they are assigned as employee (those go to "My KPI Tasks")
+                $query->where(function($q) use ($currentUser) {
+                    // Tasks created by this HR user only
+                    $q->where('creator_id', $currentUser->id);
+                    
+                    // OR tasks created by users with 'supervisor' role
+                    $q->orWhereHas('creator', function($subQ) {
+                        $subQ->where('role', 'supervisor');
+                    });
+                });
+                
+                // EXCLUDE tasks where this HR user is assigned as employee
+                if ($currentUser->employee_id) {
+                    $currentEmployee = employee::find($currentUser->employee_id);
+                    if ($currentEmployee) {
+                        $query->where('employee_id', '!=', $currentEmployee->id);
+                    }
+                }
+                
+            } elseif ($userRole === 'supervisor') {
+                // Supervisor can ONLY see tasks they created themselves
+                // They cannot see tasks created by other supervisors
+                // AND NOT tasks where they are assigned as employee (those go to "My KPI Tasks")
+                $query->where('creator_id', $currentUser->id);
+                
+                // EXCLUDE tasks where this supervisor is assigned as employee  
+                if ($currentUser->employee_id) {
+                    $currentEmployee = employee::find($currentUser->employee_id);
+                    if ($currentEmployee) {
+                        $query->where('employee_id', '!=', $currentEmployee->id);
+                    }
+                }
+                
+            } elseif ($userRole === 'manager') {
+                // Manager sees tasks created by HR + supervisor users + their own
+                // BUT NOT tasks where they are assigned as employee (those go to "My KPI Tasks")
+                $query->where(function($q) use ($currentUser) {
+                    // Tasks created by users with HR role
+                    $q->whereHas('creator', function($subQ) {
+                        $subQ->where('role', 'hr');
+                    });
+                    
+                    // OR tasks created by users with supervisor role
+                    $q->orWhereHas('creator', function($subQ) {
+                        $subQ->where('role', 'supervisor');
+                    });
+                    
+                    // OR tasks created by this manager
+                    $q->orWhere('creator_id', $currentUser->id);
+                });
+                
+                // EXCLUDE tasks where this manager is assigned as employee
+                if ($currentUser->employee_id) {
+                    $currentEmployee = employee::find($currentUser->employee_id);
+                    if ($currentEmployee) {
+                        $query->where('employee_id', '!=', $currentEmployee->id);
+                    }
+                }
+                
+            } else {
+                // Default for other roles (regular employees, users)
+                // Only see tasks they created (if any)
+                $query->where('creator_id', $currentUser->id);
+                
+                // EXCLUDE tasks where they are assigned as employee
+                if ($currentUser->employee_id) {
+                    $currentEmployee = employee::find($currentUser->employee_id);
+                    if ($currentEmployee) {
+                        $query->where('employee_id', '!=', $currentEmployee->id);
+                    }
+                }
+            }
 
-        return response()->json($transformed);
+            $assignments = $query->orderBy('created_at', 'desc')->get();
+
+            // Log for debugging
+            \Log::info('KPI Tasks query results', [
+                'user_role' => $userRole,
+                'user_id' => $currentUser->id,
+                'employee_id' => $currentUser->employee_id,
+                'total_assignments' => $assignments->count(),
+                'sample_creators' => $assignments->take(3)->map(function($a) {
+                    return [
+                        'task_name' => $a->kpiTask?->task_name,
+                        'creator_id' => $a->creator_id,
+                        'assigned_to' => $a->employee_id,
+                        'creator_role' => $a->creatorRole?->role_name
+                    ];
+                })
+            ]);
+
+            // Transform to match frontend expectations with null safety
+            $transformed = $assignments->map(function ($assignment) {
+                // Clean weights: only include weights that exist in current template
+                $cleanedWeights = [];
+                if ($assignment->weights) {
+                    $currentTemplateWeights = KpiWeight::all()->pluck('id')->toArray();
+                    
+                    foreach ($assignment->weights as $weight) {
+                        // Only include if weight ID exists in current templates OR has assigned percentage > 0
+                        $weightId = $weight['id'] ?? null;
+                        $hasPercentage = isset($weight['percentage']) && $weight['percentage'] > 0;
+                        
+                        if ($weightId && (in_array($weightId, $currentTemplateWeights) || $hasPercentage)) {
+                            $cleanedWeights[] = $weight;
+                        }
+                    }
+                }
+
+                return [
+                    'id' => $assignment->id,
+                    'name' => $assignment->kpiTask->task_name ?? 'Unknown Task',
+                    'description' => $assignment->description,
+                    'assignees' => $assignment->employee ? [$assignment->employee->attendance_employee_no] : [],
+                    'assigneeNames' => $assignment->employee ? [$assignment->employee->full_name] : [],
+                    'company' => $assignment->company_id,
+                    'companyName' => $assignment->company->name ?? 'Unknown Company',
+                    'department' => $assignment->department_id,
+                    'departmentId' => $assignment->department_id,
+                    'departmentName' => $assignment->department->name ?? 'No Department',
+                    'startDate' => $assignment->start_date,
+                    'endDate' => $assignment->end_date,
+                    'status' => $assignment->status ?? 'active',
+                    'priority' => $assignment->priority ?? 'medium',
+                    'creator' => [
+                        'role' => $assignment->creatorRole->role_name ?? 'Unknown Role'
+                    ],
+                    'creatorRole' => $assignment->creatorRole->role_name ?? 'Unknown Role',
+                    'weights' => $cleanedWeights, // Use cleaned weights
+                    'lastUpdated' => $assignment->last_updated ? $assignment->last_updated->toISOString() : $assignment->updated_at->toISOString(),
+                    'assigneeUpdates' => [],
+                    'completion_status' => $assignment->completion_status ?? 'not-started',
+                    'approval_status' => $assignment->approval_status ?? 'pending',
+                ];
+            });
+
+            return response()->json($transformed);
+            
+        } catch (\Exception $e) {
+            \Log::error('getKpiTaskAssignments error: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+                'line' => $e->getLine(),
+                'file' => $e->getFile()
+            ]);
+            
+            return response()->json([
+                'error' => 'Failed to fetch KPI task assignments',
+                'message' => $e->getMessage()
+            ], 500);
+        }
     }
 
     /**
@@ -304,8 +561,6 @@ class PmsController extends Controller
                 'assigneeUpdates' => [], // Can be populated later if needed
                 'startDate' => $assignment->start_date->toDateString(),
                 'endDate' => $assignment->end_date->toDateString(),
-                'start_date' => $assignment->start_date->toDateString(), // Also include underscore version
-                'end_date' => $assignment->end_date->toDateString(), // Also include underscore version
                 'status' => $assignment->status ?? 'active',
                 'approval_status' => $assignment->approval_status ?? 'pending', // Include approval status
                 'priority' => $assignment->priority ?? 'medium',
@@ -314,7 +569,7 @@ class PmsController extends Controller
                     'date' => $assignment->created_at->toISOString()
                 ],
                 'weights' => $assignment->weights ?? [],
-                'lastUpdated' => $assignment->created_at->toISOString(),
+                'lastUpdated' => $assignment->created_at->toISOString() ?? null,
                 'frequency' => 'Monthly', // Default or add to table if needed
                 'category' => 'General' // Default or add to table if needed
             ];
@@ -335,7 +590,7 @@ class PmsController extends Controller
             'department_id' => 'nullable|exists:departments,id',
             'creator_role_name' => 'sometimes|required|string',
             'assignees' => 'sometimes|required|array|min:1',
-            'assignees.*' => 'required|string', // attendance_employee_no
+            'assignees.*' => 'required|string',
             'start_date' => 'sometimes|required|date',
             'end_date' => 'sometimes|required|date|after:start_date',
             'weights' => 'nullable|array',
@@ -376,6 +631,62 @@ class PmsController extends Controller
                 return response()->json(['error' => 'Employee not found'], 400);
             }
             $assignment->employee_id = $employee->id;
+        }
+
+        // If weights are being updated, merge with template weights
+        if (isset($validated['weights'])) {
+            // Get incoming weights from request
+            $incomingWeights = $validated['weights'];
+            
+            // Load current template weights (excludes deleted weights)
+            $templateWeights = KpiWeight::all()->map(function($w) {
+                return [
+                    'id' => $w->id,
+                    'title' => $w->name,
+                    'description' => $w->description ?? '',
+                    'percentage' => 0
+                ];
+            })->toArray();
+            
+            // Build lookup maps
+            $incomingById = [];
+            $incomingByName = [];
+            foreach ($incomingWeights as $w) {
+                $idKey = isset($w['id']) ? (string)$w['id'] : null;
+                $nameKey = isset($w['title']) ? strtolower(trim($w['title'])) : (isset($w['name']) ? strtolower(trim($w['name'])) : null);
+                if ($idKey) $incomingById[$idKey] = $w;
+                if ($nameKey) $incomingByName[$nameKey] = $w;
+            }
+            
+            // Merge: only include weights that exist in current templates
+            $mergedWeights = [];
+            foreach ($templateWeights as $tpl) {
+                $percent = 0;
+                // match by id first
+                if ($tpl['id'] && isset($incomingById[(string)$tpl['id']])) {
+                    $w = $incomingById[(string)$tpl['id']];
+                    $percent = isset($w['percentage']) ? (int)$w['percentage'] : (isset($w['percent']) ? (int)$w['percent'] : 0);
+                } else {
+                    // try match by name/title
+                    $key = strtolower(trim($tpl['title'] ?? ''));
+                    if ($key && isset($incomingByName[$key])) {
+                        $w = $incomingByName[$key];
+                        $percent = isset($w['percentage']) ? (int)$w['percentage'] : (isset($w['percent']) ? (int)$w['percent'] : 0);
+                    }
+                }
+                $mergedWeights[] = [
+                    'id' => $tpl['id'],
+                    'title' => $tpl['title'],
+                    'description' => $tpl['description'],
+                    'percentage' => $percent
+                ];
+            }
+            
+            // Note: We're NOT appending custom incoming weights that aren't in templates
+            // This ensures deleted weights are completely removed
+            
+            // Update with merged weights (only current template weights)
+            $assignment->weights = $mergedWeights;
         }
 
         $assignment->last_updated = now();
@@ -445,16 +756,24 @@ class PmsController extends Controller
                 'employee:id,full_name,attendance_employee_no'
             ])->whereNull('deleted_at');
 
-            // Match by employee id (supports numeric id or attendance_no stored in employee_id)
-            $query->where(function($q) use ($employeeId) {
-                // keep simple equality; client-side sends the correct identifier
-                $q->where('employee_id', $employeeId);
-            });
-
-            // If caller is not admin, only show approved assignments to employees
-            if (! $isAdmin) {
-                $query->where('approval_status', 'approved');
+            // Find employee by numeric ID or attendance number
+            $employee = null;
+            if (is_numeric($employeeId)) {
+                $employee = employee::find($employeeId);
+            } else {
+                $employee = employee::where('attendance_employee_no', $employeeId)->first();
             }
+
+            if (!$employee) {
+                return response()->json(['error' => 'Employee not found'], 404);
+            }
+
+            // Match by employee database ID
+            $query->where('employee_id', $employee->id);
+
+            // IMPORTANT: Only show approved tasks to employees in "My KPI Tasks" page
+            // Remove the condition that allows employees to see their own pending tasks
+            $query->where('approval_status', 'approved');
 
             // Optional filters: allow query params for status / date range if needed
             if ($request->has('status')) {
@@ -477,14 +796,19 @@ class PmsController extends Controller
                     'description' => $a->description,
                     'start_date' => $a->start_date ? $a->start_date->toDateString() : null,
                     'end_date' => $a->end_date ? $a->end_date->toDateString() : null,
+                    'startDate' => $a->start_date ? $a->start_date->toDateString() : null, // Also add camelCase
+                    'endDate' => $a->end_date ? $a->end_date->toDateString() : null, // Also add camelCase
                     'status' => $a->status,
-                    'approval_status' => $a->approval_status,
+                    'approval_status' => $a->approval_status, // This will always be 'approved' now
                     'priority' => $a->priority,
                     'completion_status' => $a->completion_status,
+                    'completionStatus' => $a->completion_status, // Also add camelCase
                     'weights' => $a->weights,
                     'company' => $a->company->name ?? null,
                     'department' => $a->department->name ?? null,
                     'creator_role' => $a->creatorRole->role_name ?? null,
+                    'created_at' => $a->created_at?->toISOString(),
+                    'lastUpdated' => $a->updated_at?->toISOString(),
                     'employee' => [
                         'id' => $a->employee->id ?? null,
                         'full_name' => $a->employee->full_name ?? null,
@@ -720,25 +1044,21 @@ class PmsController extends Controller
             // Require authentication for this endpoint
             $currentUser = auth()->user();
             if (!$currentUser) {
-                \Log::warning('Performance reviews - User not authenticated');
                 return response()->json(['error' => 'User not authenticated'], 401);
             }
 
             \Log::info('Performance reviews - User authenticated', [
                 'user_id' => $currentUser->id,
-                'employee_id' => $currentUser->employee_id ?? 'null',
                 'role' => $currentUser->role ?? 'null'
             ]);
 
-            // If user is not linked to an employee:
-            // - allow ADMIN to view all reviews
-            // - other users must be linked to an employee record
-            $isAdmin = strtolower($currentUser->role ?? '') === 'admin';
+            // Define roles
+            $userRole = strtolower($currentUser->role ?? '');
+            $isAdmin = $userRole === 'admin';
+            $isHR = $userRole === 'hr';
+            $isSupervisor = $userRole === 'supervisor';
 
-            if (!$currentUser->employee_id && !$isAdmin) {
-                \Log::warning('Performance reviews - User has no employee_id and is not admin', [
-                    'user_id' => $currentUser->id
-                ]);
+            if (!$currentUser->employee_id && !$isAdmin && !$isHR && !$isSupervisor) {
                 return response()->json([
                     'error' => 'User account is not linked to an employee record',
                     'message' => 'Please contact administrator to link your account to an employee profile'
@@ -749,10 +1069,6 @@ class PmsController extends Controller
             if ($currentUser->employee_id) {
                 $currentEmployee = employee::find($currentUser->employee_id);
                 if (!$currentEmployee) {
-                    \Log::warning('Performance reviews - Employee record not found', [
-                        'user_id' => $currentUser->id,
-                        'employee_id' => $currentUser->employee_id
-                    ]);
                     return response()->json(['error' => 'Employee record not found'], 404);
                 }
             }
@@ -762,16 +1078,68 @@ class PmsController extends Controller
                 'employee:id,full_name,attendance_employee_no',
                 'company:id,name',
                 'department:id,name',
+                'creator:id,role,name',
                 'creatorRole:id,role_name',
-                'progressSubmissions' => function ($q) {
-                    $q->orderBy('created_at', 'desc');
+                'progressSubmissions' => function($query) {
+                    $query->orderBy('created_at', 'desc')->limit(1);
+                },
+                'performanceReviews' => function($query) {
+                    $query->orderBy('updated_at', 'desc')->limit(1);
                 }
             ])
             ->whereHas('progressSubmissions');
 
-            // If not admin, restrict to assignments for this employee only
-            if (!$isAdmin && $currentEmployee) {
-                $query->where('employee_id', $currentEmployee->id);
+            // Apply role-based filters
+            if ($isAdmin) {
+                // Admin sees everything - no filtering needed
+            } else if ($isHR) {
+                // HR users see:
+                // 1. Reviews for tasks they created
+                // 2. Reviews for tasks created by supervisors
+                // 3. NOT reviews for tasks created by other HR users
+                $query->where(function($q) use ($currentUser) {
+                    // Reviews for tasks this HR user created
+                    $q->where('creator_id', $currentUser->id);
+                    
+                    // OR reviews for tasks created by supervisors
+                    $q->orWhereHas('creator', function($subQ) {
+                        $subQ->where('role', 'supervisor');
+                    });
+                    
+                    // If HR is also an employee, see their own reviews
+                    if ($currentUser->employee_id) {
+                        $q->orWhere('employee_id', $currentUser->employee_id);
+                    }
+                });
+            } else if ($isSupervisor) {
+                // Supervisors see only reviews for tasks they created
+                $query->where(function($q) use ($currentUser, $currentEmployee) {
+                    // Reviews for tasks this supervisor created
+                    $q->where('creator_id', $currentUser->id);
+                    
+                    // If supervisor is also an employee, see their own reviews
+                    if ($currentUser->employee_id) {
+                        $q->orWhere('employee_id', $currentUser->employee_id);
+                    }
+                });
+            } else {
+                // Regular users see only their own reviews
+                if ($currentEmployee) {
+                    $query->where('employee_id', $currentEmployee->id);
+                } else {
+                    // Edge case: user with no employee_id who isn't admin/HR/supervisor sees nothing
+                    return response()->json([
+                        'data' => [],
+                        'meta' => [
+                            'current_page' => 1,
+                            'from' => 0,
+                            'last_page' => 0,
+                            'per_page' => $perPage,
+                            'to' => 0,
+                            'total' => 0
+                        ]
+                    ]);
+                }
             }
 
             // Subselect latest submission timestamp
@@ -800,25 +1168,30 @@ class PmsController extends Controller
                     'taskId' => $assignment->kpi_task_id,
                     'taskName' => $assignment->kpiTask->task_name ?? 'Unknown Task',
                     'employeeName' => $assignment->employee->full_name ?? 'Unknown Employee',
-                    'employeeId' => $assignment->employee->attendance_employee_no ?? '',
+                    'employeeId' => $assignment->employee->id ?? null,
                     'position' => '',
                     'department' => $assignment->department->name ?? 'Unknown Department',
                     'company' => $assignment->company->name ?? 'Unknown Company',
-                    'manager' => $assignment->creatorRole->role_name ?? 'Supervisor',
+                    'creatorId' => $assignment->creator_id,
                     'type' => 'Performance Review',
                     'status' => $existingReview ? $existingReview->status : 'Pending',
                     'startDate' => $assignment->start_date?->toDateString(),
                     'dueDate' => $assignment->end_date?->toDateString(),
                     'completedDate' => $existingReview?->completed_date?->toDateString(),
                     'cycle' => $this->deriveCycle($assignment->start_date),
+                    
+                    // Use supervisor's progress from performance review, not self-reported
                     'progress' => $existingReview ? (int)$existingReview->progress : 0,
                     'grade' => $existingReview?->grade,
                     'supervisorComments' => $existingReview?->supervisor_comments,
-                    'lastUpdated' => ($latestSubmission?->created_at ?? $existingReview?->updated_at)?->toISOString(),
-                    'performanceMetrics' => $existingReview?->performance_metrics,
+                    'performanceMetrics' => $existingReview?->performance_metrics, // Include supervisor's metrics
+                    
+                    // Keep self-reported data separate
                     'selfReportedProgress' => $latestSubmission?->progress_percentage ?? 0,
                     'selfReportedLastUpdated' => $latestSubmission?->created_at?->toISOString(),
                     'selfReportedAuthor' => $latestSubmission?->employee?->full_name,
+                    
+                    'lastUpdated' => ($latestSubmission?->created_at ?? $existingReview?->updated_at)?->toISOString(),
                     'weights' => $assignment->weights ?? [],
                     'priority' => $assignment->priority,
                     'description' => $assignment->description,
@@ -883,20 +1256,35 @@ class PmsController extends Controller
             $assignment = KpiTaskAssignment::with([
                 'kpiTask:id,task_name',
                 'employee:id,full_name,attendance_employee_no',
+                'employee.contactDetail:employee_id,email',
                 'company:id,name',
                 'department:id,name',
                 'creatorRole:id,role_name',
                 'progressSubmissions' => function($query) {
                     $query->orderBy('created_at', 'desc');
-                }
+                },
+                'progressSubmissions.employee:id,full_name,attendance_employee_no'
             ])->findOrFail($assignmentId);
 
             if (!$isAdmin) {
-                $isAssigned = $assignment->employee_id === $currentEmployee->id;
-                $isCreator = false; // keep creator logic if you have creator-user mapping
-
-                if (!$isAssigned && !$isCreator) {
-                    return response()->json(['error' => 'Access denied. You can only view your own task reviews.'], 403);
+                // Check if user has access to this assignment
+                $hasAccess = false;
+                
+                if ($currentEmployee) {
+                    // Employee can see their own assignments
+                    if ($assignment->employee_id === $currentEmployee->id) {
+                        $hasAccess = true;
+                    }
+                    
+                    // HR/Manager/Supervisor can see assignments in their scope
+                    $userRole = strtolower($currentUser->role ?? '');
+                    if (in_array($userRole, ['hr', 'manager', 'supervisor'])) {
+                        $hasAccess = true;
+                    }
+                }
+                
+                if (!$hasAccess) {
+                    return response()->json(['error' => 'Access denied'], 403);
                 }
             }
 
@@ -906,52 +1294,72 @@ class PmsController extends Controller
                 return [
                     'id' => $submission->id,
                     'note' => $submission->note,
-                    'progress_percentage' => $submission->progress_percentage,
-                    'performance_metrics' => $submission->performance_metrics,
-                    'document_name' => $submission->document_name,
-                    'document_path' => $submission->document_path,
-                    'created_at' => $submission->created_at->toISOString(),
-                    'employee_name' => $submission->employee->full_name ?? 'Employee'
+                    'progressPercentage' => $submission->progress_percentage,
+                    'performanceMetrics' => $submission->performance_metrics,
+                    'documentName' => $submission->document_name,
+                    'documentSize' => $submission->document_size,
+                    'documentType' => $submission->document_type,
+                    'documentPath' => $submission->document_path,
+                    'author' => $submission->employee->full_name ?? 'Employee',
+                    'date' => $submission->created_at->toISOString(),
                 ];
             });
 
             $latestSubmission = $assignment->progressSubmissions->first();
 
+            // Process supervisor review performance metrics
+            $supervisorTaskProgress = 0;
+            if ($existingReview && $existingReview->performance_metrics) {
+                $metrics = is_string($existingReview->performance_metrics) 
+                    ? json_decode($existingReview->performance_metrics, true) 
+                    : $existingReview->performance_metrics;
+                
+                if (is_array($metrics) && !empty($metrics)) {
+                    $taskName = $assignment->kpiTask->task_name ?? null;
+                    $supervisorTaskProgress = $taskName && isset($metrics[$taskName]) ? $metrics[$taskName] : 0;
+                }
+            }
+
+            // Get employee's user account email
+            $employeeUser = User::where('employee_id', $assignment->employee_id)->first();
+
             return response()->json([
-                'assignment' => [
-                    'id' => $assignment->id,
-                    'task_name' => $assignment->kpiTask->task_name ?? 'Unknown Task',
-                    'employee_name' => $assignment->employee->full_name ?? 'Unknown Employee',
-                    'employee_id' => $assignment->employee->attendance_employee_no ?? '',
-                    'department' => $assignment->department->name ?? 'Unknown Department',
-                    'company' => $assignment->company->name ?? 'Unknown Company',
-                    'start_date' => $assignment->start_date?->toDateString(),
-                    'end_date' => $assignment->end_date?->toDateString(),
-                    'description' => $assignment->description,
-                    'weights' => $assignment->weights,
-                    'priority' => $assignment->priority,
-                ],
+                'id' => $assignment->id,
+                'taskName' => $assignment->kpiTask->task_name ?? null,
+                'employee' => $assignment->employee,
+                'employeeUser' => $employeeUser ? ['email' => $employeeUser->email] : null,
+                'company' => $assignment->company,
+                'department' => $assignment->department,
+                'creatorRole' => $assignment->creatorRole,
+                'description' => $assignment->description,
+                'startDate' => $assignment->start_date,
+                'endDate' => $assignment->end_date,
+                'status' => $assignment->status,
+                'priority' => $assignment->priority,
+                'weights' => $assignment->weights,
                 'submissions' => $submissions,
-                'supervisor_review' => $existingReview ? [
-                    'progress' => $existingReview->progress,
-                    'grade' => $existingReview->grade,
-                    'comments' => $existingReview->supervisor_comments,
-                    'status' => $existingReview->status,
-                    'performance_metrics' => $existingReview->performance_metrics,
-                    'last_updated' => $existingReview->updated_at->toISOString(),
-                ] : null,
-                'self_reported' => $latestSubmission ? [
-                    'progress' => $latestSubmission->progress_percentage,
-                    'last_updated' => $latestSubmission->created_at->toISOString(),
+                'latestSubmission' => $latestSubmission ? [
+                    'note' => $latestSubmission->note,
+                    'progressPercentage' => $latestSubmission->progress_percentage,
                     'author' => $latestSubmission->employee->full_name ?? 'Employee',
-                    'performance_metrics' => $latestSubmission->performance_metrics,
+                    'date' => $latestSubmission->created_at->toISOString(),
+                ] : null,
+                'performanceReview' => $existingReview ? [
+                    'id' => $existingReview->id,
+                    'progress' => $existingReview->progress ?? $supervisorTaskProgress,
+                    'grade' => $existingReview->grade,
+                    'supervisorComments' => $existingReview->supervisor_comments,
+                    'status' => $existingReview->status,
+                    'performanceMetrics' => $existingReview->performance_metrics,
+                    'createdAt' => $existingReview->created_at->toISOString(),
                 ] : null
             ], 200);
 
         } catch (\Exception $e) {
             \Log::error('Error fetching performance review details', [
                 'assignment_id' => $assignmentId,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
 
             return response()->json([
@@ -1030,23 +1438,35 @@ class PmsController extends Controller
                 'grade' => 'nullable|string|max:5',
                 'supervisor_comments' => 'nullable|string',
                 'status' => 'required|string|in:Draft,In Progress,Pending Manager,Pending Employee,Completed',
-                'performance_metrics' => 'required|array'
+                'performance_metrics' => 'required|array',
             ]);
             
-            // Get the assignment with all related data
+            // Get the assignment with task information
             $assignment = KpiTaskAssignment::with([
+                'kpiTask:id,task_name',
                 'employee', 
-                'creatorRole',
                 'progressSubmissions' => function($query) {
                     $query->orderBy('created_at', 'desc');
                 }
             ])->findOrFail($assignmentId);
             
+            // Get task name for performance metrics
+            $taskName = $assignment->kpiTask->task_name ?? 'Unknown Task';
+            
+            // Clean and ensure all metrics are integers, and add task-specific progress
+            $cleanMetrics = [];
+            foreach ($validated['performance_metrics'] as $key => $value) {
+                $cleanMetrics[$key] = (int) $value;
+            }
+            
+            // Add the specific task progress to performance metrics
+            $cleanMetrics[$taskName] = $validated['progress'];
+            
             // Get the latest submission for self-reported data
             $latestSubmission = $assignment->progressSubmissions->first();
             
-            // Get supervisor ID from creator role or current auth user
-            $supervisorId = auth()->id(); // Current authenticated user as supervisor
+            // Get supervisor ID from current auth user
+            $supervisorId = auth()->id();
             
             // Find or create performance review for this assignment
             $review = PerformanceReview::updateOrCreate(
@@ -1054,11 +1474,11 @@ class PmsController extends Controller
                 [
                     'employee_id' => $assignment->employee->id,
                     'supervisor_id' => $supervisorId,
-                    'progress' => $validated['progress'],
+                    'progress' => $validated['progress'], // Store supervisor's progress rating
                     'grade' => $validated['grade'],
                     'supervisor_comments' => $validated['supervisor_comments'],
                     'status' => $validated['status'],
-                    'performance_metrics' => $validated['performance_metrics'],
+                    'performance_metrics' => $cleanMetrics, // Store clean metrics as JSON with task name
                     'review_type' => 'performance',
                     'review_cycle' => $this->deriveCycle($assignment->start_date),
                     'start_date' => $assignment->start_date,
@@ -1071,31 +1491,31 @@ class PmsController extends Controller
                 ]
             );
             
-            // Also update the KPI assignment status
-            $assignment->completion_status = match ($validated['status']) {
-                'Completed' => 'completed',
-                'Draft' => 'not-started',
-                default => 'in-progress',
-            };
-            $assignment->save();
+            // Update the KPI assignment status based on review status
+            if (isset($validated['status'])) {
+                if ($validated['status'] === 'Completed') {
+                    $assignment->completion_status = 'completed';
+                } elseif ($validated['status'] === 'Draft') {
+                    $assignment->completion_status = 'not-started';
+                } else {
+                    $assignment->completion_status = 'in-progress';
+                }
+                $assignment->save();
+            }
+            
+            // Log for debugging
+            \Log::info('Performance review saved', [
+                'assignment_id' => $assignmentId,
+                'task_name' => $taskName,
+                'progress' => $validated['progress'],
+                'performance_metrics' => $cleanMetrics,
+                'review_id' => $review->id
+            ]);
             
             return response()->json([
                 'message' => 'Performance review updated successfully',
                 'review' => $review->load(['employee', 'supervisor', 'kpiAssignment'])
             ]);
-            
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            return response()->json([
-                'error' => 'Validation failed',
-                'message' => $e->getMessage(),
-                'errors' => $e->errors()
-            ], 422);
-            
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json([
-                'error' => 'Assignment not found',
-                'message' => 'The specified assignment does not exist'
-            ], 404);
             
         } catch (\Exception $e) {
             \Log::error('Error updating performance review', [
@@ -1374,69 +1794,235 @@ class PmsController extends Controller
 
     /**
      * Get KPI dashboard stats: on-target vs need-attention within a date range.
-     *
-     * Query params:
-     *  - start_date (YYYY-MM-DD) optional (defaults to first day of current month)
-     *  - end_date   (YYYY-MM-DD) optional (defaults to last day of current month)
-     *
-     * Logic:
-     *  - Need Attention: assignments in the date window that have NO progress submissions and not completed.
-     *  - On Target: assignments in the date window that have a completed performance review and the completed_date is
-     *               within the window and completed on or before the assignment's end_date (on-time).
      */
     public function getKpiPerformance(Request $request)
     {
         try {
+            // Get current authenticated user
+            $currentUser = auth()->user();
+            if (!$currentUser) {
+                return response()->json(['error' => 'User not authenticated'], 401);
+            }
+            
+            $userRole = strtolower($currentUser->role ?? '');
+            $isAdmin = $userRole === 'admin';
+            $isHR = $userRole === 'hr';
+            $isManager = $userRole === 'manager';
+            
             $startDate = $request->query('start_date') ?? Carbon::now()->startOfMonth()->toDateString();
             $endDate = $request->query('end_date') ?? Carbon::now()->endOfMonth()->toDateString();
 
-            Log::info('KPI performance request', ['start' => $startDate, 'end' => $endDate]);
+            Log::info('KPI performance request', [
+                'start' => $startDate, 
+                'end' => $endDate,
+                'user_id' => $currentUser->id,
+                'user_role' => $userRole
+            ]);
 
-            // Get assignments that overlap the requested window
+            // Base query with date range filters
             $assignmentsQuery = KpiTaskAssignment::whereNull('deleted_at')
                 ->where(function($q) use ($startDate, $endDate) {
-                    // Overlap: assignment.start <= end AND assignment.end >= start
+                    // Task overlaps with date range: assignment.start <= end AND assignment.end >= start
                     $q->where('start_date', '<=', $endDate)
                       ->where('end_date', '>=', $startDate);
                 })
                 ->with([
-                    'progressSubmissions:id,kpi_assignment_id', 
+                    'progressSubmissions' => function($q) use ($startDate, $endDate) {
+                        // Load ALL submissions for this assignment (not just within date range)
+                        // We need to check if ANY submission exists for need attention logic
+                        $q->orderBy('created_at', 'desc');
+                    }, 
                     'performanceReviews' => function($q) {
                         $q->where('status', 'Completed')->orderBy('completed_date', 'desc');
                     },
-                    'kpiTask:id,task_name'
+                    'kpiTask:id,task_name',
+                    'employee:id,full_name,attendance_employee_no'
                 ]);
+
+            // Apply role-based filtering - SAME AS getKpiTaskAssignments
+            if ($isAdmin) {
+                // Admin sees ALL tasks - no filtering needed
+            } elseif ($isHR) {
+                // HR can see:
+                // 1. Tasks they created themselves (creator_id = current user)
+                // 2. Tasks created by users with 'supervisor' role 
+                // BUT NOT tasks created by other HR users
+                $assignmentsQuery->where(function($q) use ($currentUser) {
+                    // Tasks created by this HR user only
+                    $q->where('creator_id', $currentUser->id);
+                    
+                    // OR tasks created by users with 'supervisor' role
+                    $q->orWhereHas('creator', function($subQ) {
+                        $subQ->where('role', 'supervisor');
+                    });
+                });
+                
+                // EXCLUDE tasks where this HR user is assigned as employee
+                if ($currentUser->employee_id) {
+                    $currentEmployee = employee::find($currentUser->employee_id);
+                    if ($currentEmployee) {
+                        $assignmentsQuery->where('employee_id', '!=', $currentEmployee->id);
+                    }
+                }
+                
+            } elseif ($userRole === 'supervisor') {
+                // Supervisor can ONLY see tasks they created themselves
+                // They cannot see tasks created by other supervisors
+                $assignmentsQuery->where('creator_id', $currentUser->id);
+                
+                // EXCLUDE tasks where this supervisor is assigned as employee  
+                if ($currentUser->employee_id) {
+                    $currentEmployee = employee::find($currentUser->employee_id);
+                    if ($currentEmployee) {
+                        $assignmentsQuery->where('employee_id', '!=', $currentEmployee->id);
+                    }
+                }
+                
+            } elseif ($isManager) {
+                // Manager sees tasks created by HR + supervisor users + their own
+                $assignmentsQuery->where(function($q) use ($currentUser) {
+                    // Tasks created by users with HR role
+                    $q->whereHas('creator', function($subQ) {
+                        $subQ->where('role', 'hr');
+                    });
+                    
+                    // OR tasks created by users with supervisor role
+                    $q->orWhereHas('creator', function($subQ) {
+                        $subQ->where('role', 'supervisor');
+                    });
+                    
+                    // OR tasks created by this manager
+                    $q->orWhere('creator_id', $currentUser->id);
+                });
+                
+                // EXCLUDE tasks where this manager is assigned as employee
+                if ($currentUser->employee_id) {
+                    $currentEmployee = employee::find($currentUser->employee_id);
+                    if ($currentEmployee) {
+                        $assignmentsQuery->where('employee_id', '!=', $currentEmployee->id);
+                    }
+                }
+                
+            } else {
+                // Default for other roles (regular employees, users)
+                // Only see tasks they created (if any)
+                $assignmentsQuery->where('creator_id', $currentUser->id);
+                
+                // EXCLUDE tasks where they are assigned as employee
+                if ($currentUser->employee_id) {
+                    $currentEmployee = employee::find($currentUser->employee_id);
+                    if ($currentEmployee) {
+                        $assignmentsQuery->where('employee_id', '!=', $currentEmployee->id);
+                    }
+                }
+            }
 
             $assignments = $assignmentsQuery->get();
 
             $needAttention = 0;
             $onTarget = 0;
+            $inProgress = 0;
 
             foreach ($assignments as $assignment) {
-                // Need Attention: no submissions and not completed
-                $hasSubmissions = ($assignment->progressSubmissions && $assignment->progressSubmissions->count() > 0);
-                $isCompleted = strtolower($assignment->completion_status ?? '') === 'completed';
-
-                if (!$hasSubmissions && !$isCompleted) {
-                    $needAttention++;
-                }
-
-                // On Target: has a completed review whose completed_date is in range and completed on or before assignment end_date
-                $completedReview = $assignment->performanceReviews->first(); // ordered by completed_date desc
-                if ($completedReview && $completedReview->completed_date) {
-                    $completedDate = Carbon::parse($completedReview->completed_date)->toDateString();
-                    $assignmentEnd = $assignment->end_date ? Carbon::parse($assignment->end_date)->toDateString() : $endDate;
-
-                    if ($completedDate >= $startDate && $completedDate <= $endDate && $completedDate <= $assignmentEnd) {
-                        $onTarget++;
+                $taskEndDate = Carbon::parse($assignment->end_date);
+                $now = Carbon::now();
+                
+                // Check if task has ANY submissions (not just within date range)
+                $hasAnySubmissions = $assignment->progressSubmissions->count() > 0;
+                
+                // Check if any submission was made before task end date
+                $hasSubmissionBeforeEnd = false;
+                foreach ($assignment->progressSubmissions as $submission) {
+                    if (Carbon::parse($submission->created_at)->lte($taskEndDate)) {
+                        $hasSubmissionBeforeEnd = true;
+                        break;
                     }
                 }
+                
+                // Check completion status
+                $isCompleted = strtolower($assignment->completion_status ?? '') === 'completed';
+
+                // Check if task is "On Target" (has completed review within timeline)
+                $completedReview = $assignment->performanceReviews->first();
+                $isOnTarget = false;
+                
+                if ($completedReview && $completedReview->completed_date) {
+                    $completedDate = Carbon::parse($completedReview->completed_date);
+                    $assignmentEnd = Carbon::parse($assignment->end_date);
+                    $rangeStart = Carbon::parse($startDate);
+                    $rangeEnd = Carbon::parse($endDate);
+
+                    // On target if: completed within date range AND before/on task end date
+                    if ($completedDate->between($rangeStart, $rangeEnd) && 
+                        $completedDate->lte($assignmentEnd)) {
+                        $onTarget++;
+                        $isOnTarget = true;
+                    }
+                }
+
+                // Alternative: if no completed review but has timely submission AND is completed, also count as on target
+                if (!$isOnTarget && $hasSubmissionBeforeEnd && $isCompleted) {
+                    $onTarget++;
+                    $isOnTarget = true;
+                }
+
+                // Only categorize as "Need Attention" or "In Progress" if NOT already "On Target"
+                if (!$isOnTarget) {
+                    // Need Attention: No submissions at all (regardless of task status)
+                    if (!$hasAnySubmissions) {
+                        $needAttention++;
+                    } else {
+                        // Has submissions but not yet completed or not meeting timeline - count as in progress
+                        $inProgress++;
+                    }
+                }
+            }
+
+            // Verify that our counts add up to the total
+            $totalCounted = $needAttention + $onTarget + $inProgress;
+            $totalTasks = $assignments->count();
+            
+            // Log for debugging
+
+
+
+            Log::info('KPI stats calculation', [
+                'user_role' => $userRole,
+                'user_id' => $currentUser->id,
+                'date_range' => [$startDate, $endDate],
+                'needAttention' => $needAttention,
+                'onTarget' => $onTarget,
+                'inProgress' => $inProgress,
+                'totalCounted' => $totalCounted,
+                'totalTasks' => $totalTasks,
+                'filtering_logic' => $isAdmin ? 'admin_all' : ($isHR ? 'hr_filter' : ($userRole === 'supervisor' ? 'supervisor_created_only' : 'default')),
+                'sample_tasks' => $assignments->take(3)->map(function($a) {
+                    return [
+                        'task_name' => $a->kpiTask?->task_name,
+                        'assignee' => $a->employee?->full_name,
+                        'submissions_count' => $a->progressSubmissions->count(),
+                        'completion_status' => $a->completion_status,
+                        'end_date' => $a->end_date,
+                        'creator_id' => $a->creator_id
+                    ];
+                })
+            ]);
+            
+            if ($totalCounted !== $totalTasks) {
+                Log::warning('KPI stats count mismatch', [
+                    'needAttention' => $needAttention,
+                    'onTarget' => $onTarget,
+                    'inProgress' => $inProgress,
+                    'totalCounted' => $totalCounted,
+                    'totalTasks' => $totalTasks
+                ]);
             }
 
             return response()->json([
                 'data' => [
                     'onTarget' => $onTarget,
                     'needAttention' => $needAttention,
+                    'inProgress' => $inProgress,
                     'totalInWindow' => $assignments->count(),
                     'startDate' => $startDate,
                     'endDate' => $endDate
@@ -1640,6 +2226,8 @@ class PmsController extends Controller
                 'task_name.max'      => 'Task name cannot exceed 255 characters',
                 'description.max'    => 'Description cannot exceed 1000 characters',
             ]);
+
+           
 
             $kpiTask = KpiTask::create($validated);
 
@@ -1929,6 +2517,275 @@ class PmsController extends Controller
             return response()->json([
                 'message' => 'Failed to reject KPI task',
                 'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Submit practical feedback for a performance review
+     */
+    public function submitPracticalFeedback(Request $request, $assignmentId)
+    {
+        try {
+            $validated = $request->validate([
+                'feedback' => 'required|string|min:10|max:2000',
+                'email' => 'required|email',
+                'subject' => 'required|string|min:5|max:255',
+                'taskName' => 'nullable|string'
+            ]);
+
+            // Get the assignment with employee details
+            $assignment = KpiTaskAssignment::with([
+                'employee.contactDetail:employee_id,email',
+                'employee:id,full_name,attendance_employee_no',
+                'kpiTask:id,task_name'
+            ])->findOrFail($assignmentId);
+
+            // Get sender (current user) email
+            $currentUser = auth()->user();
+            $senderEmail = $currentUser->email ?? 'system@company.com';
+
+            // Get recipient email - prioritize employee's user account email, then contact detail
+            $employee = $assignment->employee;
+            $employeeUser = User::where('employee_id', $employee->id)->first();
+            $recipientEmail = $employeeUser ? $employeeUser->email : 
+                             ($employee->contactDetail ? $employee->contactDetail->email : $validated['email']);
+            
+            $employeeName = $employee->full_name ?? 'Employee';
+            $taskName = $validated['taskName'] ?? $assignment->kpiTask->task_name ?? 'Task';
+
+            // Create practical feedback record
+            $feedback = PracticalFeedback::create([
+                'employee_id' => $assignment->employee_id,
+                'kpi_assignment_id' => $assignmentId,
+                'task_name' => $taskName,
+                'from_email' => $senderEmail,
+                'to_email' => $recipientEmail,
+                'subject' => $validated['subject'],
+                'feedback_content' => $validated['feedback'],
+                'created_by' => $currentUser->id
+            ]);
+
+            // Here you would implement actual email sending
+            // Mail::to($recipientEmail)->send(new PracticalFeedbackMail($feedback));
+            
+            \Log::info('Practical feedback created successfully', [
+                'feedback_id' => $feedback->id,
+                'assignment_id' => $assignmentId,
+                'from' => $senderEmail,
+                'to' => $recipientEmail,
+                'subject' => $validated['subject'],
+                'employee' => $employeeName,
+                'task' => $taskName
+            ]);
+
+            return response()->json([
+                'message' => 'Practical feedback sent successfully',
+                'data' => [
+                    'feedback_id' => $feedback->id,
+                    'sent_from' => $senderEmail,
+                    'sent_to' => $recipientEmail,
+                    'subject' => $validated['subject'],
+                    'employee_name' => $employeeName,
+                    'task_name' => $taskName,
+                    'created_at' => $feedback->formatted_created_at
+                ]
+            ], 200);
+
+        } catch (\Exception $e) {
+            \Log::error('Error submitting practical feedback', [
+                'assignment_id' => $assignmentId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'error' => 'Failed to submit practical feedback',
+                'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get practical feedback history
+     */
+    public function getPracticalFeedbackHistory(Request $request)
+    {
+        try {
+            $query = PracticalFeedback::with(['employee:id,full_name', 'creator:id,name'])
+                ->orderBy('created_at', 'desc');
+
+            // Filter by employee if provided
+            if ($request->has('employee_id')) {
+                $query->forEmployee($request->employee_id);
+            }
+
+            // Filter by creator if provided
+            if ($request->has('created_by')) {
+                $query->byCreator($request->created_by);
+            }
+
+            // Filter by status if provided
+            if ($request->has('status')) {
+                $query->where('email_status', $request->status);
+            }
+
+            $feedbacks = $query->paginate(15);
+
+            return response()->json($feedbacks);
+
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Failed to fetch feedback history'], 500);
+        }
+    }
+
+    /**
+     * Get feedback statistics
+     */
+    public function getFeedbackStats()
+    {
+        try {
+            $stats = [
+                'total_sent' => PracticalFeedback::sent()->count(),
+                'total_pending' => PracticalFeedback::pending()->count(),
+                'total_failed' => PracticalFeedback::failed()->count(),
+                'this_month' => PracticalFeedback::whereMonth('created_at', now()->month)->count(),
+                'this_week' => PracticalFeedback::whereBetween('created_at', [now()->startOfWeek(), now()->endOfWeek()])->count()
+            ];
+
+            return response()->json($stats);
+
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Failed to fetch feedback statistics'], 500);
+        }
+    }
+
+    /**
+     * Get KPI weight templates (only non-deleted ones)
+     */
+    public function getKpiWeights()
+    {
+        try {
+            // Only fetch non-deleted weights
+            $weights = KpiWeight::whereNull('deleted_at')
+                ->select('id', 'name', 'description')
+                ->orderBy('name')
+                ->get();
+            
+            return response()->json($weights);
+        } catch (\Exception $e) {
+            \Log::error('Error fetching KPI weights', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'error' => 'Failed to fetch KPI weights'
+            ], 500);
+        }
+    }
+
+    /**
+     * Create a new KPI weight
+     */
+    public function createKpiWeight(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'name' => 'required|string|max:255|unique:kpi_weights,name,NULL,id,deleted_at,NULL',
+                'description' => 'nullable|string|max:1000'
+            ], [
+                'name.required' => 'Weight name is required',
+                'name.unique' => 'A weight with this name already exists',
+                'name.max' => 'Weight name cannot exceed 255 characters',
+                'description.max' => 'Description cannot exceed 1000 characters'
+            ]);
+
+            $weight = KpiWeight::create($validated);
+
+            \Log::info('KPI weight created successfully', [
+                'weight_id' => $weight->id,
+                'name' => $weight->name
+            ]);
+
+            return response()->json($weight, 201);
+        } catch (\Exception $e) {
+            \Log::error('Error creating KPI weight', [
+                'data' => $request->all(),
+                'error' => $e->getMessage()
+            ]);
+            
+            return response()->json([
+                'error' => 'Failed to create KPI weight'
+            ], 500);
+        }
+    }
+
+    /**
+     * Update a KPI weight
+     */
+    public function updateKpiWeight(Request $request, $id)
+    {
+        try {
+            $weight = KpiWeight::findOrFail($id);
+            
+            $validated = $request->validate([
+                'name' => 'required|string|max:255|unique:kpi_weights,name,' . $id . ',id,deleted_at,NULL',
+                'description' => 'nullable|string|max:1000'
+            ], [
+                'name.required' => 'Weight name is required',
+                'name.unique' => 'A weight with this name already exists',
+                'name.max' => 'Weight name cannot exceed 255 characters',
+                'description.max' => 'Description cannot exceed 1000 characters'
+            ]);
+
+            $weight->update($validated);
+
+            \Log::info('KPI weight updated successfully', [
+                'weight_id' => $weight->id,
+                'name' => $weight->name
+            ]);
+
+            return response()->json($weight);
+        } catch (\Exception $e) {
+            \Log::error('Error updating KPI weight', [
+                'id' => $id,
+                'data' => $request->all(),
+                'error' => $e->getMessage()
+            ]);
+            
+            return response()->json([
+                'error' => 'Failed to update KPI weight'
+            ], 500);
+        }
+    }
+
+    /**
+     * Soft delete a KPI weight with optional force parameter
+     */
+    public function deleteKpiWeight(Request $request, $id)
+    {
+        try {
+            $weight = KpiWeight::findOrFail($id);
+            
+            // Force soft delete without checking usage
+            $weight->delete();
+
+            \Log::info('KPI weight soft deleted successfully', [
+                'weight_id' => $id,
+                'name' => $weight->name
+            ]);
+
+            return response()->json(['message' => 'Weight deleted successfully']);
+        } catch (\Exception $e) {
+            \Log::error('Error deleting KPI weight', [
+                'id' => $id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'error' => 'Failed to delete KPI weight: ' . $e->getMessage()
             ], 500);
         }
     }
