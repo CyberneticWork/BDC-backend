@@ -561,8 +561,6 @@ class PmsController extends Controller
                 'assigneeUpdates' => [], // Can be populated later if needed
                 'startDate' => $assignment->start_date->toDateString(),
                 'endDate' => $assignment->end_date->toDateString(),
-                'start_date' => $assignment->start_date->toDateString(), // Also include underscore version
-                'end_date' => $assignment->end_date->toDateString(), // Also include underscore version
                 'status' => $assignment->status ?? 'active',
                 'approval_status' => $assignment->approval_status ?? 'pending', // Include approval status
                 'priority' => $assignment->priority ?? 'medium',
@@ -2663,18 +2661,27 @@ class PmsController extends Controller
     }
 
     /**
-     * Get KPI weight templates
+     * Get KPI weight templates (only non-deleted ones)
      */
     public function getKpiWeights()
     {
         try {
-            $weights = KpiWeight::all();
+            // Only fetch non-deleted weights
+            $weights = KpiWeight::whereNull('deleted_at')
+                ->select('id', 'name', 'description')
+                ->orderBy('name')
+                ->get();
+            
             return response()->json($weights);
         } catch (\Exception $e) {
             \Log::error('Error fetching KPI weights', [
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
-            return response()->json(['error' => 'Failed to fetch KPI weights'], 500);
+            
+            return response()->json([
+                'error' => 'Failed to fetch KPI weights'
+            ], 500);
         }
     }
 
@@ -2685,17 +2692,32 @@ class PmsController extends Controller
     {
         try {
             $validated = $request->validate([
-                'name' => 'required|string|max:255',
-                'description' => 'nullable|string'
+                'name' => 'required|string|max:255|unique:kpi_weights,name,NULL,id,deleted_at,NULL',
+                'description' => 'nullable|string|max:1000'
+            ], [
+                'name.required' => 'Weight name is required',
+                'name.unique' => 'A weight with this name already exists',
+                'name.max' => 'Weight name cannot exceed 255 characters',
+                'description.max' => 'Description cannot exceed 1000 characters'
             ]);
 
             $weight = KpiWeight::create($validated);
-            return response()->json($weight);
+
+            \Log::info('KPI weight created successfully', [
+                'weight_id' => $weight->id,
+                'name' => $weight->name
+            ]);
+
+            return response()->json($weight, 201);
         } catch (\Exception $e) {
             \Log::error('Error creating KPI weight', [
+                'data' => $request->all(),
                 'error' => $e->getMessage()
             ]);
-            return response()->json(['error' => 'Failed to create KPI weight'], 500);
+            
+            return response()->json([
+                'error' => 'Failed to create KPI weight'
+            ], 500);
         }
     }
 
@@ -2708,34 +2730,63 @@ class PmsController extends Controller
             $weight = KpiWeight::findOrFail($id);
             
             $validated = $request->validate([
-                'name' => 'required|string|max:255',
-                'description' => 'nullable|string'
+                'name' => 'required|string|max:255|unique:kpi_weights,name,' . $id . ',id,deleted_at,NULL',
+                'description' => 'nullable|string|max:1000'
+            ], [
+                'name.required' => 'Weight name is required',
+                'name.unique' => 'A weight with this name already exists',
+                'name.max' => 'Weight name cannot exceed 255 characters',
+                'description.max' => 'Description cannot exceed 1000 characters'
             ]);
 
             $weight->update($validated);
+
+            \Log::info('KPI weight updated successfully', [
+                'weight_id' => $weight->id,
+                'name' => $weight->name
+            ]);
+
             return response()->json($weight);
         } catch (\Exception $e) {
             \Log::error('Error updating KPI weight', [
+                'id' => $id,
+                'data' => $request->all(),
                 'error' => $e->getMessage()
             ]);
-            return response()->json(['error' => 'Failed to update KPI weight'], 500);
+            
+            return response()->json([
+                'error' => 'Failed to update KPI weight'
+            ], 500);
         }
     }
 
     /**
-     * Delete a KPI weight
+     * Soft delete a KPI weight with optional force parameter
      */
-    public function deleteKpiWeight($id)
+    public function deleteKpiWeight(Request $request, $id)
     {
         try {
             $weight = KpiWeight::findOrFail($id);
+            
+            // Force soft delete without checking usage
             $weight->delete();
+
+            \Log::info('KPI weight soft deleted successfully', [
+                'weight_id' => $id,
+                'name' => $weight->name
+            ]);
+
             return response()->json(['message' => 'Weight deleted successfully']);
         } catch (\Exception $e) {
             \Log::error('Error deleting KPI weight', [
-                'error' => $e->getMessage()
+                'id' => $id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
-            return response()->json(['error' => 'Failed to delete KPI weight'], 500);
+            
+            return response()->json([
+                'error' => 'Failed to delete KPI weight: ' . $e->getMessage()
+            ], 500);
         }
     }
 }
