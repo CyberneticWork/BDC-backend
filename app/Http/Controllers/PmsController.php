@@ -309,8 +309,7 @@ class PmsController extends Controller
             $assignment = KpiTaskAssignment::create([
                 'kpi_task_id' => $kpiTask->id,
                 'creator_role_id' => $creatorRole->id,
-                'creator_id' => $creatorId, // Store current user as creator
-                // Store merged weights: all template entries + any custom incoming weights
+                'creator_id' => $creatorId,
                 'weights' => $mergedWeights,
                 'company_id' => $validated['company_id'],
                 'department_id' => $departmentId,
@@ -321,7 +320,8 @@ class PmsController extends Controller
                 'priority' => $validated['priority'] ?? 'medium',
                 'description' => $validated['description'],
                 'completion_status' => 'not-started',
-                'last_updated' => now(),
+                // Remove this line: 'last_updated' => now(),
+                // Let last_updated remain NULL for new tasks
             ]);
 
             $assignments[] = $assignment;
@@ -550,16 +550,18 @@ class PmsController extends Controller
                 'start_date',
                 'end_date',
                 'status',
-                'approval_status', // Include approval_status for the approval page
+                'approval_status',
                 'priority',
                 'weights',
                 'completion_status',
-                'created_at'
+                'created_at',
+                'updated_at',
+                'last_updated' // Make sure this is included
             ])
-            ->orderBy('created_at', 'desc') // Show recently added first
+            ->orderBy('created_at', 'desc')
             ->get();
 
-        // Transform to match frontend expectations with approval_status
+        // Transform to match frontend expectations
         $transformed = $assignments->map(function ($assignment) {
             return [
                 'id' => $assignment->id,
@@ -571,11 +573,11 @@ class PmsController extends Controller
                 'departmentName' => $assignment->department->name ?? 'Unknown Department',
                 'department' => $assignment->department->name ?? 'Unknown Department',
                 'assignees' => [$assignment->employee->attendance_employee_no ?? ''],
-                'assigneeUpdates' => [], // Can be populated later if needed
+                'assigneeUpdates' => [],
                 'startDate' => $assignment->start_date->toDateString(),
                 'endDate' => $assignment->end_date->toDateString(),
                 'status' => $assignment->status ?? 'active',
-                'approval_status' => $assignment->approval_status ?? 'pending', // Include approval status
+                'approval_status' => $assignment->approval_status ?? 'pending',
                 'priority' => $assignment->priority ?? 'medium',
                 'creator' => [
                     'role' => $assignment->creatorRole->role_name ?? 'Unknown Role',
@@ -583,8 +585,11 @@ class PmsController extends Controller
                 ],
                 'weights' => $assignment->weights ?? [],
                 'lastUpdated' => $assignment->created_at->toISOString() ?? null,
-                'frequency' => 'Monthly', // Default or add to table if needed
-                'category' => 'General' // Default or add to table if needed
+                'last_updated' => $assignment->last_updated ? $assignment->last_updated->toISOString() : null,
+                'updated_at' => $assignment->updated_at->toISOString(),
+                'created_at' => $assignment->created_at->toISOString(), // Make sure this is included
+                'frequency' => 'Monthly',
+                'category' => 'General'
             ];
         });
 
@@ -597,20 +602,35 @@ class PmsController extends Controller
     public function updateKpiTaskAssignment(Request $request, $id)
     {
         $validated = $request->validate([
-            'task_name' => 'sometimes|required|string',
+            'task_name' => 'nullable|string',
             'description' => 'nullable|string',
-            'company_id' => 'sometimes|required|exists:companies,id',
+            'company_id' => 'nullable|exists:companies,id',
             'department_id' => 'nullable|exists:departments,id',
-            'creator_role_name' => 'sometimes|required|string',
-            'assignees' => 'sometimes|required|array|min:1',
-            'assignees.*' => 'required|string',
-            'start_date' => 'sometimes|required|date',
-            'end_date' => 'sometimes|required|date|after:start_date',
+            'creator_role_name' => 'nullable|string',
+            'assignees' => 'nullable|array',
+            'assignees.*' => 'nullable|string',
+            'start_date' => 'nullable|date',
+            'end_date' => 'nullable|date|after:start_date',
             'weights' => 'nullable|array',
             'priority' => 'nullable|string|in:low,medium,high',
         ]);
 
         $assignment = KpiTaskAssignment::findOrFail($id);
+        
+        // Record previous status for logging
+        $previousStatus = $assignment->approval_status;
+
+        // Reset approval status to pending when task is updated
+        if ($assignment->approval_status !== 'pending') {
+            $assignment->approval_status = 'pending';
+            
+            // Log the change
+            \Log::info('KPI task approval status reset due to update', [
+                'task_id' => $id,
+                'previous_status' => $previousStatus,
+                'updated_by' => auth()->id()
+            ]);
+        }
 
         // Update KpiTask if task_name changed
         if (isset($validated['task_name'])) {
@@ -711,10 +731,15 @@ class PmsController extends Controller
             $assignment->weights = $mergedWeights;
         }
 
+        // Always update last_updated timestamp
         $assignment->last_updated = now();
         $assignment->save();
 
-        return response()->json($assignment);
+        // Make sure to return the updated assignment with the last_updated field
+        return response()->json([
+            'message' => 'KPI task assignment updated successfully',
+            'assignment' => $assignment->fresh() // This ensures we get the latest data
+        ]);
     }
 
     /**
@@ -1439,7 +1464,8 @@ class PmsController extends Controller
         } catch (\Exception $e) {
             \Log::error('Error fetching assignment documents', [
                 'assignmentId' => $assignmentId,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
 
             return response()->json([
@@ -1827,7 +1853,7 @@ class PmsController extends Controller
     }
 
     /**
-     * Get employee performance evaluations.
+         * Get employee performance evaluations.
      */
     public function getEmployeePerformanceEvaluations(Request $request)
     {
