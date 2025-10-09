@@ -215,7 +215,8 @@ class ExamController extends Controller
 
         $validator = Validator::make($request->all(), [
             'answers' => 'required|array',
-            'answers.*' => 'integer|min:0|max:3', // Assuming 4 options (0-3)
+            // 'answers.*' => 'integer|min:0|max:3', // Assuming 4 options (0-3)
+            'answers.*' => 'integer|min:-1|max:3',
         ]);
 
         if ($validator->fails()) {
