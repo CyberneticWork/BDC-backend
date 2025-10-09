@@ -254,6 +254,7 @@ class ExamController extends Controller
             'user_id' => $userId,
             'exam_id' => $exam->id,
             'score' => $score,
+            'attempt_number' => $attemptNumber,
             'passed' => $passed,
             'submitted_at' => now(),
         ]);
