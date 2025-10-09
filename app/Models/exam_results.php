@@ -14,6 +14,7 @@ class exam_results extends Model
         'user_id',
         'exam_id',
         'score',
+        'attempt_number',
         'passed',
         'submitted_at',
         'created_at',
