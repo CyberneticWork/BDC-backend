@@ -27,6 +27,8 @@ use App\Http\Controllers\LMSController;
 use App\Http\Controllers\LMSAdmincontroller;
 use App\Http\Controllers\ExamController;
 use App\Http\Controllers\PmsController;
+use App\Http\Controllers\AccountController;
+use App\Http\Controllers\AccountGroupController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -157,7 +159,9 @@ Route::get('/salary/process/csv', [SalaryController::class, 'salaryCSV']);
 
 // LMS Routes
 
-Route::apiResource('courses', LMSController::class);  // Handles all CRUD: GET /courses (index), POST /courses (store), GET /courses/{id} (show), etc.
+Route::apiResource('courses', LMSController::class);
+Route::apiResource('accounts', AccountController::class);
+Route::apiResource('account-groups', AccountGroupController::class);
 Route::delete('/attachments/{id}', [LMSController::class, 'removeAttachment']);
 Route::middleware('auth:sanctum')->group(function () {
     // Exam routes
