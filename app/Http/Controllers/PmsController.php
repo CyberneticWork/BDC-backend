@@ -3134,6 +3134,172 @@ class PmsController extends Controller
      * Calculate performance appraisal based on completed tasks within a date range.
      * Uses formula: Average = (Self Rating + Supervisor Rating) / 2, % = (Average / 60) * 100
      */
+    // public function calculatePerformanceAppraisal(Request $request)
+    // {
+    //     try {
+    //         $validated = $request->validate([
+    //             'start_date' => 'required|date',
+    //             'end_date' => 'required|date|after_or_equal:start_date',
+    //             'employee_id' => 'nullable|exists:employees,id',
+    //         ]);
+
+    //         $startDate = $validated['start_date'];
+    //         $endDate = $validated['end_date'];
+    //         $employeeId = $validated['employee_id'] ?? null;
+
+    //         // Log the request parameters
+    //         \Log::info('Performance appraisal calculation request', [
+    //             'startDate' => $startDate,
+    //             'endDate' => $endDate,
+    //             'employeeId' => $employeeId
+    //         ]);
+
+    //         // Build the query to find completed tasks within date range
+    //         $query = KpiTaskAssignment::with([
+    //             'kpiTask:id,task_name',
+    //             'employee:id,full_name,attendance_employee_no',
+    //             'performanceReviews' => function ($q) {
+    //                 $q->where('status', 'Completed');
+    //             },
+    //             'progressSubmissions' => function ($q) {
+    //                 $q->orderBy('created_at', 'desc');
+    //             }
+    //         ])
+    //         ->where('end_date', '>=', $startDate)
+    //         ->where('end_date', '<=', $endDate)
+    //         ->whereHas('performanceReviews', function ($q) {
+    //             $q->where('status', 'Completed');
+    //         });
+
+    //         // Filter by employee if provided
+    //         if ($employeeId) {
+    //             $query->where('employee_id', $employeeId);
+    //         }
+
+    //         $assignments = $query->get();
+
+    //         // If no tasks are found, return empty result
+    //         if ($assignments->isEmpty()) {
+    //             return response()->json([
+    //                 'message' => 'No completed tasks found within the specified date range.',
+    //                 'data' => null
+    //             ]);
+    //         }
+
+    //         // Group by employee
+    //         $employeeResults = [];
+
+    //         foreach ($assignments as $assignment) {
+    //             $employeeId = $assignment->employee_id;
+    //             $employee = $assignment->employee;
+
+    //             if (!isset($employeeResults[$employeeId])) {
+    //                 $employeeResults[$employeeId] = [
+    //                     'employee_id' => $employeeId,
+    //                     'employee_name' => $employee->full_name,
+    //                     'attendance_no' => $employee->attendance_employee_no,
+    //                     'tasks' => [],
+    //                     'total_self_rating' => 0,
+    //                     'total_supervisor_rating' => 0,
+    //                     'task_count' => 0,
+    //                 ];
+    //             }
+
+    //             // Get the latest completed performance review for this assignment
+    //             $review = $assignment->performanceReviews()
+    //                 ->where('status', 'Completed')
+    //                 ->orderBy('updated_at', 'desc')
+    //                 ->first();
+
+    //             if (!$review) {
+    //                 continue; // Skip if no completed review found
+    //             }
+
+    //             // Get latest submission from employee for self-rating
+    //             $latestSubmission = $assignment->progressSubmissions()->first();
+    //             $employeeSelfRating = $latestSubmission ? $latestSubmission->progress_percentage : 0;
+
+    //             // Get supervisor rating from performance review
+    //             $supervisorRating = $review->progress;
+
+    //             // Add task details to the result
+    //             $employeeResults[$employeeId]['tasks'][] = [
+    //                 'task_id' => $assignment->id,
+    //                 'task_name' => $assignment->kpiTask->task_name ?? 'Unknown Task',
+    //                 'employee_self_rating' => $employeeSelfRating,
+    //                 'supervisor_rating' => $supervisorRating,
+    //                 'task_weight' => 0, // Not used in this calculation
+    //                 'start_date' => $assignment->start_date,
+    //                 'end_date' => $assignment->end_date,
+    //             ];
+
+    //             // Add to the employee's totals
+    //             $employeeResults[$employeeId]['total_self_rating'] += $employeeSelfRating;
+    //             $employeeResults[$employeeId]['total_supervisor_rating'] += $supervisorRating;
+    //             $employeeResults[$employeeId]['task_count']++;
+    //         }
+
+    //         // Calculate final percentages and grades for each employee
+    //         foreach ($employeeResults as &$result) {
+    //             if ($result['task_count'] > 0) {
+    //                 // Calculate average self and supervisor ratings
+    //                 $avgSelfRating = $result['total_self_rating'] / $result['task_count'];
+    //                 $avgSupervisorRating = $result['total_supervisor_rating'] / $result['task_count'];
+                    
+    //                 // Calculate combined average: (Self Rating + Supervisor Rating) / 2
+    //                 $averageRating = ($avgSelfRating + $avgSupervisorRating) / 2;
+                    
+    //                 // Calculate final percentage: (Average / 60) * 100, capped at 100%
+    //                 $finalPercentage = min(100, max(0, round(($averageRating / 60) * 100)));
+                    
+    //                 // Assign grade based on percentage using appraisal grading system
+    //                 $grade = $this->getAppraisalGrade($finalPercentage);
+
+    //                 $result['employee_self_rating'] = round($avgSelfRating);
+    //                 $result['supervisor_rating'] = round($avgSupervisorRating);
+    //                 $result['average_rating'] = round($averageRating, 2);
+    //                 $result['percentage'] = $finalPercentage;
+    //                 $result['grade'] = $grade['grade'];
+    //                 $result['performance_label'] = $grade['label'];
+    //                 $result['performance_description'] = $grade['description'] ?? null;
+    //             } else {
+    //                 $result['employee_self_rating'] = 0;
+    //                 $result['supervisor_rating'] = 0;
+    //                 $result['average_rating'] = 0;
+    //                 $result['percentage'] = 0;
+    //                 $result['grade'] = 'N/A';
+    //                 $result['performance_label'] = 'No Data';
+    //                 $result['performance_description'] = 'No completed tasks found';
+    //             }
+    //         }
+
+    //         // If a specific employee was requested, return just that result, otherwise return all
+    //         if (isset($validated['employee_id'])) {
+    //             $employeeId = $validated['employee_id'];
+    //             return response()->json([
+    //                 'data' => $employeeResults[$employeeId] ?? null
+    //             ]);
+    //         }
+
+    //         return response()->json([
+    //             'data' => array_values($employeeResults)
+    //         ]);
+
+    //     } catch (\Exception $e) {
+    //         \Log::error('Error calculating performance appraisal', [
+    //             'error' => $e->getMessage(),
+    //             'trace' => $e->getTraceAsString()
+    //         ]);
+
+    //         return response()->json([
+    //             'error' => 'Failed to calculate performance appraisal: ' . $e->getMessage()
+    //         ], 500);
+    //     }
+    // }
+    /**
+     * Calculate performance appraisal based on completed tasks within a date range.
+     * Uses formula: Average = (Self Rating + Supervisor Rating) / 2, % = (Average / 60) * 100
+     */
     public function calculatePerformanceAppraisal(Request $request)
     {
         try {
@@ -3141,17 +3307,23 @@ class PmsController extends Controller
                 'start_date' => 'required|date',
                 'end_date' => 'required|date|after_or_equal:start_date',
                 'employee_id' => 'nullable|exists:employees,id',
+                'page' => 'nullable|integer|min:1',
+                'per_page' => 'nullable|integer|min:1|max:100'
             ]);
 
             $startDate = $validated['start_date'];
             $endDate = $validated['end_date'];
             $employeeId = $validated['employee_id'] ?? null;
+            $page = $validated['page'] ?? 1;
+            $perPage = $validated['per_page'] ?? 10;
 
             // Log the request parameters
             \Log::info('Performance appraisal calculation request', [
                 'startDate' => $startDate,
                 'endDate' => $endDate,
-                'employeeId' => $employeeId
+                'employeeId' => $employeeId,
+                'page' => $page,
+                'per_page' => $perPage
             ]);
 
             // Build the query to find completed tasks within date range
@@ -3159,7 +3331,8 @@ class PmsController extends Controller
                 'kpiTask:id,task_name',
                 'employee:id,full_name,attendance_employee_no',
                 'performanceReviews' => function ($q) {
-                    $q->where('status', 'Completed');
+                    $q->where('status', 'Completed')
+                    ->orderBy('updated_at', 'desc');
                 },
                 'progressSubmissions' => function ($q) {
                     $q->orderBy('created_at', 'desc');
@@ -3176,14 +3349,38 @@ class PmsController extends Controller
                 $query->where('employee_id', $employeeId);
             }
 
-            $assignments = $query->get();
+            // Get total count for pagination
+            $totalCount = $query->count();
+
+            // Apply pagination if not requesting a specific employee
+            if (!$employeeId && $totalCount > $perPage) {
+                $assignments = $query->offset(($page - 1) * $perPage)
+                                    ->limit($perPage)
+                                    ->get();
+            } else {
+                $assignments = $query->get();
+            }
 
             // If no tasks are found, return empty result
             if ($assignments->isEmpty()) {
-                return response()->json([
+                $response = [
                     'message' => 'No completed tasks found within the specified date range.',
-                    'data' => null
-                ]);
+                    'data' => []
+                ];
+
+                // Add pagination metadata if applicable
+                if (!$employeeId) {
+                    $response['meta'] = [
+                        'current_page' => $page,
+                        'per_page' => $perPage,
+                        'total' => 0,
+                        'last_page' => 1,
+                        'from' => 0,
+                        'to' => 0
+                    ];
+                }
+
+                return response()->json($response);
             }
 
             // Group by employee
@@ -3215,8 +3412,11 @@ class PmsController extends Controller
                     continue; // Skip if no completed review found
                 }
 
-                // Get latest submission from employee for self-rating
-                $latestSubmission = $assignment->progressSubmissions()->first();
+                // Get the LATEST task progress submission from the employee for self-rating
+                $latestSubmission = $assignment->progressSubmissions()
+                    ->orderBy('created_at', 'desc')
+                    ->first();
+                
                 $employeeSelfRating = $latestSubmission ? $latestSubmission->progress_percentage : 0;
 
                 // Get supervisor rating from performance review
@@ -3231,6 +3431,8 @@ class PmsController extends Controller
                     'task_weight' => 0, // Not used in this calculation
                     'start_date' => $assignment->start_date,
                     'end_date' => $assignment->end_date,
+                    'submission_date' => $latestSubmission ? $latestSubmission->created_at->toISOString() : null,
+                    'review_date' => $review->updated_at->toISOString(),
                 ];
 
                 // Add to the employee's totals
@@ -3255,8 +3457,8 @@ class PmsController extends Controller
                     // Assign grade based on percentage using appraisal grading system
                     $grade = $this->getAppraisalGrade($finalPercentage);
 
-                    $result['employee_self_rating'] = round($avgSelfRating);
-                    $result['supervisor_rating'] = round($avgSupervisorRating);
+                    $result['employee_self_rating'] = round($avgSelfRating, 1);
+                    $result['supervisor_rating'] = round($avgSupervisorRating, 1);
                     $result['average_rating'] = round($averageRating, 2);
                     $result['percentage'] = $finalPercentage;
                     $result['grade'] = $grade['grade'];
@@ -3273,7 +3475,10 @@ class PmsController extends Controller
                 }
             }
 
-            // If a specific employee was requested, return just that result, otherwise return all
+            // Prepare response
+            $responseData = array_values($employeeResults);
+
+            // If a specific employee was requested, return just that result
             if (isset($validated['employee_id'])) {
                 $employeeId = $validated['employee_id'];
                 return response()->json([
@@ -3281,9 +3486,25 @@ class PmsController extends Controller
                 ]);
             }
 
-            return response()->json([
-                'data' => array_values($employeeResults)
-            ]);
+            // Return paginated results
+            $response = [
+                'data' => $responseData
+            ];
+
+            // Add pagination metadata if we have multiple pages
+            if ($totalCount > $perPage) {
+                $lastPage = ceil($totalCount / $perPage);
+                $response['meta'] = [
+                    'current_page' => $page,
+                    'per_page' => $perPage,
+                    'total' => $totalCount,
+                    'last_page' => $lastPage,
+                    'from' => (($page - 1) * $perPage) + 1,
+                    'to' => min($page * $perPage, $totalCount)
+                ];
+            }
+
+            return response()->json($response);
 
         } catch (\Exception $e) {
             \Log::error('Error calculating performance appraisal', [
