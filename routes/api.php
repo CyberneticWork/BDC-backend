@@ -256,3 +256,14 @@ Route::middleware(['auth:sanctum'])->group(function () {
 Route::post('/pms/employee-performance/calculate', [PmsController::class, 'calculateEmployeePerformance']);
 Route::post('/pms/employee-performance/save', [PmsController::class, 'saveEmployeePerformance']);
 Route::get('/pms/employee-performance', [PmsController::class, 'getEmployeePerformanceEvaluations']);
+
+// Add these routes in the authenticated section
+
+Route::middleware('auth:sanctum')->group(function () {
+    // ... existing routes ...
+
+    // Performance Appraisal routes
+    Route::post('/pms/performance-appraisal/calculate', [PmsController::class, 'calculatePerformanceAppraisal']);
+    Route::post('/pms/performance-appraisal/save', [PmsController::class, 'savePerformanceAppraisal']);
+    Route::get('/pms/performance-appraisals', [PmsController::class, 'getPerformanceAppraisals']);
+});
