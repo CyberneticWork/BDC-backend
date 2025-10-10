@@ -1624,6 +1624,166 @@ class PmsController extends Controller
         }
     }
 
+    // /**
+    //  * Calculate employee performance based on completed tasks within a date range.
+    //  */
+    // public function calculateEmployeePerformance(Request $request)
+    // {
+    //     try {
+    //         $validated = $request->validate([
+    //             'start_date' => 'required|date',
+    //             'end_date' => 'required|date|after_or_equal:start_date',
+    //             'employee_id' => 'nullable|exists:employees,id',
+    //         ]);
+
+    //         $startDate = $validated['start_date'];
+    //         $endDate = $validated['end_date'];
+    //         $employeeId = $validated['employee_id'] ?? null;
+
+    //         // Log the request parameters
+    //         \Log::info('Performance calculation request', [
+    //             'startDate' => $startDate,
+    //             'endDate' => $endDate,
+    //             'employeeId' => $employeeId
+    //         ]);
+
+    //         // Build the query to find completed tasks within date range
+    //         // Fix: Use end_date from kpi_task_assignments table instead of due_date from performance_reviews
+    //         $query = KpiTaskAssignment::with([
+    //             'kpiTask:id,task_name',
+    //             'employee:id,full_name,attendance_employee_no',
+    //             'performanceReviews' => function ($q) {
+    //                 $q->where('status', 'Completed');
+    //             }
+    //         ])
+    //             ->where('end_date', '>=', $startDate)
+    //             ->where('end_date', '<=', $endDate)
+    //             ->whereHas('performanceReviews', function ($q) {
+    //                 $q->where('status', 'Completed');
+    //             });
+
+    //         // Filter by employee if provided
+    //         if ($employeeId) {
+    //             $query->where('employee_id', $employeeId);
+    //         }
+
+    //         $assignments = $query->get();
+
+    //         // If no tasks are found, return empty result
+    //         if ($assignments->isEmpty()) {
+    //             return response()->json([
+    //                 'message' => 'No completed tasks found within the specified date range.',
+    //                 'data' => null
+    //             ]);
+    //         }
+
+    //         // Group by employee
+    //         $employeeResults = [];
+
+    //         foreach ($assignments as $assignment) {
+    //             $employeeId = $assignment->employee_id;
+    //             $employee = $assignment->employee;
+
+    //             if (!isset($employeeResults[$employeeId])) {
+    //                 $employeeResults[$employeeId] = [
+    //                     'employee_id' => $employeeId,
+    //                     'employee_name' => $employee->full_name,
+    //                     'attendance_no' => $employee->attendance_employee_no,
+    //                     'tasks' => [],
+    //                     'total_score' => 0,
+    //                     'task_count' => 0,
+    //                 ];
+    //             }
+
+    //             // Get the latest completed performance review for this assignment
+    //             $review = $assignment->performanceReviews()
+    //                 ->where('status', 'Completed')
+    //                 ->orderBy('updated_at', 'desc')
+    //                 ->first();
+
+    //             if (!$review) {
+    //                 continue; // Skip if no completed review found
+    //             }
+
+    //             // Get the task weights from the KPI assignment
+    //             $weights = $assignment->weights ?? [];
+    //             $totalWeight = 0;
+
+    //             if (!empty($weights)) {
+    //                 // Sum up the weight percentages
+    //                 foreach ($weights as $weight) {
+    //                     $totalWeight += isset($weight['percentage']) ? (float) $weight['percentage'] : 0;
+    //                 }
+    //             }
+
+    //             // Use supervisor progress from performance review
+    //             $supervisorProgress = $review->progress;
+
+    //             // Calculate task score: weight * progress / 100
+    //             $taskScore = ($totalWeight * $supervisorProgress) / 100;
+
+    //             // Add task details to the result
+    //             $employeeResults[$employeeId]['tasks'][] = [
+    //                 'task_id' => $assignment->id,
+    //                 'task_name' => $assignment->kpiTask->task_name ?? 'Unknown Task',
+    //                 'supervisor_progress' => $supervisorProgress,
+    //                 'total_weight' => $totalWeight,
+    //                 'task_score' => $taskScore,
+    //                 'start_date' => $assignment->start_date,
+    //                 'end_date' => $assignment->end_date,
+    //             ];
+
+    //             // Add to the employee's total score
+    //             $employeeResults[$employeeId]['total_score'] += $taskScore;
+    //             $employeeResults[$employeeId]['task_count']++;
+    //         }
+
+    //         // Calculate final percentages and grades for each employee
+    //         foreach ($employeeResults as &$result) {
+    //             if ($result['task_count'] > 0) {
+    //                 // Calculate average task score
+    //                 $average = $result['total_score'] / $result['task_count'];
+
+    //                 // Calculate final percentage (Average / 60) * 100, capped at 100%
+    //                 $finalPercentage = min(100, max(0, round(($average / 60) * 100)));
+
+    //                 // Assign grade based on percentage
+    //                 $grade = $this->getGrade($finalPercentage);
+
+    //                 $result['percentage'] = $finalPercentage;
+    //                 $result['grade'] = $grade['grade'];
+    //                 $result['performance_label'] = $grade['label'];
+    //             } else {
+    //                 $result['percentage'] = 0;
+    //                 $result['grade'] = 'N/A';
+    //                 $result['performance_label'] = 'No Data';
+    //             }
+    //         }
+
+    //         // If a specific employee was requested, return just that result, otherwise return all
+    //         if (isset($validated['employee_id'])) {
+    //             $employeeId = $validated['employee_id'];
+    //             return response()->json([
+    //                 'data' => $employeeResults[$employeeId] ?? null
+    //             ]);
+    //         }
+
+    //         return response()->json([
+    //             'data' => array_values($employeeResults)
+    //         ]);
+
+    //     } catch (\Exception $e) {
+    //         \Log::error('Error calculating employee performance', [
+    //             'error' => $e->getMessage(),
+    //             'trace' => $e->getTraceAsString()
+    //         ]);
+
+    //         return response()->json([
+    //             'error' => 'Failed to calculate employee performance: ' . $e->getMessage()
+    //         ], 500);
+    //     }
+    // }
+
     /**
      * Calculate employee performance based on completed tasks within a date range.
      */
@@ -1648,7 +1808,6 @@ class PmsController extends Controller
             ]);
 
             // Build the query to find completed tasks within date range
-            // Fix: Use end_date from kpi_task_assignments table instead of due_date from performance_reviews
             $query = KpiTaskAssignment::with([
                 'kpiTask:id,task_name',
                 'employee:id,full_name,attendance_employee_no',
@@ -1719,7 +1878,7 @@ class PmsController extends Controller
                 // Use supervisor progress from performance review
                 $supervisorProgress = $review->progress;
 
-                // Calculate task score: weight * progress / 100
+                // Calculate task score: (weight * progress) / 100
                 $taskScore = ($totalWeight * $supervisorProgress) / 100;
 
                 // Add task details to the result
@@ -1741,11 +1900,8 @@ class PmsController extends Controller
             // Calculate final percentages and grades for each employee
             foreach ($employeeResults as &$result) {
                 if ($result['task_count'] > 0) {
-                    // Calculate average task score
-                    $average = $result['total_score'] / $result['task_count'];
-
-                    // Calculate final percentage (Average / 60) * 100, capped at 100%
-                    $finalPercentage = min(100, max(0, round(($average / 60) * 100)));
+                    // Final percentage is simply the total score (already out of 100%), capped at 100%
+                    $finalPercentage = min(100, max(0, round($result['total_score'])));
 
                     // Assign grade based on percentage
                     $grade = $this->getGrade($finalPercentage);
