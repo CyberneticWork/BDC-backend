@@ -6,7 +6,7 @@ use App\Models\Account;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
-use App\Models\AccountGroup;
+
 
 class AccountController extends Controller
 {
@@ -69,7 +69,6 @@ class AccountController extends Controller
             'accountName' => 'required|string|max:255',
             'accountType' => 'required|string|in:EQUITY,EXPENSES,LIABILITIES,INCOME,ASSETS',
             'accountSubCategory' => 'required|string|max:255',
-            'accountGroup' => 'nullable|max:255',
             'openingBalance' => 'required|numeric|min:0',
             'user_id' => 'required|exists:users,id',
         ]);
@@ -89,7 +88,6 @@ class AccountController extends Controller
                 'accountName' => $validated['accountName'],
                 'accountType' => $validated['accountType'],
                 'accountSubCategory' => $validated['accountSubCategory'],
-                'accountGroup' => $validated['accountGroup'] ?? '',
                 'openingBalance' => $validated['openingBalance'],
                 'created_by' => $validated['user_id'],
             ]);
@@ -143,7 +141,6 @@ class AccountController extends Controller
             'accountName' => 'sometimes|required|string|max:255',
             'accountType' => 'sometimes|required|string|in:EQUITY,EXPENSES,LIABILITIES,INCOME,ASSETS',
             'accountSubCategory' => 'sometimes|required|string|max:255',
-            'accountGroup' => 'nullable|string|max:255',
             'openingBalance' => 'sometimes|required|numeric|min:0',
         ]);
 

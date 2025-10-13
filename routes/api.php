@@ -161,7 +161,7 @@ Route::get('/salary/process/csv', [SalaryController::class, 'salaryCSV']);
 
 Route::apiResource('courses', LMSController::class);
 Route::apiResource('accounts', AccountController::class);
-Route::apiResource('account-groups', AccountGroupController::class);
+
 Route::delete('/attachments/{id}', [LMSController::class, 'removeAttachment']);
 Route::middleware('auth:sanctum')->group(function () {
     // Exam routes
