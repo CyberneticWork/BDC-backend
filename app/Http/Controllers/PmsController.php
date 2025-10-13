@@ -824,7 +824,26 @@ class PmsController extends Controller
                 'company:id,name',
                 'department:id,name',
                 'employee:id,full_name,attendance_employee_no'
-            ])->whereNull('deleted_at');
+            ])->whereNull('deleted_at')
+            ->select([
+            'id',
+            'kpi_task_id',
+            'creator_role_id',
+            'company_id',
+            'department_id',
+            'employee_id',
+            'description',
+            'start_date',
+            'end_date',
+            'status',
+            'approval_status',
+            'priority',
+            'completion_status',
+            'weights',
+            'kpi_type',  // Add this field to the select
+            'created_at',
+            'updated_at'
+        ]);
 
             // Find employee by numeric ID or attendance number
             $employee = null;
@@ -874,7 +893,7 @@ class PmsController extends Controller
                     'completion_status' => $a->completion_status,
                     'completionStatus' => $a->completion_status, // Also add camelCase
                     'weights' => $a->weights,
-                    // 'kpi_type' => (bool) $assignment->kpi_type,
+                    'kpi_type' => (bool) $a->kpi_type,
                     'company' => $a->company->name ?? null,
                     'department' => $a->department->name ?? null,
                     'creator_role' => $a->creatorRole->role_name ?? null,
