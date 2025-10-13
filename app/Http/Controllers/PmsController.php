@@ -141,6 +141,7 @@ class PmsController extends Controller
             'end_date' => 'required|date|after:start_date',
             'weights' => 'nullable|array',
             'priority' => 'nullable|string|in:low,medium,high',
+            'kpi_type' => 'nullable|boolean',
         ]);
 
         // Find or create KpiTask by task_name
@@ -192,6 +193,14 @@ class PmsController extends Controller
             } else {
                 // No duplicate found - add to valid assignments
                 $validAssignments[] = $employee;
+            }
+        }
+
+        // Convert string values to boolean if needed
+        $kpiType = 0; // default to regular
+        if (isset($validated['kpi_type'])) {
+            if ($validated['kpi_type'] === 'performance_appraisal' || $validated['kpi_type'] === '1' || $validated['kpi_type'] === 1 || $validated['kpi_type'] === true) {
+                $kpiType = 1;
             }
         }
 
@@ -321,6 +330,7 @@ class PmsController extends Controller
                 'priority' => $validated['priority'] ?? 'medium',
                 'description' => $validated['description'],
                 'completion_status' => 'not-started',
+                'kpi_type' => $kpiType,
                 // Remove this line: 'last_updated' => now(),
                 // Let last_updated remain NULL for new tasks
             ]);
@@ -502,6 +512,7 @@ class PmsController extends Controller
                     'creator' => [
                         'role' => $assignment->creatorRole->role_name ?? 'Unknown Role'
                     ],
+                    'kpi_type' => (bool) $assignment->kpi_type,
                     'creatorRole' => $assignment->creatorRole->role_name ?? 'Unknown Role',
                     'weights' => $cleanedWeights, // Use cleaned weights
                     'lastUpdated' => $assignment->last_updated ? $assignment->last_updated->toISOString() : $assignment->updated_at->toISOString(),
@@ -554,6 +565,7 @@ class PmsController extends Controller
                 'approval_status',
                 'priority',
                 'weights',
+                'kpi_type',
                 'completion_status',
                 'created_at',
                 'updated_at',
@@ -584,6 +596,7 @@ class PmsController extends Controller
                     'role' => $assignment->creatorRole->role_name ?? 'Unknown Role',
                     'date' => $assignment->created_at->toISOString()
                 ],
+                'kpi_type' => (bool) $assignment->kpi_type,
                 'weights' => $assignment->weights ?? [],
                 'lastUpdated' => $assignment->created_at->toISOString() ?? null,
                 'last_updated' => $assignment->last_updated ? $assignment->last_updated->toISOString() : null,
@@ -614,6 +627,7 @@ class PmsController extends Controller
             'end_date' => 'nullable|date|after:start_date',
             'weights' => 'nullable|array',
             'priority' => 'nullable|string|in:low,medium,high',
+            'kpi_type' => 'nullable|boolean',
         ]);
 
         $assignment = KpiTaskAssignment::findOrFail($id);
@@ -631,6 +645,14 @@ class PmsController extends Controller
                 'previous_status' => $previousStatus,
                 'updated_by' => auth()->id()
             ]);
+        }
+
+        if (isset($validated['kpi_type'])) {
+            $kpiType = 0;
+            if ($validated['kpi_type'] === 'performance_appraisal' || $validated['kpi_type'] === '1' || $validated['kpi_type'] === 1 || $validated['kpi_type'] === true) {
+                $kpiType = 1;
+            }
+            $assignment->kpi_type = $kpiType;
         }
 
         // Update KpiTask if task_name changed
@@ -852,6 +874,7 @@ class PmsController extends Controller
                     'completion_status' => $a->completion_status,
                     'completionStatus' => $a->completion_status, // Also add camelCase
                     'weights' => $a->weights,
+                    // 'kpi_type' => (bool) $assignment->kpi_type,
                     'company' => $a->company->name ?? null,
                     'department' => $a->department->name ?? null,
                     'creator_role' => $a->creatorRole->role_name ?? null,

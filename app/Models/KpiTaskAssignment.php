@@ -12,7 +12,7 @@ class KpiTaskAssignment extends Model
     protected $fillable = [
         'kpi_task_id', 
         'creator_role_id', 
-        'creator_id', // Add this line - it was missing!
+        'creator_id',
         'weights',
         'company_id',
         'department_id',
@@ -24,10 +24,12 @@ class KpiTaskAssignment extends Model
         'priority',
         'description',
         'completion_status',
+        'kpi_type', // Add this new field
         'last_updated'
     ];
 
     protected $casts = [
+        'kpi_type' => 'boolean',
         'weights' => 'array',
         'start_date' => 'date',
         'end_date' => 'date',
