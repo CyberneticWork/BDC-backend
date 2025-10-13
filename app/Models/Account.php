@@ -15,7 +15,6 @@ class Account extends Model
         'accountName',
         'accountType',
         'accountSubCategory',
-        'accountGroup',
         'openingBalance',
         'created_by',
         'created_at',
@@ -29,8 +28,5 @@ class Account extends Model
         return $this->belongsTo(User::class, 'created_by');
     }
 
-    public function accountGroupRelation(): BelongsTo
-    {
-        return $this->belongsTo(AccountGroup::class);
-    }
+   
 }
