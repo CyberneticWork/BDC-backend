@@ -437,7 +437,7 @@ class EmployeeController extends Controller
                 'email' => $address['email'],
                 'employee_id' => $employee->id,
                 'password' => Hash::make($pwd),
-                'role' => 'employee',
+                'role' => 'user',
             ]);
 
             $mail_data = [

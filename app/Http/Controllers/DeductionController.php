@@ -32,7 +32,7 @@ class DeductionController extends Controller
             'deduction_code' => 'required|string|max:255|unique:deductions,deduction_code',
             'deduction_name' => 'required|string|max:255',
             'description' => 'nullable|string',
-            'amount' => 'required|numeric|min:0',
+            // 'amount' => 'required|numeric|min:0',
             'status' => 'required|in:active,inactive',
             // 'category' => 'required|in:EPF,ETF,other',
             'deduction_type' => 'required|in:fixed,variable',
@@ -43,7 +43,6 @@ class DeductionController extends Controller
         $deduction = deduction::create($request->all());
         return response()->json($deduction, 201);
     }
-
     public function show($id)
     {
         // Logic to show a specific deduction

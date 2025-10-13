@@ -27,6 +27,8 @@ use App\Http\Controllers\LMSController;
 use App\Http\Controllers\LMSAdmincontroller;
 use App\Http\Controllers\ExamController;
 use App\Http\Controllers\PmsController;
+use App\Http\Controllers\AccountController;
+use App\Http\Controllers\AccountGroupController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -158,7 +160,9 @@ Route::get('/salary/process/csv', [SalaryController::class, 'salaryCSV']);
 
 // LMS Routes
 
-Route::apiResource('courses', LMSController::class);  // Handles all CRUD: GET /courses (index), POST /courses (store), GET /courses/{id} (show), etc.
+Route::apiResource('courses', LMSController::class);
+Route::apiResource('accounts', AccountController::class);
+Route::apiResource('account-groups', AccountGroupController::class);
 Route::delete('/attachments/{id}', [LMSController::class, 'removeAttachment']);
 Route::middleware('auth:sanctum')->group(function () {
     // Exam routes
@@ -257,3 +261,14 @@ Route::middleware(['auth:sanctum'])->group(function () {
 Route::post('/pms/employee-performance/calculate', [PmsController::class, 'calculateEmployeePerformance']);
 Route::post('/pms/employee-performance/save', [PmsController::class, 'saveEmployeePerformance']);
 Route::get('/pms/employee-performance', [PmsController::class, 'getEmployeePerformanceEvaluations']);
+
+// Add these routes in the authenticated section
+
+Route::middleware('auth:sanctum')->group(function () {
+    // ... existing routes ...
+
+    // Performance Appraisal routes
+    Route::post('/pms/performance-appraisal/calculate', [PmsController::class, 'calculatePerformanceAppraisal']);
+    Route::post('/pms/performance-appraisal/save', [PmsController::class, 'savePerformanceAppraisal']);
+    Route::get('/pms/performance-appraisals', [PmsController::class, 'getPerformanceAppraisals']);
+});
