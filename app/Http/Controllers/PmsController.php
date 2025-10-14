@@ -935,6 +935,7 @@ class PmsController extends Controller
             'employee_id' => 'required|integer|exists:employees,id',
             'note' => 'required|string|min:5|max:1000',
             'progress_percentage' => 'required|integer|min:0|max:100',
+            'rating' => 'nullable|integer|min:1|max:5',
             'performance_metrics' => 'required|string|min:1', // JSON string from FormData
             'document_name' => 'nullable|string|max:255',
             'document_size' => 'nullable|string|max:50',
@@ -953,6 +954,9 @@ class PmsController extends Controller
             'progress_percentage.min' => 'Progress percentage cannot be less than 0',
             'progress_percentage.max' => 'Progress percentage cannot be more than 100',
             'performance_metrics.required' => 'Performance metrics are required',
+            'rating.integer' => 'Rating must be an integer',
+            'rating.min' => 'Rating must be at least 1',
+            'rating.max' => 'Rating cannot be more than 5',
             'document.mimes' => 'Document must be a PDF, Word, Excel, image, or text file',
             'document.max' => 'Document size cannot exceed 10MB',
         ]);
@@ -1012,6 +1016,7 @@ class PmsController extends Controller
                 'employee_id' => (int) $validated['employee_id'],
                 'note' => $validated['note'],
                 'progress_percentage' => $progressPercentage,
+                'rating' => isset($validated['rating']) ? (int) $validated['rating'] : null,
                 'performance_metrics' => $performanceMetrics, // Use parsed array
                 'document_name' => $validated['document_name'] ?? null,
                 'document_size' => $validated['document_size'] ?? null,
