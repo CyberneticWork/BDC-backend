@@ -2,6 +2,13 @@
 
 namespace Database\Seeders;
 
+use Illuminate\Database\Seeder;
+
+
+
+
+namespace Database\Seeders;
+
 use Carbon\Carbon;
 use App\Models\User;
 use App\Models\roles;

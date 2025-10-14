@@ -29,6 +29,7 @@ use App\Http\Controllers\ExamController;
 use App\Http\Controllers\PmsController;
 use App\Http\Controllers\AccountController;
 use App\Http\Controllers\AccountGroupController;
+use App\Http\Controllers\SupplierController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -163,6 +164,7 @@ Route::get('/salary/process/csv', [SalaryController::class, 'salaryCSV']);
 Route::apiResource('courses', LMSController::class);
 Route::apiResource('accounts', AccountController::class);
 //Route::apiResource('account-groups', AccountGroupController::class);
+
 Route::delete('/attachments/{id}', [LMSController::class, 'removeAttachment']);
 Route::middleware('auth:sanctum')->group(function () {
     // Exam routes
@@ -256,6 +258,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::put('/pms/kpi-weights/{id}', [PmsController::class, 'updateKpiWeight']);
     Route::delete('/pms/kpi-weights/{id}', [PmsController::class, 'deleteKpiWeight']);
 });
+
+// Supplier routes
+Route::apiResource('suppliers', SupplierController::class);
+
 
 // Employee Performance Evaluation endpoints (these can remain public if needed)
 Route::post('/pms/employee-performance/calculate', [PmsController::class, 'calculateEmployeePerformance']);

@@ -17,7 +17,7 @@ return new class extends Migration
             $table->string('accountName');
             $table->string('accountType');
             $table->string('accountSubCategory');
-            // $table->string('accountGroup');
+         $table->string('accountGroup')->nullable();
             // $table->foreignId('accountGroup')->constrained('account_groups')->onDelete('cascade');
             $table->decimal('openingBalance', 15, 2);
             $table->foreignId('created_by')->constrained('users')->onDelete('cascade');
