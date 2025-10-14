@@ -1311,6 +1311,8 @@ class PmsController extends Controller
                     'submissionCount' => $assignment->progressSubmissions->count(),
                     'latestSubmissionNote' => $latestSubmission?->note,
                     'documentCount' => $assignment->progressSubmissions->whereNotNull('document_name')->count(),
+                    'taskType' => $assignment->kpi_type ? 'Performance Appraisal' : 'Regular Task',
+                    'kpiType' => $assignment->kpi_type ?? false,
                 ];
             });
 
