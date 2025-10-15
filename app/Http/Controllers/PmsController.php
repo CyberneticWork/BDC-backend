@@ -1299,6 +1299,9 @@ class PmsController extends Controller
                     'supervisorComments' => $existingReview?->supervisor_comments,
                     'performanceMetrics' => $existingReview?->performance_metrics, // Include supervisor's metrics
 
+                    'selfRating' => $latestSubmission ? $latestSubmission->rating : null,
+                    'isPerformanceAppraisal' => (bool) $assignment->kpi_type,
+
                     // Keep self-reported data separate
                     'selfReportedProgress' => $latestSubmission?->progress_percentage ?? 0,
                     'selfReportedLastUpdated' => $latestSubmission?->created_at?->toISOString(),
@@ -1417,11 +1420,12 @@ class PmsController extends Controller
                     'documentPath' => $submission->document_path,
                     'author' => $submission->employee->full_name ?? 'Employee',
                     'date' => $submission->created_at->toISOString(),
+                    'rating' => $submission->rating,
                 ];
             });
 
             $latestSubmission = $assignment->progressSubmissions->first();
-
+            $selfRating = $latestSubmission ? $latestSubmission->rating : null;
             // Process supervisor review performance metrics
             $supervisorTaskProgress = 0;
             if ($existingReview && $existingReview->performance_metrics) {
@@ -1453,6 +1457,8 @@ class PmsController extends Controller
                 'priority' => $assignment->priority,
                 'weights' => $assignment->weights,
                 'submissions' => $submissions,
+                'selfRating' => $latestSubmission ? $latestSubmission->rating : null,
+                'isPerformanceAppraisal' => (bool) $assignment->kpi_type,
                 'latestSubmission' => $latestSubmission ? [
                     'note' => $latestSubmission->note,
                     'progressPercentage' => $latestSubmission->progress_percentage,
