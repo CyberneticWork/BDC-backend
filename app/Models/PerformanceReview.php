@@ -17,6 +17,7 @@ class PerformanceReview extends Model
         'supervisor_id',
         'progress',
         'grade',
+        'appraisal_rating', // Add this new field
         'supervisor_comments',
         'status',
         'review_type',
@@ -37,6 +38,24 @@ class PerformanceReview extends Model
         'performance_metrics' => 'array'
     ];
 
+    /**
+     * Get the rating label for appraisal rating
+     */
+    public function getAppraisalRatingLabelAttribute()
+    {
+        if (!$this->appraisal_rating) return null;
+        
+        $labels = [
+            1 => 'Poor',
+            2 => 'Below Average', 
+            3 => 'Average',
+            4 => 'Above Average',
+            5 => 'Excellent'
+        ];
+        
+        return $labels[$this->appraisal_rating] ?? null;
+    }
+
     public function kpiAssignment()
     {
         return $this->belongsTo(KpiTaskAssignment::class, 'kpi_assignment_id');
@@ -49,7 +68,6 @@ class PerformanceReview extends Model
 
     public function supervisor()
     {
-        // supervisor references users.id
         return $this->belongsTo(user::class, 'supervisor_id');
     }
 }

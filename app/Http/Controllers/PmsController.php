@@ -1469,6 +1469,7 @@ class PmsController extends Controller
                     'id' => $existingReview->id,
                     'progress' => $existingReview->progress ?? $supervisorTaskProgress,
                     'grade' => $existingReview->grade,
+                    'appraisal_rating' => $existingReview->appraisal_rating,
                     'supervisorComments' => $existingReview->supervisor_comments,
                     'status' => $existingReview->status,
                     'performanceMetrics' => $existingReview->performance_metrics,
@@ -1555,13 +1556,14 @@ class PmsController extends Controller
     public function updatePerformanceReview(Request $request, $assignmentId)
     {
         try {
-            $validated = $request->validate([
+            // Base validation rules
+            $validationRules = [
                 'progress' => 'required|integer|min:0|max:100',
                 'grade' => 'nullable|string|max:5',
                 'supervisor_comments' => 'nullable|string',
                 'status' => 'required|string|in:Draft,In Progress,Pending Manager,Pending Employee,Completed',
                 'performance_metrics' => 'required|array',
-            ]);
+            ];
 
             // Get the assignment with task information
             $assignment = KpiTaskAssignment::with([
@@ -1572,17 +1574,28 @@ class PmsController extends Controller
                 }
             ])->findOrFail($assignmentId);
 
+            // Determine whether this is an appraisal task
+            $isAppraisalTask = (bool) ($assignment->kpi_type ?? false);
+
+            // Add appraisal-specific validation when applicable
+            if ($isAppraisalTask) {
+                $validationRules['appraisal_rating'] = 'required|integer|min:1|max:5';
+            }
+
+            // Validate request
+            $validated = $request->validate($validationRules);
+
             // Get task name for performance metrics
             $taskName = $assignment->kpiTask->task_name ?? 'Unknown Task';
 
-            // Clean and ensure all metrics are integers, and add task-specific progress
+            // Clean and ensure all metrics are integers
             $cleanMetrics = [];
             foreach ($validated['performance_metrics'] as $key => $value) {
                 $cleanMetrics[$key] = (int) $value;
             }
 
             // Add the specific task progress to performance metrics
-            $cleanMetrics[$taskName] = $validated['progress'];
+            $cleanMetrics[$taskName] = (int) $validated['progress'];
 
             // Get the latest submission for self-reported data
             $latestSubmission = $assignment->progressSubmissions->first();
@@ -1590,30 +1603,37 @@ class PmsController extends Controller
             // Get supervisor ID from current auth user
             $supervisorId = auth()->id();
 
+            // Prepare data for update/create
+            $reviewData = [
+                'employee_id' => $assignment->employee->id ?? null,
+                'supervisor_id' => $supervisorId,
+                'progress' => (int) $validated['progress'],
+                'grade' => $validated['grade'] ?? null,
+                'supervisor_comments' => $validated['supervisor_comments'] ?? null,
+                'status' => $validated['status'],
+                'performance_metrics' => $cleanMetrics,
+                'review_type' => 'performance',
+                'review_cycle' => $this->deriveCycle($assignment->start_date),
+                'start_date' => $assignment->start_date,
+                'due_date' => $assignment->end_date,
+                'completed_date' => $validated['status'] === 'Completed' ? now() : null,
+                // Self-reported snapshot
+                'self_reported_progress' => $latestSubmission ? $latestSubmission->progress_percentage : 0,
+                'self_reported_last_updated' => $latestSubmission ? $latestSubmission->created_at : null,
+            ];
+
+            // Include appraisal rating when relevant
+            if ($isAppraisalTask && isset($validated['appraisal_rating'])) {
+                $reviewData['appraisal_rating'] = (int) $validated['appraisal_rating'];
+            }
+
             // Find or create performance review for this assignment
             $review = PerformanceReview::updateOrCreate(
                 ['kpi_assignment_id' => $assignmentId],
-                [
-                    'employee_id' => $assignment->employee->id,
-                    'supervisor_id' => $supervisorId,
-                    'progress' => $validated['progress'], // Store supervisor's progress rating
-                    'grade' => $validated['grade'],
-                    'supervisor_comments' => $validated['supervisor_comments'],
-                    'status' => $validated['status'],
-                    'performance_metrics' => $cleanMetrics, // Store clean metrics as JSON with task name
-                    'review_type' => 'performance',
-                    'review_cycle' => $this->deriveCycle($assignment->start_date),
-                    'start_date' => $assignment->start_date,
-                    'due_date' => $assignment->end_date,
-                    'completed_date' => $validated['status'] === 'Completed' ? now() : null,
-
-                    // Set self-reported data from latest submission
-                    'self_reported_progress' => $latestSubmission ? $latestSubmission->progress_percentage : 0,
-                    'self_reported_last_updated' => $latestSubmission ? $latestSubmission->created_at : null,
-                ]
+                $reviewData
             );
 
-            // Update the KPI assignment status based on review status
+            // Update the KPI assignment completion status based on review status
             if (isset($validated['status'])) {
                 if ($validated['status'] === 'Completed') {
                     $assignment->completion_status = 'completed';
@@ -1625,7 +1645,7 @@ class PmsController extends Controller
                 $assignment->save();
             }
 
-            // Send notification to the employee's user account about the review update
+            // Notify employee's user account about the review update
             try {
                 if ($assignment->employee && $assignment->employee->id) {
                     $employeeUser = \App\Models\User::where('employee_id', $assignment->employee->id)->first();
@@ -1658,7 +1678,9 @@ class PmsController extends Controller
                 'task_name' => $taskName,
                 'progress' => $validated['progress'],
                 'performance_metrics' => $cleanMetrics,
-                'review_id' => $review->id
+                'review_id' => $review->id,
+                'is_appraisal_task' => $isAppraisalTask,
+                'appraisal_rating' => $isAppraisalTask ? ($validated['appraisal_rating'] ?? null) : null,
             ]);
 
             return response()->json([
