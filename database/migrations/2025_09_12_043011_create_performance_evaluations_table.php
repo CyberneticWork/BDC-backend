@@ -23,6 +23,7 @@ return new class extends Migration
             $table->json('calculation_details'); // Store calculation breakdown as JSON
             $table->integer('task_count'); // Number of tasks evaluated
             $table->timestamps();
+            $table->softDeletes(); // Add soft deletes column
         });
 
         Schema::table('performance_evaluations', function (Blueprint $table) {
@@ -52,6 +53,8 @@ return new class extends Migration
             if (Schema::hasColumn('performance_evaluations', 'employee_id')) {
                 $table->dropForeign('pe_employee_fk');
             }
+
+            $table->dropSoftDeletes(); // Remove soft deletes column
         });
 
         Schema::dropIfExists('performance_evaluations');

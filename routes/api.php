@@ -27,6 +27,7 @@ use App\Http\Controllers\LMSController;
 use App\Http\Controllers\LMSAdmincontroller;
 use App\Http\Controllers\ExamController;
 use App\Http\Controllers\PmsController;
+use App\Http\Controllers\PerformanceEvaluationController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -266,4 +267,23 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/pms/performance-appraisal/calculate', [PmsController::class, 'calculatePerformanceAppraisal']);
     Route::post('/pms/performance-appraisal/save', [PmsController::class, 'savePerformanceAppraisal']);
     Route::get('/pms/performance-appraisals', [PmsController::class, 'getPerformanceAppraisals']);
+});
+
+// Performance Evaluation routes - using the new controller
+Route::middleware('auth:sanctum')->group(function () {
+    // CRUD operations
+    Route::get('/performance-evaluations', [App\Http\Controllers\PerformanceEvaluationController::class, 'index']);
+    Route::post('/performance-evaluations', [App\Http\Controllers\PerformanceEvaluationController::class, 'store']);
+    Route::get('/performance-evaluations/{id}', [App\Http\Controllers\PerformanceEvaluationController::class, 'show']);
+    Route::put('/performance-evaluations/{id}', [App\Http\Controllers\PerformanceEvaluationController::class, 'update']);
+    Route::delete('/performance-evaluations/{id}', [App\Http\Controllers\PerformanceEvaluationController::class, 'destroy']);
+    
+    // Additional functionality
+    Route::get('/performance-evaluations/employee/{employeeId}', [App\Http\Controllers\PerformanceEvaluationController::class, 'getByEmployee']);
+
+    // Stats, trash and restore/force-delete endpoints
+    Route::get('/performance-evaluations/stats/overview', [App\Http\Controllers\PerformanceEvaluationController::class, 'getStats']);
+    Route::get('/performance-evaluations/trashed/list', [App\Http\Controllers\PerformanceEvaluationController::class, 'getTrashed']);
+    Route::post('/performance-evaluations/{id}/restore', [App\Http\Controllers\PerformanceEvaluationController::class, 'restore']);
+    Route::delete('/performance-evaluations/{id}/force', [App\Http\Controllers\PerformanceEvaluationController::class, 'forceDestroy']);
 });
