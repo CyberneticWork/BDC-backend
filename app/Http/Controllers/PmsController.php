@@ -1302,6 +1302,10 @@ class PmsController extends Controller
                     'selfRating' => $latestSubmission ? $latestSubmission->rating : null,
                     'isPerformanceAppraisal' => (bool) $assignment->kpi_type,
 
+                    'appraisal_rating' => $existingReview ? $existingReview->appraisal_rating : null,
+                    // 'appraisalRating' => $existingReview ? $existingReview->appraisal_rating : null, // Alternative naming
+                    // 'appraisal' => $existingReview ? $existingReview->appraisal_rating : null,
+
                     // Keep self-reported data separate
                     'selfReportedProgress' => $latestSubmission?->progress_percentage ?? 0,
                     'selfReportedLastUpdated' => $latestSubmission?->created_at?->toISOString(),
