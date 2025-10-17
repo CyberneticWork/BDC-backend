@@ -29,6 +29,7 @@ return new class extends Migration
             $table->text('employee_comments')->nullable();
             $table->string('status')->default('Draft'); // Draft, Completed, Pending Review
             $table->timestamps();
+            $table->softDeletes();
 
             // Foreign key constraints
             $table->foreign('employee_id')->references('id')->on('employees')->onDelete('cascade');

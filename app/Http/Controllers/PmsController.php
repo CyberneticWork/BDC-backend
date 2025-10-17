@@ -1899,6 +1899,12 @@ class PmsController extends Controller
             ])
                 ->where('end_date', '>=', $startDate)
                 ->where('end_date', '<=', $endDate)
+                // FILTER: Only include regular KPI tasks (kpi_type = 0 or false)
+                ->where(function ($q) {
+                    $q->where('kpi_type', 0)
+                    ->orWhere('kpi_type', false)
+                    ->orWhereNull('kpi_type');
+                })
                 ->whereHas('performanceReviews', function ($q) {
                     $q->where('status', 'Completed');
                 });
@@ -3421,6 +3427,11 @@ class PmsController extends Controller
             ])
             ->where('end_date', '>=', $startDate)
             ->where('end_date', '<=', $endDate)
+            // FILTER: Only include performance appraisal tasks (kpi_type = 1 or true)
+            ->where(function ($q) {
+                $q->where('kpi_type', 1)
+                ->orWhere('kpi_type', true);
+            })
             ->whereHas('performanceReviews', function ($q) {
                 $q->where('status', 'Completed');
             });
