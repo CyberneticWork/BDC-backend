@@ -14,6 +14,9 @@ return new class extends Migration
             $table->string('email')->unique();
             $table->string('phone')->nullable();
             $table->string('address')->nullable();
+            $table->string('city')->nullable();
+            $table->foreignId('customer_type_id')->nullable()->constrained('customer_types')->onDelete('set null');
+            $table->foreignId('customer_category_id')->nullable()->constrained('customer_categories')->onDelete('set null');
             $table->timestamps();
             $table->softDeletes();
         });

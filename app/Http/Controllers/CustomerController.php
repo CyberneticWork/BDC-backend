@@ -10,7 +10,8 @@ class CustomerController extends Controller
     // Show all customers
     public function index()
     {
-        return response()->json(Customer::all());
+        $customers = Customer::with(['customerType', 'customerCategory'])->get();
+        return response()->json($customers);
     }
 
     // Store a new customer
@@ -21,6 +22,9 @@ class CustomerController extends Controller
             'email' => 'required|email|unique:customers',
             'phone' => 'nullable|string',
             'address' => 'nullable|string',
+            'city' => 'required|string|max:255',
+            'customer_type_id' => 'nullable|exists:customer_types,id',
+            'customer_category_id' => 'nullable|exists:customer_categories,id',
         ]);
 
         $customer = Customer::create($validated);
@@ -44,6 +48,9 @@ class CustomerController extends Controller
             'email' => 'sometimes|required|email|unique:customers,email,' . $id,
             'phone' => 'nullable|string',
             'address' => 'nullable|string',
+            'city' => 'sometimes|required|string|max:255',
+            'customer_type_id' => 'nullable|exists:customer_types,id',
+            'customer_category_id' => 'nullable|exists:customer_categories,id',
         ]);
 
         $customer->update($validated);
