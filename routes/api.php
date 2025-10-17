@@ -30,6 +30,9 @@ use App\Http\Controllers\PmsController;
 use App\Http\Controllers\AccountController;
 use App\Http\Controllers\AccountGroupController;
 use App\Http\Controllers\SupplierController;
+use App\Http\Controllers\CustomerController;
+use App\Http\Controllers\CustomerCategoryController;
+use App\Http\Controllers\CustomerTypeController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -78,6 +81,11 @@ Route::post('/salary/process/importExcelData', [SalaryProcessController::class, 
 Route::get('/salary/update/status', [SalaryProcessController::class, 'updateSlaryStatus']);
 // Route::apiResource('salary', SalaryController::class);
 // Route::get('salary/{id}/audit', [SalaryController::class, 'getAuditLogs']);
+Route::apiResource('customers', CustomerController::class);
+Route::get('customer-categories', [CustomerCategoryController::class, 'index']);
+Route::post('customer-categories', [CustomerCategoryController::class, 'store']);
+Route::get('customer-types', [CustomerTypeController::class, 'index']);
+Route::post('customer-types', [CustomerTypeController::class, 'store']);
 
 
 Route::get('/Leave-Master/{employeeId}/counts', [LeaveMasterController::class, 'getLeaveRecordCountsByEmployee']);
