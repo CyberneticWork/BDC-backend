@@ -8,6 +8,7 @@ use App\Models\employee;
 use App\Models\user;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\DB;
 
 class PerformanceEvaluationController extends Controller
 {
@@ -534,6 +535,202 @@ class PerformanceEvaluationController extends Controller
                 'message' => 'Failed to permanently delete performance evaluation',
                 'error' => $e->getMessage()
             ], 500);
+        }
+    }
+
+    /**
+     * Store multiple performance evaluations in bulk
+     */
+    public function storeBulk(Request $request)
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'evaluations' => 'required|array|min:1',
+                'evaluations.*.employee_id' => 'required|exists:employees,id',
+                'evaluations.*.evaluator_id' => 'required|exists:users,id',
+                'evaluations.*.start_date' => 'required|date',
+                'evaluations.*.end_date' => 'required|date|after:start_date',
+                'evaluations.*.percentage' => 'required|integer|min:0|max:100',
+                'evaluations.*.grade' => 'required|string|max:10',
+                'evaluations.*.performance_label' => 'required|string|max:255',
+                'evaluations.*.calculation_details' => 'required|array',
+                'evaluations.*.task_count' => 'required|integer|min:0',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $evaluationsData = $validator->validated()['evaluations'];
+            $savedEvaluations = [];
+            $duplicates = [];
+            $errors = [];
+
+            DB::beginTransaction();
+
+            foreach ($evaluationsData as $index => $evaluationData) {
+                try {
+                    // Check for existing evaluation for same employee and date range
+                    $existingEvaluation = PerformanceEvaluation::where('employee_id', $evaluationData['employee_id'])
+                        ->where('start_date', $evaluationData['start_date'])
+                        ->where('end_date', $evaluationData['end_date'])
+                        ->whereNull('deleted_at') // Only check non-deleted records
+                        ->first();
+
+                    if ($existingEvaluation) {
+                        // Get employee name for better duplicate reporting
+                        $employee = employee::find($evaluationData['employee_id']);
+                        $employeeName = $employee ? $employee->full_name : 'Unknown Employee';
+                        
+                        $duplicates[] = [
+                            'index' => $index,
+                            'employee_id' => $evaluationData['employee_id'],
+                            'employee_name' => $employeeName,
+                            'start_date' => $evaluationData['start_date'],
+                            'end_date' => $evaluationData['end_date'],
+                            'existing_id' => $existingEvaluation->id,
+                            'existing_created_at' => $existingEvaluation->created_at->format('Y-m-d H:i:s'),
+                            'message' => 'Evaluation already exists for this employee and date range'
+                        ];
+                        continue; // Skip this duplicate entry
+                    }
+
+                    // Additional check for overlapping date ranges for the same employee
+                    $overlappingEvaluation = PerformanceEvaluation::where('employee_id', $evaluationData['employee_id'])
+                        ->where(function($query) use ($evaluationData) {
+                            $query->where(function($q) use ($evaluationData) {
+                                // New start date falls within existing range
+                                $q->where('start_date', '<=', $evaluationData['start_date'])
+                                  ->where('end_date', '>=', $evaluationData['start_date']);
+                            })->orWhere(function($q) use ($evaluationData) {
+                                // New end date falls within existing range
+                                $q->where('start_date', '<=', $evaluationData['end_date'])
+                                  ->where('end_date', '>=', $evaluationData['end_date']);
+                            })->orWhere(function($q) use ($evaluationData) {
+                                // Existing range falls within new range
+                                $q->where('start_date', '>=', $evaluationData['start_date'])
+                                  ->where('end_date', '<=', $evaluationData['end_date']);
+                            });
+                        })
+                        ->whereNull('deleted_at')
+                        ->first();
+
+                    if ($overlappingEvaluation) {
+                        // Get employee name for better duplicate reporting
+                        $employee = employee::find($evaluationData['employee_id']);
+                        $employeeName = $employee ? $employee->full_name : 'Unknown Employee';
+                        
+                        $duplicates[] = [
+                            'index' => $index,
+                            'employee_id' => $evaluationData['employee_id'],
+                            'employee_name' => $employeeName,
+                            'start_date' => $evaluationData['start_date'],
+                            'end_date' => $evaluationData['end_date'],
+                            'existing_id' => $overlappingEvaluation->id,
+                            'existing_start_date' => $overlappingEvaluation->start_date->format('Y-m-d'),
+                            'existing_end_date' => $overlappingEvaluation->end_date->format('Y-m-d'),
+                            'existing_created_at' => $overlappingEvaluation->created_at->format('Y-m-d H:i:s'),
+                            'message' => 'Overlapping evaluation period exists for this employee'
+                        ];
+                        continue; // Skip this overlapping entry
+                    }
+
+                    // If no duplicates found, create the evaluation
+                    $evaluation = PerformanceEvaluation::create($evaluationData);
+                    $evaluation->load(['employee:id,full_name,attendance_employee_no', 'evaluator:id,name']);
+                    $savedEvaluations[] = $evaluation;
+
+                } catch (\Exception $e) {
+                    Log::error('Error saving individual evaluation in bulk', [
+                        'index' => $index,
+                        'employee_id' => $evaluationData['employee_id'],
+                        'error' => $e->getMessage(),
+                        'trace' => $e->getTraceAsString()
+                    ]);
+                    
+                    $errors[] = [
+                        'index' => $index,
+                        'employee_id' => $evaluationData['employee_id'],
+                        'message' => 'Failed to save evaluation: ' . $e->getMessage()
+                    ];
+                }
+            }
+
+            DB::commit();
+
+            Log::info('Bulk performance evaluations processed', [
+                'total_requested' => count($evaluationsData),
+                'saved_count' => count($savedEvaluations),
+                'duplicates_count' => count($duplicates),
+                'errors_count' => count($errors),
+                'processed_by' => auth()->id() ?? 'system'
+            ]);
+
+            // Determine response status based on results
+            $statusCode = 201; // Default success
+            if (count($savedEvaluations) === 0) {
+                $statusCode = 400; // Bad request if nothing was saved
+            } else if (count($duplicates) > 0 || count($errors) > 0) {
+                $statusCode = 207; // Multi-status for partial success
+            }
+
+            return response()->json([
+                'success' => count($savedEvaluations) > 0,
+                'message' => $this->getBulkSaveMessage(count($savedEvaluations), count($duplicates), count($errors)),
+                'data' => [
+                    'saved_evaluations' => $savedEvaluations,
+                    'saved_count' => count($savedEvaluations),
+                    'duplicates' => $duplicates,
+                    'errors' => $errors,
+                    'total_requested' => count($evaluationsData)
+                ]
+            ], $statusCode);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            
+            Log::error('Error in bulk save performance evaluations', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'data' => $request->all()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to save evaluations in bulk',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Generate appropriate message based on bulk save results
+     */
+    private function getBulkSaveMessage($savedCount, $duplicateCount, $errorCount)
+    {
+        if ($savedCount === 0) {
+            if ($duplicateCount > 0 && $errorCount === 0) {
+                return 'No evaluations saved - all entries were duplicates';
+            } elseif ($errorCount > 0 && $duplicateCount === 0) {
+                return 'No evaluations saved - all entries had errors';
+            } else {
+                return 'No evaluations saved - duplicates and errors found';
+            }
+        } elseif ($duplicateCount === 0 && $errorCount === 0) {
+            return "All {$savedCount} evaluation(s) saved successfully";
+        } else {
+            $message = "{$savedCount} evaluation(s) saved successfully";
+            if ($duplicateCount > 0) {
+                $message .= ", {$duplicateCount} duplicate(s) skipped";
+            }
+            if ($errorCount > 0) {
+                $message .= ", {$errorCount} error(s) encountered";
+            }
+            return $message;
         }
     }
 }
