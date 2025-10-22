@@ -4,12 +4,13 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use App\Models\employee;
 use App\Models\user;
 
 class PerformanceEvaluation extends Model
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     protected $fillable = [
         'employee_id',
@@ -28,6 +29,8 @@ class PerformanceEvaluation extends Model
         'end_date' => 'date',
         'calculation_details' => 'array'
     ];
+
+    protected $dates = ['deleted_at'];
 
     public function employee()
     {

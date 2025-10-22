@@ -30,6 +30,7 @@ return new class extends Migration
             $table->integer('self_reported_progress')->default(0);
             $table->timestamp('self_reported_last_updated')->nullable();
             $table->json('performance_metrics')->nullable(); // Store detailed metrics as JSON
+            $table->integer('appraisal_rating')->nullable()->after('grade')->comment('1-5 rating for performance appraisal tasks (1=Poor, 2=Below Average, 3=Average, 4=Above Average, 5=Excellent)');
             $table->timestamps();
         });
     }

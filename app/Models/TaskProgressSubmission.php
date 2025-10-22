@@ -14,6 +14,7 @@ class TaskProgressSubmission extends Model
         'employee_id',
         'note',
         'progress_percentage',
+        'rating', // Add this new field
         'performance_metrics',
         'document_name',
         'document_size',

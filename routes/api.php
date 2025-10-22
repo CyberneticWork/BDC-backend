@@ -33,6 +33,8 @@ use App\Http\Controllers\SupplierController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\CustomerCategoryController;
 use App\Http\Controllers\CustomerTypeController;
+use App\Http\Controllers\PerformanceEvaluationController;
+use App\Http\Controllers\PerformanceAppraisalController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -285,4 +287,42 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/pms/performance-appraisal/calculate', [PmsController::class, 'calculatePerformanceAppraisal']);
     Route::post('/pms/performance-appraisal/save', [PmsController::class, 'savePerformanceAppraisal']);
     Route::get('/pms/performance-appraisals', [PmsController::class, 'getPerformanceAppraisals']);
+});
+
+// Performance Evaluation routes - using the new controller
+Route::middleware('auth:sanctum')->group(function () {
+    // CRUD operations
+    Route::get('/performance-evaluations', [App\Http\Controllers\PerformanceEvaluationController::class, 'index']);
+    Route::post('/performance-evaluations', [App\Http\Controllers\PerformanceEvaluationController::class, 'store']);
+    Route::post('/performance-evaluations/bulk', [App\Http\Controllers\PerformanceEvaluationController::class, 'storeBulk']); // Add this line
+    Route::get('/performance-evaluations/{id}', [App\Http\Controllers\PerformanceEvaluationController::class, 'show']);
+    Route::put('/performance-evaluations/{id}', [App\Http\Controllers\PerformanceEvaluationController::class, 'update']);
+    Route::delete('/performance-evaluations/{id}', [App\Http\Controllers\PerformanceEvaluationController::class, 'destroy']);
+    
+    // Additional functionality
+    Route::get('/performance-evaluations/employee/{employeeId}', [App\Http\Controllers\PerformanceEvaluationController::class, 'getByEmployee']);
+
+    // Stats, trash and restore/force-delete endpoints
+    Route::get('/performance-evaluations/stats/overview', [App\Http\Controllers\PerformanceEvaluationController::class, 'getStats']);
+    Route::get('/performance-evaluations/trashed/list', [App\Http\Controllers\PerformanceEvaluationController::class, 'getTrashed']);
+    Route::post('/performance-evaluations/{id}/restore', [App\Http\Controllers\PerformanceEvaluationController::class, 'restore']);
+    Route::delete('/performance-evaluations/{id}/force', [App\Http\Controllers\PerformanceEvaluationController::class, 'forceDestroy']);
+});
+
+// Performance Appraisal routes - using the new controller
+Route::middleware('auth:sanctum')->group(function () {
+    // CRUD operations
+    Route::get('/performance-appraisals', [App\Http\Controllers\PerformanceAppraisalController::class, 'index']);
+    Route::post('/performance-appraisals', [App\Http\Controllers\PerformanceAppraisalController::class, 'store']);
+    Route::post('/performance-appraisals/bulk', [App\Http\Controllers\PerformanceAppraisalController::class, 'storeBulk']);
+    Route::get('/performance-appraisals/{id}', [App\Http\Controllers\PerformanceAppraisalController::class, 'show']);
+    Route::put('/performance-appraisals/{id}', [App\Http\Controllers\PerformanceAppraisalController::class, 'update']);
+    Route::delete('/performance-appraisals/{id}', [App\Http\Controllers\PerformanceAppraisalController::class, 'destroy']);
+    
+    // Additional functionality
+    Route::get('/performance-appraisals/employee/{employeeId}', [App\Http\Controllers\PerformanceAppraisalController::class, 'getByEmployee']);
+    Route::get('/performance-appraisals/trashed/list', [App\Http\Controllers\PerformanceAppraisalController::class, 'getTrashed']);
+    Route::post('/performance-appraisals/{id}/restore', [App\Http\Controllers\PerformanceAppraisalController::class, 'restore']);
+    Route::delete('/performance-appraisals/{id}/force', [App\Http\Controllers\PerformanceAppraisalController::class, 'forceDestroy']);
+    Route::get('/performance-appraisals/stats/overview', [App\Http\Controllers\PerformanceAppraisalController::class, 'getStats']);
 });
