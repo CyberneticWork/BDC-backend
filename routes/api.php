@@ -295,6 +295,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // CRUD operations
     Route::get('/performance-appraisals', [App\Http\Controllers\PerformanceAppraisalController::class, 'index']);
     Route::post('/performance-appraisals', [App\Http\Controllers\PerformanceAppraisalController::class, 'store']);
+    Route::post('/performance-appraisals/bulk', [App\Http\Controllers\PerformanceAppraisalController::class, 'storeBulk']);
     Route::get('/performance-appraisals/{id}', [App\Http\Controllers\PerformanceAppraisalController::class, 'show']);
     Route::put('/performance-appraisals/{id}', [App\Http\Controllers\PerformanceAppraisalController::class, 'update']);
     Route::delete('/performance-appraisals/{id}', [App\Http\Controllers\PerformanceAppraisalController::class, 'destroy']);
