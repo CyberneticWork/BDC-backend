@@ -82,6 +82,8 @@ Route::post('/salary/process/fetchExcelData', [SalaryProcessController::class, '
 Route::post('/salary/process/importExcelData', [SalaryProcessController::class, 'importExcelData']);
 Route::get('/salary/update/status', [SalaryProcessController::class, 'updateSlaryStatus']);
 // Route::apiResource('salary', SalaryController::class);
+
+
 // Route::get('salary/{id}/audit', [SalaryController::class, 'getAuditLogs']);
 Route::apiResource('customers', CustomerController::class);
 Route::get('customer-categories', [CustomerCategoryController::class, 'index']);
@@ -326,3 +328,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/performance-appraisals/{id}/force', [App\Http\Controllers\PerformanceAppraisalController::class, 'forceDestroy']);
     Route::get('/performance-appraisals/stats/overview', [App\Http\Controllers\PerformanceAppraisalController::class, 'getStats']);
 });
+
+//  Customer routes
+Route::get('/customer/email/{email}', [CustomerController::class, 'getByEmail']);
+Route::get('/customer/type/{typeId}', [CustomerController::class, 'getByType']);
+Route::get('/customer/name/{name}', [CustomerController::class, 'getByName']);

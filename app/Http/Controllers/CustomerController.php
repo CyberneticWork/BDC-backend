@@ -65,4 +65,27 @@ class CustomerController extends Controller
 
         return response()->json(['message' => 'Customer deleted successfully']);
     }
+
+    //get customers by email
+    public function getByEmail($email)
+    {
+        $customers = Customer::where('email', $email)->get();
+        return response()->json($customers);
+    }
+
+    //get customer by  type id
+    public function getByType($typeId)  
+    {
+        $customers = Customer::where('customer_type_id', $typeId)->get();
+        return response()->json($customers);
+    }
+
+    //get customer by name
+    public function getByName($name)
+    {
+        $customers = Customer::where('name', 'like', '%' . $name . '%')->get();
+        return response()->json($customers);
+    }
+
+   
 }
