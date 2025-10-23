@@ -1876,17 +1876,23 @@ class PmsController extends Controller
                 'start_date' => 'required|date',
                 'end_date' => 'required|date|after_or_equal:start_date',
                 'employee_id' => 'nullable|exists:employees,id',
+                'company_id' => 'nullable|exists:companies,id',
+                'department_id' => 'nullable|exists:departments,id',
             ]);
 
             $startDate = $validated['start_date'];
             $endDate = $validated['end_date'];
             $employeeId = $validated['employee_id'] ?? null;
+            $companyId = $validated['company_id'] ?? null;
+            $departmentId = $validated['department_id'] ?? null;
 
             // Log the request parameters
             \Log::info('Performance calculation request', [
                 'startDate' => $startDate,
                 'endDate' => $endDate,
-                'employeeId' => $employeeId
+                'employeeId' => $employeeId,
+                'companyId' => $companyId,
+                'departmentId' => $departmentId
             ]);
 
             // Build the query to find completed tasks within date range
@@ -1912,6 +1918,14 @@ class PmsController extends Controller
             // Filter by employee if provided
             if ($employeeId) {
                 $query->where('employee_id', $employeeId);
+            }
+            // Filter by company if provided
+            if ($companyId) {
+                $query->where('company_id', $companyId);
+            }
+            // Filter by department if provided 
+            if ($departmentId) {
+                $query->where('department_id', $departmentId);
             }
 
             $assignments = $query->get();
