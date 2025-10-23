@@ -22,7 +22,7 @@ class CustomerController extends Controller
             'email' => 'required|email|unique:customers',
             'phone' => 'nullable|string',
             'address' => 'nullable|string',
-            'city' => 'required|string|max:255',
+            'city' => 'nullable|string|max:255',
             'customer_type_id' => 'nullable|exists:customer_types,id',
             'customer_category_id' => 'nullable|exists:customer_categories,id',
         ]);
@@ -48,7 +48,7 @@ class CustomerController extends Controller
             'email' => 'sometimes|required|email|unique:customers,email,' . $id,
             'phone' => 'nullable|string',
             'address' => 'nullable|string',
-            'city' => 'sometimes|required|string|max:255',
+            'city' => 'nullable|string|max:255',
             'customer_type_id' => 'nullable|exists:customer_types,id',
             'customer_category_id' => 'nullable|exists:customer_categories,id',
         ]);
