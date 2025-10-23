@@ -3408,6 +3408,8 @@ class PmsController extends Controller
                 'start_date' => 'required|date',
                 'end_date' => 'required|date|after_or_equal:start_date',
                 'employee_id' => 'nullable|exists:employees,id',
+                'company_id' => 'nullable|exists:companies,id',
+                'department_id' => 'nullable|exists:departments,id',
                 'page' => 'nullable|integer|min:1',
                 'per_page' => 'nullable|integer|min:1|max:100'
             ]);
@@ -3415,6 +3417,8 @@ class PmsController extends Controller
             $startDate = $validated['start_date'];
             $endDate = $validated['end_date'];
             $employeeId = $validated['employee_id'] ?? null;
+            $companyId = $validated['company_id'] ?? null;
+            $departmentId = $validated['department_id'] ?? null;
             $page = $validated['page'] ?? 1;
             $perPage = $validated['per_page'] ?? 10;
 
@@ -3423,6 +3427,8 @@ class PmsController extends Controller
                 'startDate' => $startDate,
                 'endDate' => $endDate,
                 'employeeId' => $employeeId,
+                'companyId' => $companyId,
+                'departmentId' => $departmentId,
                 'page' => $page,
                 'per_page' => $perPage
             ]);
@@ -3453,6 +3459,16 @@ class PmsController extends Controller
             // Filter by employee if provided
             if ($employeeId) {
                 $query->where('employee_id', $employeeId);
+            }
+
+            // Filter by company if provided    
+            if ($companyId) {
+                $query->where('company_id', $companyId);
+            }
+
+            // Filter by department if provided
+            if ($departmentId) {
+                $query->where('department_id', $departmentId);
             }
 
             // Get total count for pagination
