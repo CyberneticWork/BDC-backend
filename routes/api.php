@@ -175,6 +175,7 @@ Route::get('/salary/process/csv', [SalaryController::class, 'salaryCSV']);
 Route::apiResource('courses', LMSController::class);
 Route::apiResource('accounts', AccountController::class);
 Route::apiResource('journal-entries', JournalEntryController::class);
+Route::get('journal-entries-next-number', [JournalEntryController::class, 'getNextEntryNumber']);
 //Route::apiResource('account-groups', AccountGroupController::class);
 
 Route::delete('/attachments/{id}', [LMSController::class, 'removeAttachment']);

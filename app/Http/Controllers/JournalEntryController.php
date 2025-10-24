@@ -72,6 +72,15 @@ class JournalEntryController extends Controller
         return response()->noContent();
     }
 
+    public function getNextEntryNumber()
+    {
+        $nextNumber = $this->generateEntryNumber();
+        
+        return response()->json([
+            'entry_number' => $nextNumber
+        ]);
+    }
+
     private function validatePayload(Request $request, bool $isUpdate = false): array
     {
         $rules = [
@@ -79,10 +88,8 @@ class JournalEntryController extends Controller
             'memo' => [$isUpdate ? 'sometimes' : 'required', 'string', 'max:255'],
             'account_type' => [$isUpdate ? 'sometimes' : 'required', 'string', 'max:100'],
             'account_name' => [$isUpdate ? 'sometimes' : 'required', 'string', 'max:255'],
-            'description' => ['nullable', 'string'],
             'debit' => ['nullable', 'numeric', 'min:0'],
             'credit' => ['nullable', 'numeric', 'min:0'],
-            'status' => ['nullable', 'string', 'max:50'],
         ];
 
         $data = $request->validate($rules);
@@ -118,12 +125,6 @@ class JournalEntryController extends Controller
 
         if (array_key_exists('account_type', $data)) {
             $data['account_type'] = strtoupper(trim($data['account_type']));
-        }
-
-        if (array_key_exists('status', $data)) {
-            $data['status'] = trim($data['status']) ?: 'Draft';
-        } elseif (!$isUpdate) {
-            $data['status'] = 'Draft';
         }
 
         return $data;

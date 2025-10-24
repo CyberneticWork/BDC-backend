@@ -17,19 +17,13 @@ class JournalEntry extends Model
         'memo',
         'account_type',
         'account_name',
-        'description',
         'debit',
         'credit',
-        'status',
     ];
 
     protected $casts = [
         'entry_date' => 'date',
         'debit' => 'decimal:2',
         'credit' => 'decimal:2',
-    ];
-
-    protected $attributes = [
-        'status' => 'Draft',
     ];
 }

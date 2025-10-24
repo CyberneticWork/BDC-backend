@@ -15,13 +15,11 @@ return new class extends Migration
             $table->id();
             $table->string('entry_number')->unique();
             $table->date('entry_date');
-            $table->string('memo', 255)->nullable();
+            $table->string('memo', 255);
             $table->string('account_type', 100);
             $table->string('account_name', 255);
-            $table->text('description')->nullable();
             $table->decimal('debit', 15, 2)->default(0);
             $table->decimal('credit', 15, 2)->default(0);
-            $table->string('status', 50)->default('Draft');
             $table->softDeletes();
             $table->timestamps();
         });
