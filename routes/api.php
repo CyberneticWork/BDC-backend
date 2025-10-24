@@ -35,6 +35,7 @@ use App\Http\Controllers\CustomerCategoryController;
 use App\Http\Controllers\CustomerTypeController;
 use App\Http\Controllers\PerformanceEvaluationController;
 use App\Http\Controllers\PerformanceAppraisalController;
+use App\Http\Controllers\JournalEntryController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -173,6 +174,7 @@ Route::get('/salary/process/csv', [SalaryController::class, 'salaryCSV']);
 
 Route::apiResource('courses', LMSController::class);
 Route::apiResource('accounts', AccountController::class);
+Route::apiResource('journal-entries', JournalEntryController::class);
 //Route::apiResource('account-groups', AccountGroupController::class);
 
 Route::delete('/attachments/{id}', [LMSController::class, 'removeAttachment']);
