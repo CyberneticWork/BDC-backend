@@ -22,6 +22,7 @@ return new class extends Migration
             //       ->cascadeOnDelete();
             $table->text('note');
             $table->integer('progress_percentage');
+            $table->integer('rating')->nullable()->comment('1-5 rating for performance appraisal tasks');
             $table->json('performance_metrics'); // Store metrics as JSON
             $table->string('document_name')->nullable();
             $table->string('document_size')->nullable();

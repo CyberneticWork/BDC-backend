@@ -34,6 +34,10 @@ return new class extends Migration
             // Add foreign key constraint for creator_id
             $table->foreign('creator_id')->references('id')->on('users')->nullOnDelete();
         });
+
+        Schema::table('kpi_task_assignments', function (Blueprint $table) {
+            $table->boolean('kpi_type')->default(0)->after('completion_status'); 
+        });
     }
 
     /**
@@ -41,6 +45,10 @@ return new class extends Migration
      */
     public function down(): void
     {
+        Schema::table('kpi_task_assignments', function (Blueprint $table) {
+            $table->dropColumn('kpi_type');
+        });
+
         Schema::dropIfExists('kpi_task_assignments');
     }
 };
