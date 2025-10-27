@@ -168,17 +168,31 @@ class PmsController extends Controller
 
             // Check for existing assignment with same task, employee, and overlapping date range
             $existingAssignment = KpiTaskAssignment::where('kpi_task_id', $kpiTask->id)
-                ->where('employee_id', $employee->id)
-                ->where(function ($query) use ($validated) {
-                    // Check for date range overlap
-                    // Overlap exists if: (start1 <= end2) AND (start2 <= end1)
-                    $query->where(function ($q) use ($validated) {
-                        $q->where('start_date', '<=', $validated['end_date'])
-                            ->where('end_date', '>=', $validated['start_date']);
+            ->where('employee_id', $employee->id)
+            ->where(function ($query) use ($validated) {
+                // Only consider it a duplicate if it's exactly the same date range
+                // or if there's a significant overlap (more than just 1 day)
+                $query->where(function ($q) use ($validated) {
+                    // Exact same date range
+                    $q->where('start_date', $validated['start_date'])
+                    ->where('end_date', $validated['end_date']);
+                })->orWhere(function ($q) use ($validated) {
+                    // Or significant overlap (more than 50% of the shorter period)
+                    $newStart = $validated['start_date'];
+                    $newEnd = $validated['end_date'];
+                    
+                    // Calculate if there's substantial overlap
+                    $q->where(function ($subQ) use ($newStart, $newEnd) {
+                        $subQ->where('start_date', '<=', $newStart)
+                            ->where('end_date', '>=', $newEnd); // Existing completely contains new
+                    })->orWhere(function ($subQ) use ($newStart, $newEnd) {
+                        $subQ->where('start_date', '>=', $newStart)
+                            ->where('end_date', '<=', $newEnd); // New completely contains existing
                     });
-                })
-                ->whereNull('deleted_at') // Only check non-deleted assignments
-                ->first();
+                });
+            })
+            ->whereNull('deleted_at')
+            ->first();
 
             if ($existingAssignment) {
                 // Found duplicate - add to list
@@ -351,6 +365,80 @@ class PmsController extends Controller
             'assignments' => $assignments,
             'total_created' => count($assignments)
         ], 201);
+    }
+
+    /**
+     * Check if assigning KPI would exceed weight limits for assignees
+     */
+    public function checkAssigneeWeights(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'assignees' => 'required|array',
+                'assignees.*' => 'required|string',
+                'start_date' => 'required|date',
+                'end_date' => 'required|date|after_or_equal:start_date',
+                'weights' => 'required|array',
+                'kpi_task_id' => 'nullable|exists:kpi_tasks,id'
+            ]);
+
+            $month = Carbon::parse($validated['start_date'])->format('Y-m');
+            $newWeightsTotal = collect($validated['weights'])->sum('percentage');
+            $overLimitAssignees = [];
+
+            foreach ($validated['assignees'] as $attendanceNo) {
+                $employee = Employee::where('attendance_employee_no', $attendanceNo)->first();
+                if (!$employee) continue;
+
+                // Get existing regular KPI assignments for the month
+                $existingAssignments = KpiTaskAssignment::where('employee_id', $employee->id)
+                    ->where('kpi_type', 0) // Regular KPIs only
+                    ->where(function ($query) use ($month) {
+                        $startOfMonth = Carbon::createFromFormat('Y-m', $month)->startOfMonth();
+                        $endOfMonth = Carbon::createFromFormat('Y-m', $month)->endOfMonth();
+                        
+                        $query->where(function ($q) use ($startOfMonth, $endOfMonth) {
+                            $q->where('start_date', '<=', $endOfMonth)
+                            ->where('end_date', '>=', $startOfMonth);
+                        });
+                    })
+                    ->when($validated['kpi_task_id'], function ($query, $taskId) {
+                        // Exclude current task when editing
+                        return $query->where('id', '!=', $taskId);
+                    })
+                    ->get();
+
+                // Calculate total weights for existing assignments
+                $currentTotal = $existingAssignments->reduce(function ($total, $assignment) {
+                    return $total + collect($assignment->weights)->sum('percentage');
+                }, 0);
+
+                // Check if adding new weights would exceed 100%
+                if (($currentTotal + $newWeightsTotal) > 100) {
+                    $overLimitAssignees[] = [
+                        'id' => $employee->id,
+                        'name' => $employee->full_name,
+                        'currentTotal' => $currentTotal,
+                        'newTotal' => $currentTotal + $newWeightsTotal
+                    ];
+                }
+            }
+
+            return response()->json([
+                'hasOverLimit' => count($overLimitAssignees) > 0,
+                'overLimitAssignees' => $overLimitAssignees
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('Error checking assignee weights', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'error' => 'Failed to check assignee weights'
+            ], 500);
+        }
     }
 
     /**

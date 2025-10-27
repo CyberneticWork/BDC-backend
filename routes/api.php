@@ -307,3 +307,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/performance-appraisals/{id}/force', [App\Http\Controllers\PerformanceAppraisalController::class, 'forceDestroy']);
     Route::get('/performance-appraisals/stats/overview', [App\Http\Controllers\PerformanceAppraisalController::class, 'getStats']);
 });
+
+Route::middleware('auth:sanctum')->group(function () {
+    // Add this new route
+    Route::post('/pms/kpi-task-assignments/check-weights', [PmsController::class, 'checkAssigneeWeights']);
+});
