@@ -35,6 +35,7 @@ use App\Http\Controllers\CustomerCategoryController;
 use App\Http\Controllers\CustomerTypeController;
 use App\Http\Controllers\PerformanceEvaluationController;
 use App\Http\Controllers\PerformanceAppraisalController;
+use App\Http\Controllers\DiscountLevelController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -86,6 +87,16 @@ Route::get('/salary/update/status', [SalaryProcessController::class, 'updateSlar
 
 // Route::get('salary/{id}/audit', [SalaryController::class, 'getAuditLogs']);
 Route::apiResource('customers', CustomerController::class);
+
+// Discount levels (index/show are public; create/update/delete require auth)
+Route::get('/discount-levels', [DiscountLevelController::class, 'index']);
+Route::get('/discount-levels/{id}', [DiscountLevelController::class, 'show']);
+Route::middleware('auth:sanctum')->group(function () {
+    Route::post('/discount-levels', [DiscountLevelController::class, 'store']);
+    Route::put('/discount-levels/{id}', [DiscountLevelController::class, 'update']);
+    Route::delete('/discount-levels/{id}', [DiscountLevelController::class, 'destroy']);
+});
+
 Route::get('customer-categories', [CustomerCategoryController::class, 'index']);
 Route::post('customer-categories', [CustomerCategoryController::class, 'store']);
 Route::get('customer-types', [CustomerTypeController::class, 'index']);
