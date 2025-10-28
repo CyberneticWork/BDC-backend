@@ -18,6 +18,7 @@ use App\Imports\EmployeeDeductionsImport;
 use Illuminate\Support\Facades\Validator;
 use App\Models\loans;
 use App\Models\leave_master; // add this
+use Carbon\Carbon;
 
 
 class SalaryProcessController extends Controller
@@ -240,6 +241,9 @@ class SalaryProcessController extends Controller
         $year = $request->query('year');
         $company_id = $request->query('company_id');
         $department_id = $request->query('department_id');
+        // Optional KPI processing type: 'monthly' or '6month' (default none)
+        $kpiTypeRaw = strtolower((string) $request->query('kpi_type', ''));
+        $kpiType = in_array($kpiTypeRaw, ['monthly', '6month', 'six_month']) ? $kpiTypeRaw : '';
 
         // Build the date range strings for the query
         $startDate = "{$year}-{$month}-01";
@@ -505,13 +509,79 @@ class SalaryProcessController extends Controller
             $probationDeduction = $probationOverLimitDays * $perDaySalary;
             $adjustedBasic = $basicSalary - $noPayDeduction - $probationDeduction;
 
-            // 3. Allowances
+            // KPI calculations (optional)
+            $kpiAllowance = 0.0;        // monthly KPI that contributes to allowances (EPF base)
+            $kpiBonusAllowance = 0.0;   // six-month KPI bonus that does NOT contribute to EPF base
+
+            if ($kpiType === 'monthly') {
+                // Use average percentage for evaluations whose period overlaps the selected month
+                $percentage = DB::table('performance_evaluations')
+                    ->where('employee_id', $employeeData['id'])
+                    ->where(function ($q) use ($startDate, $endDate) {
+                        $q->where('start_date', '<=', $endDate)
+                            ->where('end_date', '>=', $startDate);
+                    })
+                    ->avg('percentage');
+
+                if (!is_null($percentage)) {
+                    $kpiAllowance = ($adjustedBasic * ((float) $percentage)) / 100.0;
+
+                    // Append as a synthetic allowance entry so it flows into total allowances and EPF base
+                    $allowances[] = [
+                        'id' => null,
+                        'name' => 'KPI Allowance',
+                        'amount' => round($kpiAllowance, 2),
+                        'is_custom' => 1,
+                        'code' => 'KPI',
+                        'category' => 'kpi'
+                    ];
+                }
+            } elseif ($kpiType === '6month' || $kpiType === 'six_month') {
+                // Previous 6-month window including selected month
+                $sixMonthStart = Carbon::parse($startDate)->subMonths(5)->startOfMonth()->toDateString();
+
+                $percentage = DB::table('performance_appraisals')
+                    ->where('employee_id', $employeeData['id'])
+                    ->where(function ($q) use ($sixMonthStart, $endDate) {
+                        $q->where('start_date', '<=', $endDate)
+                            ->where('end_date', '>=', $sixMonthStart);
+                    })
+                    ->avg('percentage');
+
+                if (!is_null($percentage)) {
+                    // This is treated as bonus allowance (excluded from EPF base)
+                    $kpiBonusAllowance = ($adjustedBasic * ((float) $percentage)) / 100.0;
+
+                    // Also add it to the allowances list for UI display, but mark as kpi_bonus
+                    $allowances[] = [
+                        'id' => null,
+                        'name' => 'KPI Bonus (6M)',
+                        'amount' => round($kpiBonusAllowance, 2),
+                        'is_custom' => 1,
+                        'code' => 'KPI6M',
+                        'category' => 'kpi_bonus'
+                    ];
+                }
+            }
+
+            // 3. Allowances (include monthly KPI if added above)
+            // Ensure the modified allowances array is reflected back on the payload
+            $employeeData['allowances'] = $allowances;
             $totalAllowances = array_reduce($allowances, function ($carry, $item) {
                 return $carry + (float) $item['amount'];
             }, 0);
 
+            // EPF/ETF eligibility: exclude KPI bonus (6M) from EPF base
+            $epfEligibleAllowances = array_reduce($allowances, function ($carry, $item) {
+                $category = isset($item['category']) ? strtolower((string) $item['category']) : '';
+                if ($category === 'kpi_bonus') {
+                    return $carry;
+                }
+                return $carry + (float) $item['amount'];
+            }, 0);
+
             // EPF/ETF base
-            $epfEtfBase = $adjustedBasic + $totalAllowances;
+            $epfEtfBase = $adjustedBasic + $epfEligibleAllowances;
 
             // 4. EPF 8%
             $epfEmployeeDeduction = $employeeData['enable_epf_etf'] ? $epfEtfBase * 0.08 : 0;
@@ -543,8 +613,8 @@ class SalaryProcessController extends Controller
                 $night_ot_fees = $night_ot_time * $employeeData['ot_night_rate'];
             }
 
-            // 7. Gross
-            $grossSalary = $epfEtfBase + $morning_ot_fees + $night_ot_fees;
+            // 7. Gross (include 6-month KPI bonus but exclude it from EPF base)
+            $grossSalary = $epfEtfBase + $morning_ot_fees + $night_ot_fees + $kpiBonusAllowance;
 
             // 8. Net (use adjusted installment)
             $totalDeductions = $totalFixedDeductions + $installmentAmount + $epfEmployeeDeduction;
@@ -564,6 +634,8 @@ class SalaryProcessController extends Controller
                 'no_pay_deduction' => $noPayDeduction,
                 'probation_over_limit_days' => $probationOverLimitDays,   // added
                 'probation_deduction' => $probationDeduction,            // added
+                'kpi_allowance' => round($kpiAllowance, 2),              // monthly KPI added to allowances
+                'kpi_bonus_allowance' => round($kpiBonusAllowance, 2),   // 6-month KPI bonus (excluded from EPF base)
                 'total_allowances' => $totalAllowances,
                 'epf_etf_base' => $epfEtfBase,
                 'epf_employee_deduction' => $epfEmployeeDeduction,
