@@ -36,6 +36,7 @@ use App\Http\Controllers\CustomerTypeController;
 use App\Http\Controllers\PerformanceEvaluationController;
 use App\Http\Controllers\PerformanceAppraisalController;
 use App\Http\Controllers\DiscountLevelController;
+use App\Http\Controllers\ProductTypeController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -311,7 +312,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/performance-evaluations/{id}', [App\Http\Controllers\PerformanceEvaluationController::class, 'show']);
     Route::put('/performance-evaluations/{id}', [App\Http\Controllers\PerformanceEvaluationController::class, 'update']);
     Route::delete('/performance-evaluations/{id}', [App\Http\Controllers\PerformanceEvaluationController::class, 'destroy']);
-    
+
     // Additional functionality
     Route::get('/performance-evaluations/employee/{employeeId}', [App\Http\Controllers\PerformanceEvaluationController::class, 'getByEmployee']);
 
@@ -331,7 +332,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/performance-appraisals/{id}', [App\Http\Controllers\PerformanceAppraisalController::class, 'show']);
     Route::put('/performance-appraisals/{id}', [App\Http\Controllers\PerformanceAppraisalController::class, 'update']);
     Route::delete('/performance-appraisals/{id}', [App\Http\Controllers\PerformanceAppraisalController::class, 'destroy']);
-    
+
     // Additional functionality
     Route::get('/performance-appraisals/employee/{employeeId}', [App\Http\Controllers\PerformanceAppraisalController::class, 'getByEmployee']);
     Route::get('/performance-appraisals/trashed/list', [App\Http\Controllers\PerformanceAppraisalController::class, 'getTrashed']);
@@ -344,3 +345,12 @@ Route::middleware('auth:sanctum')->group(function () {
 Route::get('/customer/email/{email}', [CustomerController::class, 'getByEmail']);
 Route::get('/customer/type/{typeId}', [CustomerController::class, 'getByType']);
 Route::get('/customer/name/{name}', [CustomerController::class, 'getByName']);
+
+// Product Type routes
+Route::apiResource('product-types', ProductTypeController::class);
+Route::post('product-types', [ProductTypeController::class, 'store']);
+Route::post('product-types/{id}/restore', [ProductTypeController::class, 'restore']);
+Route::post('product-types/{id}/status', [ProductTypeController::class, 'setStatus']);
+Route::get('product-types/trashed/list', [ProductTypeController::class, 'getTrashed']);
+Route::get('product-types/stats/overview', [ProductTypeController::class, 'getStats']);
+Route::delete('product-types/{id}/force', [ProductTypeController::class, 'forceDestroy']);
