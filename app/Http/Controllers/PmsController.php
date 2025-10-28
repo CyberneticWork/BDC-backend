@@ -3564,8 +3564,8 @@ class PmsController extends Controller
 
             // Apply pagination if not requesting a specific employee
             if (!$employeeId && $totalCount > $perPage) {
-                $assignments = $query->offset(($page - 1) * $perPage)
-                                    ->limit($perPage)
+                $assignments = $query->skip(($page - 1) * $perPage)
+                                    ->take($perPage)
                                     ->get();
             } else {
                 $assignments = $query->get();
@@ -3573,24 +3573,14 @@ class PmsController extends Controller
 
             // If no tasks are found, return empty result
             if ($assignments->isEmpty()) {
-                $response = [
-                    'message' => 'No completed tasks found within the specified date range.',
-                    'data' => []
-                ];
-
-                // Add pagination metadata if applicable
-                if (!$employeeId) {
-                    $response['meta'] = [
-                        'current_page' => $page,
-                        'per_page' => $perPage,
-                        'total' => 0,
-                        'last_page' => 1,
-                        'from' => 0,
-                        'to' => 0
-                    ];
-                }
-
-                return response()->json($response);
+                return response()->json([
+                    'message' => 'No completed performance appraisal tasks found within the specified date range.',
+                    'data' => [],
+                    'current_page' => $page,
+                    'per_page' => $perPage,
+                    'total' => 0,
+                    'last_page' => 1
+                ]);
             }
 
             // Group by employee
@@ -3622,15 +3612,26 @@ class PmsController extends Controller
                     continue; // Skip if no completed review found
                 }
 
-                // Get the LATEST task progress submission from the employee for self-rating
+                // UPDATED: Get the LATEST task progress submission rating (1-5) from employee for self-rating
                 $latestSubmission = $assignment->progressSubmissions()
                     ->orderBy('created_at', 'desc')
                     ->first();
                 
-                $employeeSelfRating = $latestSubmission ? $latestSubmission->progress_percentage : 0;
+                // Use the rating column (1-5) instead of progress_percentage
+                $employeeSelfRating = $latestSubmission && $latestSubmission->rating ? (int) $latestSubmission->rating : 0;
 
-                // Get supervisor rating from performance review
-                $supervisorRating = $review->progress;
+                // UPDATED: Get supervisor appraisal rating (1-5) from performance review instead of progress percentage
+                $supervisorRating = $review->appraisal_rating ? (int) $review->appraisal_rating : 0;
+
+                // Skip this task if either rating is missing (0)
+                if ($employeeSelfRating === 0 || $supervisorRating === 0) {
+                    \Log::warning('Skipping task due to missing ratings', [
+                        'assignment_id' => $assignment->id,
+                        'employee_self_rating' => $employeeSelfRating,
+                        'supervisor_rating' => $supervisorRating
+                    ]);
+                    continue;
+                }
 
                 // Add task details to the result
                 $employeeResults[$employeeId]['tasks'][] = [
@@ -3645,7 +3646,7 @@ class PmsController extends Controller
                     'review_date' => $review->updated_at->toISOString(),
                 ];
 
-                // Add to the employee's totals
+                // UPDATED: Add to the employee's TOTAL ratings (sum of 1-5 ratings)
                 $employeeResults[$employeeId]['total_self_rating'] += $employeeSelfRating;
                 $employeeResults[$employeeId]['total_supervisor_rating'] += $supervisorRating;
                 $employeeResults[$employeeId]['task_count']++;
@@ -3654,30 +3655,40 @@ class PmsController extends Controller
             // Calculate final percentages and grades for each employee
             foreach ($employeeResults as &$result) {
                 if ($result['task_count'] > 0) {
-                    // Calculate average self and supervisor ratings
-                    $avgSelfRating = $result['total_self_rating'] / $result['task_count'];
-                    $avgSupervisorRating = $result['total_supervisor_rating'] / $result['task_count'];
+                    // UPDATED CALCULATION: Sum all ratings, then find combined average
+                    $totalSelfRating = $result['total_self_rating'];
+                    $totalSupervisorRating = $result['total_supervisor_rating'];
                     
-                    // Calculate combined average: (Self Rating + Supervisor Rating) / 2
-                    $averageRating = ($avgSelfRating + $avgSupervisorRating) / 2;
+                    // Calculate combined average: (Total Self Rating + Total Supervisor Rating) / 2
+                    $averageRating = ($totalSelfRating + $totalSupervisorRating) / 2;
                     
-                    // Calculate final percentage: (Average / 60) * 100, capped at 100%
-                    $finalPercentage = min(100, max(0, round(($averageRating / 60) * 100)));
+                    // Calculate dividend based on task count (5 points per appraisal task)
+                    $dividend = $result['task_count'] * 5;
+                    
+                    // Calculate final percentage: (Average / dividend) * 100, capped at 100%
+                    $finalPercentage = min(100, max(0, round(($averageRating / $dividend) * 100)));
                     
                     // Assign grade based on percentage using appraisal grading system
                     $grade = $this->getAppraisalGrade($finalPercentage);
 
-                    $result['employee_self_rating'] = round($avgSelfRating, 1);
-                    $result['supervisor_rating'] = round($avgSupervisorRating, 1);
+                    // UPDATED: Store the totals and averages properly (now using ratings 1-5)
+                    $result['total_self_rating_sum'] = $totalSelfRating; // Sum of all self ratings (1-5)
+                    $result['total_supervisor_rating_sum'] = $totalSupervisorRating; // Sum of all supervisor ratings (1-5)
+                    $result['employee_self_rating'] = round($totalSelfRating, 1); // Display as sum of ratings
+                    $result['supervisor_rating'] = round($totalSupervisorRating, 1); // Display as sum of ratings
                     $result['average_rating'] = round($averageRating, 2);
+                    $result['dividend'] = $dividend; // Add dividend to response for transparency
                     $result['percentage'] = $finalPercentage;
                     $result['grade'] = $grade['grade'];
                     $result['performance_label'] = $grade['label'];
                     $result['performance_description'] = $grade['description'] ?? null;
                 } else {
+                    $result['total_self_rating_sum'] = 0;
+                    $result['total_supervisor_rating_sum'] = 0;
                     $result['employee_self_rating'] = 0;
                     $result['supervisor_rating'] = 0;
                     $result['average_rating'] = 0;
+                    $result['dividend'] = 0;
                     $result['percentage'] = 0;
                     $result['grade'] = 'N/A';
                     $result['performance_label'] = 'No Data';
@@ -3698,20 +3709,21 @@ class PmsController extends Controller
 
             // Return paginated results
             $response = [
-                'data' => $responseData
+                'data' => $responseData,
+                'current_page' => $page,
+                'per_page' => $perPage,
+                'total' => $totalCount
             ];
 
             // Add pagination metadata if we have multiple pages
             if ($totalCount > $perPage) {
-                $lastPage = ceil($totalCount / $perPage);
-                $response['meta'] = [
-                    'current_page' => $page,
-                    'per_page' => $perPage,
-                    'total' => $totalCount,
-                    'last_page' => $lastPage,
-                    'from' => (($page - 1) * $perPage) + 1,
-                    'to' => min($page * $perPage, $totalCount)
-                ];
+                $response['last_page'] = ceil($totalCount / $perPage);
+                $response['from'] = (($page - 1) * $perPage) + 1;
+                $response['to'] = min($page * $perPage, $totalCount);
+            } else {
+                $response['last_page'] = 1;
+                $response['from'] = $totalCount > 0 ? 1 : 0;
+                $response['to'] = $totalCount;
             }
 
             return response()->json($response);
