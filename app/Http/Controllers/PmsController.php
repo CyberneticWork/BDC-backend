@@ -3747,14 +3747,15 @@ class PmsController extends Controller
     {
         try {
             $validated = $request->validate([
-                'employee_id' => 'required|exists:employees,id',
+                'employee_id' => 'required|integer|exists:employees,id',
+                'appraiser_id' => 'nullable|integer|exists:users,id',
                 'start_date' => 'required|date',
                 'end_date' => 'required|date|after_or_equal:start_date',
-                'employee_self_rating' => 'required|integer|min:0|max:100',
-                'supervisor_rating' => 'required|integer|min:0|max:100',
-                'average_rating' => 'required|numeric|min:0|max:100',
+                'employee_self_rating' => 'required|integer|min:0',
+                'supervisor_rating' => 'required|integer|min:0',
+                'average_rating' => 'required|numeric|min:0',
                 'percentage' => 'required|integer|min:0|max:100',
-                'grade' => 'required|string|max:10',
+                'grade' => 'required|string|max:5',
                 'performance_label' => 'required|string|max:255',
                 'calculation_details' => 'required|array',
                 'task_count' => 'required|integer|min:0',
@@ -3763,33 +3764,103 @@ class PmsController extends Controller
                 'status' => 'nullable|string|in:Draft,Completed,Pending Review'
             ]);
 
-            $appraisal = PerformanceAppraisal::create([
-                'employee_id' => $validated['employee_id'],
-                'appraiser_id' => auth()->id(),
-                'start_date' => $validated['start_date'],
-                'end_date' => $validated['end_date'],
-                'employee_self_rating' => $validated['employee_self_rating'],
-                'supervisor_rating' => $validated['supervisor_rating'],
-                'average_rating' => $validated['average_rating'],
-                'percentage' => $validated['percentage'],
-                'grade' => $validated['grade'],
-                'performance_label' => $validated['performance_label'],
-                'calculation_details' => $validated['calculation_details'],
-                'task_count' => $validated['task_count'],
-                'supervisor_comments' => $validated['supervisor_comments'] ?? null,
-                'employee_comments' => $validated['employee_comments'] ?? null,
-                'status' => $validated['status'] ?? 'Draft'
-            ]);
+            // Set default values
+            $validated['appraiser_id'] = $validated['appraiser_id'] ?? auth()->id() ?? 1;
+            $validated['status'] = $validated['status'] ?? 'Completed';
+
+            // Check for existing appraisal with same employee and exact date range (including soft-deleted records)
+            $existingAppraisal = PerformanceAppraisal::withTrashed()
+                ->where('employee_id', $validated['employee_id'])
+                ->where('start_date', $validated['start_date'])
+                ->where('end_date', $validated['end_date'])
+                ->first();
+
+            if ($existingAppraisal) {
+                // If the existing record is soft-deleted, we can restore and update it
+                if ($existingAppraisal->trashed()) {
+                    // Restore the soft-deleted record
+                    $existingAppraisal->restore();
+                    
+                    // Update with new data
+                    $existingAppraisal->update($validated);
+                    $existingAppraisal->load(['employee:id,full_name,attendance_employee_no', 'appraiser:id,name']);
+                    
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Performance appraisal restored and updated successfully',
+                        'data' => $existingAppraisal,
+                        'action' => 'restored_and_updated'
+                    ], 200);
+                }
+
+                // If not soft-deleted, check if the data is actually different (excluding timestamps and ID)
+                $newDataHash = md5(serialize([
+                    'employee_self_rating' => $validated['employee_self_rating'],
+                    'supervisor_rating' => $validated['supervisor_rating'],
+                    'average_rating' => (float) $validated['average_rating'],
+                    'percentage' => $validated['percentage'],
+                    'grade' => $validated['grade'],
+                    'performance_label' => $validated['performance_label'],
+                    'calculation_details' => $validated['calculation_details'],
+                    'task_count' => $validated['task_count'],
+                    'supervisor_comments' => $validated['supervisor_comments'] ?? null,
+                    'employee_comments' => $validated['employee_comments'] ?? null,
+                ]));
+
+                $existingDataHash = md5(serialize([
+                    'employee_self_rating' => $existingAppraisal->employee_self_rating,
+                    'supervisor_rating' => $existingAppraisal->supervisor_rating,
+                    'average_rating' => (float) $existingAppraisal->average_rating,
+                    'percentage' => $existingAppraisal->percentage,
+                    'grade' => $existingAppraisal->grade,
+                    'performance_label' => $existingAppraisal->performance_label,
+                    'calculation_details' => $existingAppraisal->calculation_details,
+                    'task_count' => $existingAppraisal->task_count,
+                    'supervisor_comments' => $existingAppraisal->supervisor_comments,
+                    'employee_comments' => $existingAppraisal->employee_comments,
+                ]));
+
+                if ($newDataHash === $existingDataHash) {
+                    // Data is exactly the same - return duplicate error
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Performance appraisal with identical data already exists for this employee and date range',
+                        'error_type' => 'duplicate_data',
+                        'existing_id' => $existingAppraisal->id,
+                        'existing_created_at' => $existingAppraisal->created_at->format('Y-m-d H:i:s')
+                    ], 409);
+                } else {
+                    // Data is different - update the existing record
+                    $existingAppraisal->update($validated);
+                    $existingAppraisal->load(['employee:id,full_name,attendance_employee_no', 'appraiser:id,name']);
+                    
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Performance appraisal updated successfully (data was different)',
+                        'data' => $existingAppraisal,
+                        'action' => 'updated'
+                    ], 200);
+                }
+            }
+
+            // No existing record found - create new appraisal
+            $appraisal = PerformanceAppraisal::create($validated);
+
+            // Load relationships for the response
+            $appraisal->load(['employee:id,full_name,attendance_employee_no', 'appraiser:id,name']);
 
             return response()->json([
+                'success' => true,
                 'message' => 'Performance appraisal saved successfully',
-                'appraisal' => $appraisal->load(['employee', 'appraiser'])
+                'data' => $appraisal,
+                'action' => 'created'
             ], 201);
 
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
-                'error' => 'Validation failed',
-                'details' => $e->errors()
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $e->errors()
             ], 422);
         } catch (\Exception $e) {
             \Log::error('Error saving performance appraisal', [
@@ -3798,7 +3869,8 @@ class PmsController extends Controller
             ]);
 
             return response()->json([
-                'error' => 'Failed to save performance appraisal: ' . $e->getMessage()
+                'success' => false,
+                'message' => 'Failed to save performance appraisal: ' . $e->getMessage()
             ], 500);
         }
     }
