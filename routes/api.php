@@ -36,6 +36,8 @@ use App\Http\Controllers\CustomerTypeController;
 use App\Http\Controllers\PerformanceEvaluationController;
 use App\Http\Controllers\PerformanceAppraisalController;
 use App\Http\Controllers\JournalEntryController;
+use App\Http\Controllers\DiscountLevelController;
+use App\Http\Controllers\ProductTypeController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -83,8 +85,20 @@ Route::post('/salary/process/fetchExcelData', [SalaryProcessController::class, '
 Route::post('/salary/process/importExcelData', [SalaryProcessController::class, 'importExcelData']);
 Route::get('/salary/update/status', [SalaryProcessController::class, 'updateSlaryStatus']);
 // Route::apiResource('salary', SalaryController::class);
+
+
 // Route::get('salary/{id}/audit', [SalaryController::class, 'getAuditLogs']);
 Route::apiResource('customers', CustomerController::class);
+
+// Discount levels (index/show are public; create/update/delete require auth)
+Route::get('/discount-levels', [DiscountLevelController::class, 'index']);
+Route::get('/discount-levels/{id}', [DiscountLevelController::class, 'show']);
+Route::middleware('auth:sanctum')->group(function () {
+    Route::post('/discount-levels', [DiscountLevelController::class, 'store']);
+    Route::put('/discount-levels/{id}', [DiscountLevelController::class, 'update']);
+    Route::delete('/discount-levels/{id}', [DiscountLevelController::class, 'destroy']);
+});
+
 Route::get('customer-categories', [CustomerCategoryController::class, 'index']);
 Route::post('customer-categories', [CustomerCategoryController::class, 'store']);
 Route::get('customer-types', [CustomerTypeController::class, 'index']);
@@ -301,7 +315,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/performance-evaluations/{id}', [App\Http\Controllers\PerformanceEvaluationController::class, 'show']);
     Route::put('/performance-evaluations/{id}', [App\Http\Controllers\PerformanceEvaluationController::class, 'update']);
     Route::delete('/performance-evaluations/{id}', [App\Http\Controllers\PerformanceEvaluationController::class, 'destroy']);
-    
+
     // Additional functionality
     Route::get('/performance-evaluations/employee/{employeeId}', [App\Http\Controllers\PerformanceEvaluationController::class, 'getByEmployee']);
 
@@ -321,7 +335,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/performance-appraisals/{id}', [App\Http\Controllers\PerformanceAppraisalController::class, 'show']);
     Route::put('/performance-appraisals/{id}', [App\Http\Controllers\PerformanceAppraisalController::class, 'update']);
     Route::delete('/performance-appraisals/{id}', [App\Http\Controllers\PerformanceAppraisalController::class, 'destroy']);
-    
+
     // Additional functionality
     Route::get('/performance-appraisals/employee/{employeeId}', [App\Http\Controllers\PerformanceAppraisalController::class, 'getByEmployee']);
     Route::get('/performance-appraisals/trashed/list', [App\Http\Controllers\PerformanceAppraisalController::class, 'getTrashed']);
@@ -329,3 +343,17 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/performance-appraisals/{id}/force', [App\Http\Controllers\PerformanceAppraisalController::class, 'forceDestroy']);
     Route::get('/performance-appraisals/stats/overview', [App\Http\Controllers\PerformanceAppraisalController::class, 'getStats']);
 });
+
+//  Customer routes
+Route::get('/customer/email/{email}', [CustomerController::class, 'getByEmail']);
+Route::get('/customer/type/{typeId}', [CustomerController::class, 'getByType']);
+Route::get('/customer/name/{name}', [CustomerController::class, 'getByName']);
+
+// Product Type routes
+Route::apiResource('product-types', ProductTypeController::class);
+Route::post('product-types', [ProductTypeController::class, 'store']);
+Route::post('product-types/{id}/restore', [ProductTypeController::class, 'restore']);
+Route::post('product-types/{id}/status', [ProductTypeController::class, 'setStatus']);
+Route::get('product-types/trashed/list', [ProductTypeController::class, 'getTrashed']);
+Route::get('product-types/stats/overview', [ProductTypeController::class, 'getStats']);
+Route::delete('product-types/{id}/force', [ProductTypeController::class, 'forceDestroy']);
