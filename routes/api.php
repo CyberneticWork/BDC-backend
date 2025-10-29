@@ -38,6 +38,7 @@ use App\Http\Controllers\PerformanceAppraisalController;
 use App\Http\Controllers\JournalEntryController;
 use App\Http\Controllers\DiscountLevelController;
 use App\Http\Controllers\ProductTypeController;
+use App\Http\Controllers\ProductController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -357,3 +358,6 @@ Route::post('product-types/{id}/status', [ProductTypeController::class, 'setStat
 Route::get('product-types/trashed/list', [ProductTypeController::class, 'getTrashed']);
 Route::get('product-types/stats/overview', [ProductTypeController::class, 'getStats']);
 Route::delete('product-types/{id}/force', [ProductTypeController::class, 'forceDestroy']);
+
+// Product routes
+Route::apiResource('products', ProductController::class);
