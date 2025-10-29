@@ -8,4 +8,11 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 class designation extends Model
 {
     use SoftDeletes;
+
+    protected $fillable = [
+        'name',
+        'description',
+        'level',
+        'status',
+    ];
 }

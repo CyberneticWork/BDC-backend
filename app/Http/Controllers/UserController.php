@@ -78,8 +78,7 @@ class UserController extends Controller
             'name' => 'sometimes|string|max:255',
             'email' => 'sometimes|string|email|max:255|unique:users,email,' . $id,
             'password' => 'sometimes|nullable|string|min:8',
-            'role' => 'sometimes|string|in:admin,hr,user',
-            'supervisor',
+            'role' => 'sometimes|string|in:admin,hr,user,supervisor',
         ]);
 
         if ($validator->fails()) {
