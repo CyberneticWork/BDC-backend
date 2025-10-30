@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use App\Models\User;
 
 class product extends Model
 {
@@ -17,6 +18,7 @@ class product extends Model
         'cost',
         'description',
         'discount_level_id',
+        'created_by',
         'is_active',
         'min_price',
         'mrp',
@@ -40,5 +42,10 @@ class product extends Model
     public function productType()
     {
         return $this->belongsTo(ProductType::class, 'product_type_id');
+    }
+
+    public function creator()
+    {
+        return $this->belongsTo(User::class, 'created_by');
     }
 }

@@ -17,6 +17,7 @@ return new class extends Migration {
             $table->decimal('cost', 10, 2);
             $table->text('description');
             $table->foreignId('discount_level_id')->constrained('discount_levels');
+            $table->foreignId('created_by')->constrained('users');
             $table->boolean('is_active')->default(true);
             $table->decimal('min_price', 10, 2);
             $table->decimal('mrp', 10, 2);

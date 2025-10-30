@@ -348,6 +348,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
     //Center routes
     Route::apiResource('centers', CentersController::class);
+    Route::apiResource('products', ProductController::class);
+
 });
 
 //  Customer routes
@@ -365,4 +367,3 @@ Route::get('product-types/stats/overview', [ProductTypeController::class, 'getSt
 Route::delete('product-types/{id}/force', [ProductTypeController::class, 'forceDestroy']);
 
 // Product routes
-Route::apiResource('products', ProductController::class);

@@ -22,12 +22,31 @@ class ProductController extends Controller
      */
     public function store(Request $request)
     {
-        $validator = Validator::make($request->all(), [
+        // Accept frontend-friendly keys and map them to DB columns
+        $data = $request->all();
+        if (isset($data['discountLevel'])) {
+            $data['discount_level_id'] = $data['discountLevel'];
+        }
+        if (isset($data['productType'])) {
+            $data['product_type_id'] = $data['productType'];
+        }
+        if (isset($data['minPrice'])) {
+            $data['min_price'] = $data['minPrice'];
+        }
+        if (isset($data['oemNumbers'])) {
+            $data['oem_numbers'] = $data['oemNumbers'];
+        }
+        if (isset($data['isActive'])) {
+            $data['is_active'] = $data['isActive'];
+        }
+
+        $validator = Validator::make($data, [
             'barcode' => 'required|string',
             'code' => 'required|string|unique:products',
             'cost' => 'required|numeric|min:0',
             'description' => 'nullable|string',
             'discount_level_id' => 'required|exists:discount_levels,id',
+            'created_by' => 'required|integer|exists:users,id',
             'is_active' => 'boolean',
             'min_price' => 'required|numeric|min:0',
             'mrp' => 'required|numeric|min:0',
@@ -40,7 +59,7 @@ class ProductController extends Controller
             return response()->json($validator->errors(), 422);
         }
 
-        $product = product::create($request->all());
+        $product = product::create($data);
         return response()->json($product, 201);
     }
 
@@ -58,12 +77,31 @@ class ProductController extends Controller
      */
     public function update(Request $request, product $product)
     {
-        $validator = Validator::make($request->all(), [
+        // Map frontend keys to DB fields first
+        $data = $request->all();
+        if (isset($data['discountLevel'])) {
+            $data['discount_level_id'] = $data['discountLevel'];
+        }
+        if (isset($data['productType'])) {
+            $data['product_type_id'] = $data['productType'];
+        }
+        if (isset($data['minPrice'])) {
+            $data['min_price'] = $data['minPrice'];
+        }
+        if (isset($data['oemNumbers'])) {
+            $data['oem_numbers'] = $data['oemNumbers'];
+        }
+        if (isset($data['isActive'])) {
+            $data['is_active'] = $data['isActive'];
+        }
+
+        $validator = Validator::make($data, [
             'barcode' => 'string',
             'code' => 'string|unique:products,code,' . $product->id,
             'cost' => 'numeric|min:0',
             'description' => 'nullable|string',
             'discount_level_id' => 'exists:discount_levels,id',
+            'created_by' => 'integer|exists:users,id',
             'is_active' => 'boolean',
             'min_price' => 'numeric|min:0',
             'mrp' => 'numeric|min:0',
@@ -76,7 +114,7 @@ class ProductController extends Controller
             return response()->json($validator->errors(), 422);
         }
 
-        $product->update($request->all());
+        $product->update($data);
         return response()->json($product);
     }
 
