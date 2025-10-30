@@ -39,6 +39,8 @@ use App\Http\Controllers\JournalEntryController;
 use App\Http\Controllers\DiscountLevelController;
 use App\Http\Controllers\ProductTypeController;
 use App\Http\Controllers\ProductController;
+use App\Http\Controllers\CentersController;
+
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -343,6 +345,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/performance-appraisals/{id}/restore', [App\Http\Controllers\PerformanceAppraisalController::class, 'restore']);
     Route::delete('/performance-appraisals/{id}/force', [App\Http\Controllers\PerformanceAppraisalController::class, 'forceDestroy']);
     Route::get('/performance-appraisals/stats/overview', [App\Http\Controllers\PerformanceAppraisalController::class, 'getStats']);
+
+    //Center routes
+    Route::apiResource('centers', CentersController::class);
 });
 
 //  Customer routes
