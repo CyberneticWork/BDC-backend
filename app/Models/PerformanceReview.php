@@ -17,8 +17,9 @@ class PerformanceReview extends Model
         'supervisor_id',
         'progress',
         'grade',
-        'appraisal_rating', // Add this new field
+        'appraisal_rating',
         'supervisor_comments',
+        'practical_feedback',
         'status',
         'review_type',
         'review_cycle',

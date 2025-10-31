@@ -117,6 +117,7 @@ class PerformanceAppraisalController extends Controller
                 'task_count' => 'required|integer|min:0',
                 'supervisor_comments' => 'nullable|string',
                 'employee_comments' => 'nullable|string',
+                'practical_feedback' => 'nullable|string|max:2000', // Add this line
                 'status' => 'nullable|string|in:Draft,Completed,Pending Review'
             ]);
 
@@ -184,6 +185,7 @@ class PerformanceAppraisalController extends Controller
                 'appraisals.*.task_count' => 'required|integer|min:0',
                 'appraisals.*.supervisor_comments' => 'nullable|string',
                 'appraisals.*.employee_comments' => 'nullable|string',
+                'appraisals.*.practical_feedback' => 'nullable|string|max:2000', // Add this line
                 'appraisals.*.status' => 'nullable|string|in:Draft,Completed,Pending Review'
             ]);
 
