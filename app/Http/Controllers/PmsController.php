@@ -1563,6 +1563,7 @@ class PmsController extends Controller
                     'grade' => $existingReview->grade,
                     'appraisal_rating' => $existingReview->appraisal_rating,
                     'supervisorComments' => $existingReview->supervisor_comments,
+                    'practicalFeedback' => $existingReview->practical_feedback,
                     'status' => $existingReview->status,
                     'performanceMetrics' => $existingReview->performance_metrics,
                     'createdAt' => $existingReview->created_at->toISOString(),
