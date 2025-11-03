@@ -40,6 +40,7 @@ use App\Http\Controllers\DiscountLevelController;
 use App\Http\Controllers\ProductTypeController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\CentersController;
+use App\Http\Controllers\InventoryController;
 
 
 Route::get('/user', function (Request $request) {
@@ -367,3 +368,8 @@ Route::get('product-types/stats/overview', [ProductTypeController::class, 'getSt
 Route::delete('product-types/{id}/force', [ProductTypeController::class, 'forceDestroy']);
 
 // Product routes
+
+// Inventory routes
+Route::post('/grn', [InventoryController::class, 'store']);
+Route::apiResource('inventories', InventoryController::class);
+
