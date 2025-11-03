@@ -367,9 +367,9 @@ Route::get('product-types/trashed/list', [ProductTypeController::class, 'getTras
 Route::get('product-types/stats/overview', [ProductTypeController::class, 'getStats']);
 Route::delete('product-types/{id}/force', [ProductTypeController::class, 'forceDestroy']);
 
-// Product routes
+
 
 // Inventory routes
-Route::post('/grn', [InventoryController::class, 'store']);
+
 Route::apiResource('inventories', InventoryController::class);
 

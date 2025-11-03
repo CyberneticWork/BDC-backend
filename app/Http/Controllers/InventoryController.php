@@ -124,4 +124,149 @@ class InventoryController extends Controller
             ], 201);
       }
 
+      // GET /api/inventories/{id} -> return a single inventory record
+      public function show($id)
+      {
+            $record = Inventory::with([
+                  'creator:id,name',
+                  'approver:id,name',
+            ])->find($id);
+
+            if (!$record) {
+                  return response()->json([
+                        'message' => 'Inventory record not found.'
+                  ], 404);
+            }
+
+            return response()->json([
+                  'data' => $record,
+            ], 200);
+      }
+
+      // PUT/PATCH /api/inventories/{id} -> update an inventory record
+      public function update(Request $request, $id)
+      {
+            $record = Inventory::find($id);
+            if (!$record) {
+                  return response()->json([
+                        'message' => 'Inventory record not found.'
+                  ], 404);
+            }
+
+            // Flexible inputs similar to store()
+            $voucherNumber = $request->input('voucherNumber')
+                  ?? $request->input('grnNumber')
+                  ?? $request->input('id');
+
+            $referNumber = $request->input('referNumber')
+                  ?? $request->input('refNumber');
+
+            $discountValue = $request->input('discountValue');
+            if ($discountValue === null) {
+                  $discountValue = $request->input('discount');
+            }
+
+            $amount = $request->input('amount');
+            if ($amount === null) {
+                  $amount = $request->input('total', $request->input('totalAmount'));
+            }
+
+            $paid_value = $request->input('paid_value');
+            if ($paid_value === null) {
+                  $paid_value = $request->input('paid');
+            }
+
+            $quantity = $request->input('quantity');
+            if ($quantity === null) {
+                  $quantity = $request->input('qty');
+            }
+
+            $unitPrice = $request->input('unitPrice');
+
+            // If items[] are provided, derive sensible defaults when missing
+            $items = $request->input('items', []);
+            if (is_array($items) && count($items) > 0) {
+                  if ($quantity === null) {
+                        $quantity = collect($items)->sum(function ($it) {
+                              return (int)($it['quantity'] ?? 0);
+                        });
+                  }
+                  if ($unitPrice === null) {
+                        $firstItem = $items[0];
+                        $unitPrice = (float)($firstItem['unitPrice'] ?? 0);
+                  }
+                  if ($amount === null || (float)$amount <= 0) {
+                        $amount = collect($items)->sum(function ($it) {
+                              $q = (float)($it['quantity'] ?? 0);
+                              $u = (float)($it['unitPrice'] ?? 0);
+                              return $q * $u;
+                        });
+                  }
+            }
+
+            // Optional status, restrict to allowed enum values
+            $status = $request->input('status');
+            $allowedStatus = ['pending', 'reject', 'completed'];
+            if ($status !== null && !in_array($status, $allowedStatus, true)) {
+                  return response()->json([
+                        'message' => 'Invalid status value. Allowed: pending, reject, completed.'
+                  ], 422);
+            }
+
+            // Foreign keys
+            $center_id   = $request->input('center_id');
+            $supplier_id = $request->input('supplier_id');
+            $customer_id = $request->input('customer_id');
+            $from_center = $request->input('from_center');
+            $to_center   = $request->input('to_center');
+
+            // Build payload using only provided values
+            $payload = [];
+            if ($voucherNumber !== null) $payload['voucherNumber'] = (string)$voucherNumber;
+            if ($unitPrice !== null)     $payload['unitPrice'] = (float)$unitPrice;
+            if ($quantity !== null)      $payload['quantity'] = (int)$quantity;
+            if ($amount !== null)        $payload['amount'] = (float)$amount;
+            if ($paid_value !== null)    $payload['paid_value'] = (float)$paid_value;
+            if ($discountValue !== null) $payload['discountValue'] = (float)$discountValue;
+            if ($referNumber !== null)   $payload['referNumber'] = $referNumber ? (string)$referNumber : null;
+            if ($status !== null)        $payload['status'] = $status;
+            if ($center_id !== null)     $payload['center_id'] = $center_id ?: null;
+            if ($supplier_id !== null)   $payload['supplier_id'] = $supplier_id ?: null;
+            if ($customer_id !== null)   $payload['customer_id'] = $customer_id ?: null;
+            if ($from_center !== null)   $payload['from_center'] = $from_center ?: null;
+            if ($to_center !== null)     $payload['to_center'] = $to_center ?: null;
+
+            if (empty($payload)) {
+                  return response()->json([
+                        'message' => 'No updatable fields provided.'
+                  ], 422);
+            }
+
+            $record->update($payload);
+
+            $record->load(['creator:id,name', 'approver:id,name']);
+
+            return response()->json([
+                  'message' => 'Inventory updated successfully',
+                  'data' => $record,
+            ], 200);
+      }
+
+      // DELETE /api/inventories/{id} -> soft delete an inventory
+      public function destroy($id)
+      {
+            $record = Inventory::find($id);
+            if (!$record) {
+                  return response()->json([
+                        'message' => 'Inventory record not found.'
+                  ], 404);
+            }
+
+            $record->delete();
+
+            return response()->json([
+                  'message' => 'Inventory deleted successfully'
+            ], 200);
+      }
+
 }

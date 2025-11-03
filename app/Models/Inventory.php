@@ -22,6 +22,11 @@ class Inventory extends Model
         'discountValue',
         'referNumber',
         'status',
+        'center_id',
+        'supplier_id',
+        'customer_id',
+        'from_center',
+        'to_center',
         'created_by',
         'approved_by',
     ];
