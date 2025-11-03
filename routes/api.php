@@ -367,3 +367,7 @@ Route::get('product-types/stats/overview', [ProductTypeController::class, 'getSt
 Route::delete('product-types/{id}/force', [ProductTypeController::class, 'forceDestroy']);
 
 // Product routes
+Route::middleware('auth:sanctum')->group(function () {
+    // Add this new route
+    Route::post('/pms/kpi-task-assignments/check-weights', [PmsController::class, 'checkAssigneeWeights']);
+});

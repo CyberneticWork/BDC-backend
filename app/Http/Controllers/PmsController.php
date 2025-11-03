@@ -168,17 +168,31 @@ class PmsController extends Controller
 
             // Check for existing assignment with same task, employee, and overlapping date range
             $existingAssignment = KpiTaskAssignment::where('kpi_task_id', $kpiTask->id)
-                ->where('employee_id', $employee->id)
-                ->where(function ($query) use ($validated) {
-                    // Check for date range overlap
-                    // Overlap exists if: (start1 <= end2) AND (start2 <= end1)
-                    $query->where(function ($q) use ($validated) {
-                        $q->where('start_date', '<=', $validated['end_date'])
-                            ->where('end_date', '>=', $validated['start_date']);
+            ->where('employee_id', $employee->id)
+            ->where(function ($query) use ($validated) {
+                // Only consider it a duplicate if it's exactly the same date range
+                // or if there's a significant overlap (more than just 1 day)
+                $query->where(function ($q) use ($validated) {
+                    // Exact same date range
+                    $q->where('start_date', $validated['start_date'])
+                    ->where('end_date', $validated['end_date']);
+                })->orWhere(function ($q) use ($validated) {
+                    // Or significant overlap (more than 50% of the shorter period)
+                    $newStart = $validated['start_date'];
+                    $newEnd = $validated['end_date'];
+                    
+                    // Calculate if there's substantial overlap
+                    $q->where(function ($subQ) use ($newStart, $newEnd) {
+                        $subQ->where('start_date', '<=', $newStart)
+                            ->where('end_date', '>=', $newEnd); // Existing completely contains new
+                    })->orWhere(function ($subQ) use ($newStart, $newEnd) {
+                        $subQ->where('start_date', '>=', $newStart)
+                            ->where('end_date', '<=', $newEnd); // New completely contains existing
                     });
-                })
-                ->whereNull('deleted_at') // Only check non-deleted assignments
-                ->first();
+                });
+            })
+            ->whereNull('deleted_at')
+            ->first();
 
             if ($existingAssignment) {
                 // Found duplicate - add to list
@@ -351,6 +365,80 @@ class PmsController extends Controller
             'assignments' => $assignments,
             'total_created' => count($assignments)
         ], 201);
+    }
+
+    /**
+     * Check if assigning KPI would exceed weight limits for assignees
+     */
+    public function checkAssigneeWeights(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'assignees' => 'required|array',
+                'assignees.*' => 'required|string',
+                'start_date' => 'required|date',
+                'end_date' => 'required|date|after_or_equal:start_date',
+                'weights' => 'required|array',
+                'kpi_task_id' => 'nullable|exists:kpi_tasks,id'
+            ]);
+
+            $month = Carbon::parse($validated['start_date'])->format('Y-m');
+            $newWeightsTotal = collect($validated['weights'])->sum('percentage');
+            $overLimitAssignees = [];
+
+            foreach ($validated['assignees'] as $attendanceNo) {
+                $employee = Employee::where('attendance_employee_no', $attendanceNo)->first();
+                if (!$employee) continue;
+
+                // Get existing regular KPI assignments for the month
+                $existingAssignments = KpiTaskAssignment::where('employee_id', $employee->id)
+                    ->where('kpi_type', 0) // Regular KPIs only
+                    ->where(function ($query) use ($month) {
+                        $startOfMonth = Carbon::createFromFormat('Y-m', $month)->startOfMonth();
+                        $endOfMonth = Carbon::createFromFormat('Y-m', $month)->endOfMonth();
+                        
+                        $query->where(function ($q) use ($startOfMonth, $endOfMonth) {
+                            $q->where('start_date', '<=', $endOfMonth)
+                            ->where('end_date', '>=', $startOfMonth);
+                        });
+                    })
+                    ->when($validated['kpi_task_id'], function ($query, $taskId) {
+                        // Exclude current task when editing
+                        return $query->where('id', '!=', $taskId);
+                    })
+                    ->get();
+
+                // Calculate total weights for existing assignments
+                $currentTotal = $existingAssignments->reduce(function ($total, $assignment) {
+                    return $total + collect($assignment->weights)->sum('percentage');
+                }, 0);
+
+                // Check if adding new weights would exceed 100%
+                if (($currentTotal + $newWeightsTotal) > 100) {
+                    $overLimitAssignees[] = [
+                        'id' => $employee->id,
+                        'name' => $employee->full_name,
+                        'currentTotal' => $currentTotal,
+                        'newTotal' => $currentTotal + $newWeightsTotal
+                    ];
+                }
+            }
+
+            return response()->json([
+                'hasOverLimit' => count($overLimitAssignees) > 0,
+                'overLimitAssignees' => $overLimitAssignees
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('Error checking assignee weights', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'error' => 'Failed to check assignee weights'
+            ], 500);
+        }
     }
 
     /**
@@ -3476,8 +3564,8 @@ class PmsController extends Controller
 
             // Apply pagination if not requesting a specific employee
             if (!$employeeId && $totalCount > $perPage) {
-                $assignments = $query->offset(($page - 1) * $perPage)
-                                    ->limit($perPage)
+                $assignments = $query->skip(($page - 1) * $perPage)
+                                    ->take($perPage)
                                     ->get();
             } else {
                 $assignments = $query->get();
@@ -3485,24 +3573,14 @@ class PmsController extends Controller
 
             // If no tasks are found, return empty result
             if ($assignments->isEmpty()) {
-                $response = [
-                    'message' => 'No completed tasks found within the specified date range.',
-                    'data' => []
-                ];
-
-                // Add pagination metadata if applicable
-                if (!$employeeId) {
-                    $response['meta'] = [
-                        'current_page' => $page,
-                        'per_page' => $perPage,
-                        'total' => 0,
-                        'last_page' => 1,
-                        'from' => 0,
-                        'to' => 0
-                    ];
-                }
-
-                return response()->json($response);
+                return response()->json([
+                    'message' => 'No completed performance appraisal tasks found within the specified date range.',
+                    'data' => [],
+                    'current_page' => $page,
+                    'per_page' => $perPage,
+                    'total' => 0,
+                    'last_page' => 1
+                ]);
             }
 
             // Group by employee
@@ -3534,15 +3612,26 @@ class PmsController extends Controller
                     continue; // Skip if no completed review found
                 }
 
-                // Get the LATEST task progress submission from the employee for self-rating
+                // UPDATED: Get the LATEST task progress submission rating (1-5) from employee for self-rating
                 $latestSubmission = $assignment->progressSubmissions()
                     ->orderBy('created_at', 'desc')
                     ->first();
                 
-                $employeeSelfRating = $latestSubmission ? $latestSubmission->progress_percentage : 0;
+                // Use the rating column (1-5) instead of progress_percentage
+                $employeeSelfRating = $latestSubmission && $latestSubmission->rating ? (int) $latestSubmission->rating : 0;
 
-                // Get supervisor rating from performance review
-                $supervisorRating = $review->progress;
+                // UPDATED: Get supervisor appraisal rating (1-5) from performance review instead of progress percentage
+                $supervisorRating = $review->appraisal_rating ? (int) $review->appraisal_rating : 0;
+
+                // Skip this task if either rating is missing (0)
+                if ($employeeSelfRating === 0 || $supervisorRating === 0) {
+                    \Log::warning('Skipping task due to missing ratings', [
+                        'assignment_id' => $assignment->id,
+                        'employee_self_rating' => $employeeSelfRating,
+                        'supervisor_rating' => $supervisorRating
+                    ]);
+                    continue;
+                }
 
                 // Add task details to the result
                 $employeeResults[$employeeId]['tasks'][] = [
@@ -3557,7 +3646,7 @@ class PmsController extends Controller
                     'review_date' => $review->updated_at->toISOString(),
                 ];
 
-                // Add to the employee's totals
+                // UPDATED: Add to the employee's TOTAL ratings (sum of 1-5 ratings)
                 $employeeResults[$employeeId]['total_self_rating'] += $employeeSelfRating;
                 $employeeResults[$employeeId]['total_supervisor_rating'] += $supervisorRating;
                 $employeeResults[$employeeId]['task_count']++;
@@ -3566,30 +3655,40 @@ class PmsController extends Controller
             // Calculate final percentages and grades for each employee
             foreach ($employeeResults as &$result) {
                 if ($result['task_count'] > 0) {
-                    // Calculate average self and supervisor ratings
-                    $avgSelfRating = $result['total_self_rating'] / $result['task_count'];
-                    $avgSupervisorRating = $result['total_supervisor_rating'] / $result['task_count'];
+                    // UPDATED CALCULATION: Sum all ratings, then find combined average
+                    $totalSelfRating = $result['total_self_rating'];
+                    $totalSupervisorRating = $result['total_supervisor_rating'];
                     
-                    // Calculate combined average: (Self Rating + Supervisor Rating) / 2
-                    $averageRating = ($avgSelfRating + $avgSupervisorRating) / 2;
+                    // Calculate combined average: (Total Self Rating + Total Supervisor Rating) / 2
+                    $averageRating = ($totalSelfRating + $totalSupervisorRating) / 2;
                     
-                    // Calculate final percentage: (Average / 60) * 100, capped at 100%
-                    $finalPercentage = min(100, max(0, round(($averageRating / 60) * 100)));
+                    // Calculate dividend based on task count (5 points per appraisal task)
+                    $dividend = $result['task_count'] * 5;
+                    
+                    // Calculate final percentage: (Average / dividend) * 100, capped at 100%
+                    $finalPercentage = min(100, max(0, round(($averageRating / $dividend) * 100)));
                     
                     // Assign grade based on percentage using appraisal grading system
                     $grade = $this->getAppraisalGrade($finalPercentage);
 
-                    $result['employee_self_rating'] = round($avgSelfRating, 1);
-                    $result['supervisor_rating'] = round($avgSupervisorRating, 1);
+                    // UPDATED: Store the totals and averages properly (now using ratings 1-5)
+                    $result['total_self_rating_sum'] = $totalSelfRating; // Sum of all self ratings (1-5)
+                    $result['total_supervisor_rating_sum'] = $totalSupervisorRating; // Sum of all supervisor ratings (1-5)
+                    $result['employee_self_rating'] = round($totalSelfRating, 1); // Display as sum of ratings
+                    $result['supervisor_rating'] = round($totalSupervisorRating, 1); // Display as sum of ratings
                     $result['average_rating'] = round($averageRating, 2);
+                    $result['dividend'] = $dividend; // Add dividend to response for transparency
                     $result['percentage'] = $finalPercentage;
                     $result['grade'] = $grade['grade'];
                     $result['performance_label'] = $grade['label'];
                     $result['performance_description'] = $grade['description'] ?? null;
                 } else {
+                    $result['total_self_rating_sum'] = 0;
+                    $result['total_supervisor_rating_sum'] = 0;
                     $result['employee_self_rating'] = 0;
                     $result['supervisor_rating'] = 0;
                     $result['average_rating'] = 0;
+                    $result['dividend'] = 0;
                     $result['percentage'] = 0;
                     $result['grade'] = 'N/A';
                     $result['performance_label'] = 'No Data';
@@ -3610,20 +3709,21 @@ class PmsController extends Controller
 
             // Return paginated results
             $response = [
-                'data' => $responseData
+                'data' => $responseData,
+                'current_page' => $page,
+                'per_page' => $perPage,
+                'total' => $totalCount
             ];
 
             // Add pagination metadata if we have multiple pages
             if ($totalCount > $perPage) {
-                $lastPage = ceil($totalCount / $perPage);
-                $response['meta'] = [
-                    'current_page' => $page,
-                    'per_page' => $perPage,
-                    'total' => $totalCount,
-                    'last_page' => $lastPage,
-                    'from' => (($page - 1) * $perPage) + 1,
-                    'to' => min($page * $perPage, $totalCount)
-                ];
+                $response['last_page'] = ceil($totalCount / $perPage);
+                $response['from'] = (($page - 1) * $perPage) + 1;
+                $response['to'] = min($page * $perPage, $totalCount);
+            } else {
+                $response['last_page'] = 1;
+                $response['from'] = $totalCount > 0 ? 1 : 0;
+                $response['to'] = $totalCount;
             }
 
             return response()->json($response);
@@ -3647,14 +3747,15 @@ class PmsController extends Controller
     {
         try {
             $validated = $request->validate([
-                'employee_id' => 'required|exists:employees,id',
+                'employee_id' => 'required|integer|exists:employees,id',
+                'appraiser_id' => 'nullable|integer|exists:users,id',
                 'start_date' => 'required|date',
                 'end_date' => 'required|date|after_or_equal:start_date',
-                'employee_self_rating' => 'required|integer|min:0|max:100',
-                'supervisor_rating' => 'required|integer|min:0|max:100',
-                'average_rating' => 'required|numeric|min:0|max:100',
+                'employee_self_rating' => 'required|integer|min:0',
+                'supervisor_rating' => 'required|integer|min:0',
+                'average_rating' => 'required|numeric|min:0',
                 'percentage' => 'required|integer|min:0|max:100',
-                'grade' => 'required|string|max:10',
+                'grade' => 'required|string|max:5',
                 'performance_label' => 'required|string|max:255',
                 'calculation_details' => 'required|array',
                 'task_count' => 'required|integer|min:0',
@@ -3663,33 +3764,103 @@ class PmsController extends Controller
                 'status' => 'nullable|string|in:Draft,Completed,Pending Review'
             ]);
 
-            $appraisal = PerformanceAppraisal::create([
-                'employee_id' => $validated['employee_id'],
-                'appraiser_id' => auth()->id(),
-                'start_date' => $validated['start_date'],
-                'end_date' => $validated['end_date'],
-                'employee_self_rating' => $validated['employee_self_rating'],
-                'supervisor_rating' => $validated['supervisor_rating'],
-                'average_rating' => $validated['average_rating'],
-                'percentage' => $validated['percentage'],
-                'grade' => $validated['grade'],
-                'performance_label' => $validated['performance_label'],
-                'calculation_details' => $validated['calculation_details'],
-                'task_count' => $validated['task_count'],
-                'supervisor_comments' => $validated['supervisor_comments'] ?? null,
-                'employee_comments' => $validated['employee_comments'] ?? null,
-                'status' => $validated['status'] ?? 'Draft'
-            ]);
+            // Set default values
+            $validated['appraiser_id'] = $validated['appraiser_id'] ?? auth()->id() ?? 1;
+            $validated['status'] = $validated['status'] ?? 'Completed';
+
+            // Check for existing appraisal with same employee and exact date range (including soft-deleted records)
+            $existingAppraisal = PerformanceAppraisal::withTrashed()
+                ->where('employee_id', $validated['employee_id'])
+                ->where('start_date', $validated['start_date'])
+                ->where('end_date', $validated['end_date'])
+                ->first();
+
+            if ($existingAppraisal) {
+                // If the existing record is soft-deleted, we can restore and update it
+                if ($existingAppraisal->trashed()) {
+                    // Restore the soft-deleted record
+                    $existingAppraisal->restore();
+                    
+                    // Update with new data
+                    $existingAppraisal->update($validated);
+                    $existingAppraisal->load(['employee:id,full_name,attendance_employee_no', 'appraiser:id,name']);
+                    
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Performance appraisal restored and updated successfully',
+                        'data' => $existingAppraisal,
+                        'action' => 'restored_and_updated'
+                    ], 200);
+                }
+
+                // If not soft-deleted, check if the data is actually different (excluding timestamps and ID)
+                $newDataHash = md5(serialize([
+                    'employee_self_rating' => $validated['employee_self_rating'],
+                    'supervisor_rating' => $validated['supervisor_rating'],
+                    'average_rating' => (float) $validated['average_rating'],
+                    'percentage' => $validated['percentage'],
+                    'grade' => $validated['grade'],
+                    'performance_label' => $validated['performance_label'],
+                    'calculation_details' => $validated['calculation_details'],
+                    'task_count' => $validated['task_count'],
+                    'supervisor_comments' => $validated['supervisor_comments'] ?? null,
+                    'employee_comments' => $validated['employee_comments'] ?? null,
+                ]));
+
+                $existingDataHash = md5(serialize([
+                    'employee_self_rating' => $existingAppraisal->employee_self_rating,
+                    'supervisor_rating' => $existingAppraisal->supervisor_rating,
+                    'average_rating' => (float) $existingAppraisal->average_rating,
+                    'percentage' => $existingAppraisal->percentage,
+                    'grade' => $existingAppraisal->grade,
+                    'performance_label' => $existingAppraisal->performance_label,
+                    'calculation_details' => $existingAppraisal->calculation_details,
+                    'task_count' => $existingAppraisal->task_count,
+                    'supervisor_comments' => $existingAppraisal->supervisor_comments,
+                    'employee_comments' => $existingAppraisal->employee_comments,
+                ]));
+
+                if ($newDataHash === $existingDataHash) {
+                    // Data is exactly the same - return duplicate error
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Performance appraisal with identical data already exists for this employee and date range',
+                        'error_type' => 'duplicate_data',
+                        'existing_id' => $existingAppraisal->id,
+                        'existing_created_at' => $existingAppraisal->created_at->format('Y-m-d H:i:s')
+                    ], 409);
+                } else {
+                    // Data is different - update the existing record
+                    $existingAppraisal->update($validated);
+                    $existingAppraisal->load(['employee:id,full_name,attendance_employee_no', 'appraiser:id,name']);
+                    
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Performance appraisal updated successfully (data was different)',
+                        'data' => $existingAppraisal,
+                        'action' => 'updated'
+                    ], 200);
+                }
+            }
+
+            // No existing record found - create new appraisal
+            $appraisal = PerformanceAppraisal::create($validated);
+
+            // Load relationships for the response
+            $appraisal->load(['employee:id,full_name,attendance_employee_no', 'appraiser:id,name']);
 
             return response()->json([
+                'success' => true,
                 'message' => 'Performance appraisal saved successfully',
-                'appraisal' => $appraisal->load(['employee', 'appraiser'])
+                'data' => $appraisal,
+                'action' => 'created'
             ], 201);
 
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
-                'error' => 'Validation failed',
-                'details' => $e->errors()
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $e->errors()
             ], 422);
         } catch (\Exception $e) {
             \Log::error('Error saving performance appraisal', [
@@ -3698,7 +3869,8 @@ class PmsController extends Controller
             ]);
 
             return response()->json([
-                'error' => 'Failed to save performance appraisal: ' . $e->getMessage()
+                'success' => false,
+                'message' => 'Failed to save performance appraisal: ' . $e->getMessage()
             ], 500);
         }
     }
