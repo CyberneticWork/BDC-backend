@@ -6,6 +6,8 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Inventory extends Model
 {
@@ -39,5 +41,21 @@ class Inventory extends Model
     public function approver(): BelongsTo
     {
         return $this->belongsTo(User::class, 'approved_by');
+    }
+
+    /**
+     * Payments made against this inventory/GRN.
+     */
+    public function payments(): HasMany
+    {
+        return $this->hasMany(Payment::class, 'inventory_id');
+    }
+
+    /**
+     * Most recent payment record (shortcut).
+     */
+    public function latestPayment(): HasOne
+    {
+        return $this->hasOne(Payment::class, 'inventory_id')->latestOfMany();
     }
 }

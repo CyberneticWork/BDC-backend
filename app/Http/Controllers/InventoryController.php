@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Inventory;
+use App\Models\Payment;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
@@ -117,6 +118,33 @@ class InventoryController extends Controller
                   'created_by' => $creatorId,
                   'approved_by' => null,
             ]);
+
+            // Save payment details (if provided or paid_value > 0)
+            $paymentInput = $request->input('payment', []);
+            $paymentAmount = isset($paymentInput['amount']) ? (float)$paymentInput['amount'] : $paid_value;
+
+            // Also support payment fields at root level for backwards compatibility
+            $paymentMode = $paymentInput['mode'] ?? $request->input('mode') ?? null;
+            $paymentNote = $paymentInput['note'] ?? $request->input('note') ?? null;
+            $bankName = $paymentInput['bankName'] ?? $paymentInput['bank_name'] ?? $request->input('bankName') ?? $request->input('bank_name');
+            $chequeNo = $paymentInput['chequeNo'] ?? $paymentInput['cheque_no'] ?? $request->input('chequeNo') ?? $request->input('cheque_no');
+            $chequeDate = $paymentInput['chequeDate'] ?? $paymentInput['cheque_date'] ?? $request->input('chequeDate') ?? $request->input('cheque_date');
+
+            if ($paymentAmount && (float)$paymentAmount > 0) {
+                  $payment = Payment::create([
+                        'inventory_id' => $record->id,
+                        'amount' => (float)$paymentAmount,
+                        'mode' => $paymentMode,
+                        'note' => $paymentNote,
+                        'bank_name' => $bankName,
+                        'cheque_no' => $chequeNo,
+                        'cheque_date' => $chequeDate,
+                        'created_by' => $creatorId,
+                  ]);
+
+                  // attach payment to response (optional)
+                  $record->payment = $payment;
+            }
 
             return response()->json([
                   'message' => 'GRN saved successfully',
