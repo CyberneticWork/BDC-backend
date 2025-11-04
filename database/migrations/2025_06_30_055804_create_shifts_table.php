@@ -16,6 +16,15 @@ return new class extends Migration {
             $table->time('start_time')->nullable();
             $table->time('end_time')->nullable();
             $table->time('morning_ot_start')->nullable();
+            $table->time('morning_ot_end')->nullable();
+            $table->decimal('morning_ot_rate', 5, 2)->nullable();
+            $table->unsignedSmallInteger('morning_ot_max_minutes')->nullable();
+            
+            $table->time('night_ot_start')->nullable();
+            $table->time('night_ot_end')->nullable();
+            $table->unsignedSmallInteger('night_normal_ot_max_minutes')->nullable();
+            $table->decimal('night_normal_ot_rate', 5, 2)->nullable();
+            $table->decimal('night_special_ot_rate', 5, 2)->nullable();
           
             $table->boolean('midnight_roster')->default(false);
          
@@ -27,6 +36,9 @@ return new class extends Migration {
             $table->index('start_time');
             $table->index('end_time');
             $table->index('morning_ot_start');
+            $table->index('morning_ot_end');
+            $table->index('night_ot_start');
+            $table->index('night_ot_end');
           
 
         });
