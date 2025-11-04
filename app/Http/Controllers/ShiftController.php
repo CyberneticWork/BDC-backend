@@ -93,7 +93,7 @@ class ShiftController extends Controller
         }
 
         $validator = Validator::make($request->all(), [
-            'shift_code' => 'required|string|max:50|alpha_dash|unique:shifts,shift_code,'.$id,
+            'shift_code' => 'required|string|max:50|alpha_dash|unique:shifts,shift_code,' . $id,
             'shift_description' => 'required|string|max:255',
             'start_time' => 'required|date_format:H:i',
             'end_time' => 'required|date_format:H:i',
