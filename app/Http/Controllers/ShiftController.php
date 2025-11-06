@@ -31,13 +31,8 @@ class ShiftController extends Controller
             // New optional OT fields
             'morning_ot_start' => 'nullable|date_format:H:i',
             'morning_ot_end' => 'nullable|date_format:H:i',
-            'morning_ot_rate' => 'nullable|numeric|min:0',
-            'morning_ot_max_minutes' => 'nullable|integer|min:0',
             'night_ot_start' => 'nullable|date_format:H:i',
             'night_ot_end' => 'nullable|date_format:H:i',
-            'night_normal_ot_max_minutes' => 'nullable|integer|min:0',
-            'night_normal_ot_rate' => 'nullable|numeric|min:0',
-            'night_special_ot_rate' => 'nullable|numeric|min:0',
         ]);
 
         if ($validator->fails()) {
@@ -55,13 +50,8 @@ class ShiftController extends Controller
             'midnight_roster' => $request->midnight_roster ?? false,
             'morning_ot_start' => $request->morning_ot_start,
             'morning_ot_end' => $request->morning_ot_end,
-            'morning_ot_rate' => $request->morning_ot_rate,
-            'morning_ot_max_minutes' => $request->morning_ot_max_minutes,
             'night_ot_start' => $request->night_ot_start,
             'night_ot_end' => $request->night_ot_end,
-            'night_normal_ot_max_minutes' => $request->night_normal_ot_max_minutes,
-            'night_normal_ot_rate' => $request->night_normal_ot_rate,
-            'night_special_ot_rate' => $request->night_special_ot_rate,
         ]);
 
         return response()->json([
@@ -101,13 +91,8 @@ class ShiftController extends Controller
             // New optional OT fields
             'morning_ot_start' => 'nullable|date_format:H:i',
             'morning_ot_end' => 'nullable|date_format:H:i',
-            'morning_ot_rate' => 'nullable|numeric|min:0',
-            'morning_ot_max_minutes' => 'nullable|integer|min:0',
             'night_ot_start' => 'nullable|date_format:H:i',
             'night_ot_end' => 'nullable|date_format:H:i',
-            'night_normal_ot_max_minutes' => 'nullable|integer|min:0',
-            'night_normal_ot_rate' => 'nullable|numeric|min:0',
-            'night_special_ot_rate' => 'nullable|numeric|min:0',
         ]);
 
         if ($validator->fails()) {
@@ -125,13 +110,8 @@ class ShiftController extends Controller
             'midnight_roster' => $request->midnight_roster,
             'morning_ot_start' => $request->morning_ot_start,
             'morning_ot_end' => $request->morning_ot_end,
-            'morning_ot_rate' => $request->morning_ot_rate,
-            'morning_ot_max_minutes' => $request->morning_ot_max_minutes,
             'night_ot_start' => $request->night_ot_start,
             'night_ot_end' => $request->night_ot_end,
-            'night_normal_ot_max_minutes' => $request->night_normal_ot_max_minutes,
-            'night_normal_ot_rate' => $request->night_normal_ot_rate,
-            'night_special_ot_rate' => $request->night_special_ot_rate,
         ]);
 
         return response()->json([
