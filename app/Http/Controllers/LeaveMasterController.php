@@ -41,11 +41,20 @@ class LeaveMasterController extends Controller
             'cancel_to' => 'nullable|date|after_or_equal:cancel_from',
             'reason' => 'nullable|string|max:1000',
             'status' => 'required|in:Pending,Approved,HR_Approved,Rejected',
-            'force_continue' => 'nullable|boolean' // Add this new parameter
+            'force_continue' => 'nullable|boolean'
         ]);
 
         if ($validator->fails()) {
             return response()->json($validator->errors(), 422);
+        }
+
+        // Check for duplicate leave requests
+        $duplicateCheck = $this->checkForDuplicateLeave($request);
+        if ($duplicateCheck) {
+            return response()->json([
+                'message' => $duplicateCheck,
+                'duplicate_found' => true
+            ], 422);
         }
 
         // Get employee organization assignment
@@ -214,7 +223,7 @@ class LeaveMasterController extends Controller
             'cancel_to' => 'nullable|date|after_or_equal:cancel_from',
             'reason' => 'nullable|string|max:1000',
             'status' => 'sometimes|in:Pending,Approved,HR_Approved,Rejected',
-            'force_continue' => 'nullable|boolean' // Add this new parameter
+            'force_continue' => 'nullable|boolean'
         ]);
 
         if ($validator->fails()) {
@@ -222,6 +231,16 @@ class LeaveMasterController extends Controller
         }
 
         $leaveMaster = leave_master::findOrFail($id);
+        
+        // Check for duplicate leave requests (excluding current record)
+        $duplicateCheck = $this->checkForDuplicateLeave($request, $id);
+        if ($duplicateCheck) {
+            return response()->json([
+                'message' => $duplicateCheck,
+                'duplicate_found' => true
+            ], 422);
+        }
+
         $employee = employee::with('organizationAssignment')->findOrFail($leaveMaster->employee_id);
         $orgAssignment = $employee->organizationAssignment;
 
@@ -534,5 +553,75 @@ class LeaveMasterController extends Controller
             'used_half_days' => $usedHalfDays,
             'max_accrued' => $maxAccruedLeaves
         ];
+    }
+
+    /**
+     * Check for duplicate leave requests
+     */
+    private function checkForDuplicateLeave($request, $excludeId = null)
+    {
+        $employeeId = $request->employee_id;
+        
+        // Case 1: Single day leave (leave_date is set)
+        if ($request->leave_date) {
+            $query = leave_master::where('employee_id', $employeeId)
+                ->where('status', '!=', 'Rejected')
+                ->where(function($query) use ($request) {
+                    $query->where('leave_date', $request->leave_date)
+                          ->orWhere(function($q) use ($request) {
+                              $q->where('leave_from', '<=', $request->leave_date)
+                                ->where('leave_to', '>=', $request->leave_date);
+                          });
+                });
+            
+            if ($excludeId) {
+                $query->where('id', '!=', $excludeId);
+            }
+            
+            $existing = $query->first();
+
+            if ($existing) {
+                $existingDateStr = $existing->leave_date 
+                    ? $existing->leave_date 
+                    : "{$existing->leave_from} to {$existing->leave_to}";
+                
+                return "You already have a leave request for {$request->leave_date}. Existing leave: {$existingDateStr} ({$existing->status})";
+            }
+        }
+        
+        // Case 2: Date range leave (leave_from and leave_to are set)
+        if ($request->leave_from && $request->leave_to) {
+            $query = leave_master::where('employee_id', $employeeId)
+                ->where('status', '!=', 'Rejected')
+                ->where(function($query) use ($request) {
+                    // Check for any overlap between existing leaves and new request
+                    $query->where(function($q) use ($request) {
+                        // Existing single day falls within new range
+                        $q->whereBetween('leave_date', [$request->leave_from, $request->leave_to]);
+                    })->orWhere(function($q) use ($request) {
+                        // Existing range overlaps with new range
+                        $q->where(function($subQ) use ($request) {
+                            $subQ->where('leave_from', '<=', $request->leave_to)
+                                 ->where('leave_to', '>=', $request->leave_from);
+                        });
+                    });
+                });
+            
+            if ($excludeId) {
+                $query->where('id', '!=', $excludeId);
+            }
+            
+            $existing = $query->first();
+
+            if ($existing) {
+                $existingDateStr = $existing->leave_date 
+                    ? $existing->leave_date 
+                    : "{$existing->leave_from} to {$existing->leave_to}";
+                
+                return "Your requested leave period ({$request->leave_from} to {$request->leave_to}) overlaps with an existing leave: {$existingDateStr} ({$existing->status})";
+            }
+        }
+        
+        return null; // No duplicates found
     }
 }
