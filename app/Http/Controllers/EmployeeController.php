@@ -259,9 +259,9 @@ class EmployeeController extends Controller
                 'ot_night_rate' => 'nullable|numeric',
 
                 'morningOtSpecial' => 'required|boolean',
-                'ot_morning_rate_special' => 'required|boolean',
+                'ot_morning_rate_special' => 'nullable|numeric',
                 'ot_night_rate_special' => 'nullable|numeric',
-                'eveningOtSpecial' => 'nullable|numeric',
+                'eveningOtSpecial' => 'required|boolean',
 
                 'budgetaryReliefAllowance2015' => 'required|boolean',
                 'budgetaryReliefAllowance2016' => 'required|boolean',
