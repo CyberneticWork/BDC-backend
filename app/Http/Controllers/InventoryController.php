@@ -6,6 +6,7 @@ use App\Models\Inventory;
 use App\Models\Payment;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 
 class InventoryController extends Controller
 {
@@ -26,10 +27,6 @@ class InventoryController extends Controller
       public function store(Request $request)
       {
             // Support flexible payload keys from the frontend
-            $voucherNumber = $request->input('voucherNumber')
-                  ?? $request->input('grnNumber')
-                  ?? $request->input('id');
-
             $referNumber = $request->input('referNumber')
                   ?? $request->input('refNumber');
 
@@ -80,13 +77,19 @@ class InventoryController extends Controller
             }
 
             // Final fallbacks
-            $voucherNumber = (string)$voucherNumber;
             $referNumber = $referNumber ? (string)$referNumber : null;
             $discountValue = (float)$discountValue;
             $quantity = (int)($quantity ?? 0);
             $unitPrice = (float)($unitPrice ?? 0);
             $amount = (float)($amount ?? 0);
             $paid_value = (float)($paid_value ?? 0);
+
+            // Foreign keys (accept both snake_case and camelCase)
+            $center_id   = $request->input('center_id', $request->input('centerId'));
+            $supplier_id = $request->input('supplier_id', $request->input('supplierId'));
+            $customer_id = $request->input('customer_id', $request->input('customerId'));
+            $from_center = $request->input('from_center', $request->input('fromCenter'));
+            $to_center   = $request->input('to_center', $request->input('toCenter'));
 
             // Always store status as pending regardless of input
             $status = 'pending';
@@ -99,11 +102,24 @@ class InventoryController extends Controller
                   ], 401);
             }
 
-            if (!$voucherNumber) {
-                  return response()->json([
-                        'message' => 'The GRN number (voucherNumber/grnNumber/id) is required.'
-                  ], 422);
-            }
+            // Auto-generate GRN number: GRN-YY-XXXX (transactional to minimize race conditions)
+            $voucherNumber = DB::transaction(function () {
+                  $year = date('y');
+                  $prefix = "GRN-{$year}-";
+                  // Get latest voucher and increment its sequence
+                  $latest = Inventory::where('voucherNumber', 'like', $prefix . '%')
+                        ->lockForUpdate()
+                        ->orderBy('voucherNumber', 'desc')
+                        ->value('voucherNumber');
+                  $maxNum = 0;
+                  if ($latest) {
+                        $maxNum = (int)substr($latest, strlen($prefix));
+                  }
+                  $nextNum = $maxNum + 1;
+                  return $prefix . str_pad($nextNum, 4, '0', STR_PAD_LEFT);
+            });
+
+            
 
             // Persist
             $record = Inventory::create([
@@ -114,6 +130,11 @@ class InventoryController extends Controller
                   'paid_value' => $paid_value,
                   'discountValue' => $discountValue,
                   'referNumber' => $referNumber,
+                  'center_id' => $center_id,
+                  'supplier_id' => $supplier_id,
+                  'customer_id' => $customer_id,
+                  'from_center' => $from_center,
+                  'to_center' => $to_center,
                   'status' => $status,
                   'created_by' => $creatorId,
                   'approved_by' => null,
@@ -258,11 +279,11 @@ class InventoryController extends Controller
             if ($discountValue !== null) $payload['discountValue'] = (float)$discountValue;
             if ($referNumber !== null)   $payload['referNumber'] = $referNumber ? (string)$referNumber : null;
             if ($status !== null)        $payload['status'] = $status;
-            if ($center_id !== null)     $payload['center_id'] = $center_id ?: null;
-            if ($supplier_id !== null)   $payload['supplier_id'] = $supplier_id ?: null;
-            if ($customer_id !== null)   $payload['customer_id'] = $customer_id ?: null;
-            if ($from_center !== null)   $payload['from_center'] = $from_center ?: null;
-            if ($to_center !== null)     $payload['to_center'] = $to_center ?: null;
+            if ($request->exists('center_id'))     $payload['center_id'] = $center_id;
+            if ($request->exists('supplier_id'))   $payload['supplier_id'] = $supplier_id;
+            if ($request->exists('customer_id'))   $payload['customer_id'] = $customer_id;
+            if ($request->exists('from_center'))   $payload['from_center'] = $from_center;
+            if ($request->exists('to_center'))     $payload['to_center'] = $to_center;
 
             if (empty($payload)) {
                   return response()->json([
@@ -297,4 +318,26 @@ class InventoryController extends Controller
             ], 200);
       }
 
+      // GET /api/grn/next -> preview next GRN number without creating a record
+      public function nextGrn()
+      {
+            $year = date('y');
+            $prefix = "GRN-{$year}-";
+            $latest = Inventory::where('voucherNumber', 'like', $prefix . '%')
+                  ->orderBy('voucherNumber', 'desc')
+                  ->value('voucherNumber');
+            $maxNum = 0;
+            if ($latest) {
+                  $maxNum = (int)substr($latest, strlen($prefix));
+            }
+            $nextNum = $maxNum + 1;
+            $voucher = $prefix . str_pad($nextNum, 4, '0', STR_PAD_LEFT);
+            return response()->json([
+                  'data' => [
+                        'next' => $voucher,
+                        'year' => $year,
+                        'sequence' => $nextNum,
+                  ]
+            ], 200);
+      }
 }

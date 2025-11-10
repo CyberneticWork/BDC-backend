@@ -377,4 +377,6 @@ Route::middleware('auth:sanctum')->group(function () {
 // Inventory routes
 
 Route::apiResource('inventories', InventoryController::class);
+Route::post('/grn', [InventoryController::class, 'store']);
+Route::get('/grn/next', [InventoryController::class, 'nextGrn']);
 
