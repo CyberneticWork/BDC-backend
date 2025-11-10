@@ -41,6 +41,7 @@ use App\Http\Controllers\ProductTypeController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\CentersController;
 use App\Http\Controllers\InventoryController;
+use App\Http\Controllers\InventoryProductController;
 
 
 Route::get('/user', function (Request $request) {
@@ -372,4 +373,7 @@ Route::delete('product-types/{id}/force', [ProductTypeController::class, 'forceD
 // Inventory routes
 
 Route::apiResource('inventories', InventoryController::class);
+
+//for inventory Products
+Route::apiResource('inventory-products', InventoryProductController::class);
 

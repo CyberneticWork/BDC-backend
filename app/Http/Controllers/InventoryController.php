@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Inventory;
 use App\Models\Payment;
+use App\Models\inventory_product;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
@@ -15,6 +16,7 @@ class InventoryController extends Controller
             $inventory = Inventory::with([
                   'creator:id,name',
                   'approver:id,name',
+                  'items'
             ])->orderByDesc('id')->get();
 
             return response()->json([
@@ -119,6 +121,48 @@ class InventoryController extends Controller
                   'approved_by' => null,
             ]);
 
+            // Persist line items into inventory_products table
+            $createdItems = [];
+            if (is_array($items) && count($items) > 0) {
+                  foreach ($items as $line) {
+                        $productId = $line['product_id'] ?? $line['productId'] ?? $line['id'] ?? null;
+                        $lineQty   = isset($line['quantity']) ? (int)$line['quantity'] : (isset($line['qty']) ? (int)$line['qty'] : 0);
+                        // unitPrice from payload should be stored as cost
+                        $lineCost  = isset($line['unitPrice']) ? (float)$line['unitPrice'] : (isset($line['cost']) ? (float)$line['cost'] : 0.0);
+                        $minPrice  = isset($line['min_price']) ? (float)$line['min_price'] : (isset($line['minPrice']) ? (float)$line['minPrice'] : 0.0);
+                        $mrp       = isset($line['mrp']) ? (float)$line['mrp'] : 0.0;
+                        $lineAmt   = isset($line['amount']) ? (float)$line['amount'] : (float)($lineQty * $lineCost);
+
+                        if ($productId && $lineQty > 0) {
+                              $createdItems[] = inventory_product::create([
+                                    'inventory_id' => $record->id,
+                                    'product_id'   => (int)$productId,
+                                    'quantity'     => $lineQty,
+                                    'cost'         => $lineCost,
+                                    'min_price'    => $minPrice,
+                                    'mrp'          => $mrp,
+                                    'amount'       => $lineAmt,
+                                    'created_by'   => $creatorId,
+                              ]);
+                        }
+                  }
+            } else {
+                  // Back-compat: allow single product on root level
+                  $rootProductId = $request->input('product_id') ?? $request->input('productId') ?? $request->input('product');
+                  if ($rootProductId && $quantity > 0) {
+                        $createdItems[] = inventory_product::create([
+                              'inventory_id' => $record->id,
+                              'product_id'   => (int)$rootProductId,
+                              'quantity'     => (int)$quantity,
+                              'cost'         => (float)$unitPrice,
+                              'min_price'    => (float)($request->input('min_price') ?? $request->input('minPrice') ?? 0),
+                              'mrp'          => (float)($request->input('mrp') ?? 0),
+                              'amount'       => (float)($request->input('lineAmount') ?? ($quantity * $unitPrice)),
+                              'created_by'   => $creatorId,
+                        ]);
+                  }
+            }
+
             // Save payment details (if provided or paid_value > 0)
             $paymentInput = $request->input('payment', []);
             $paymentAmount = isset($paymentInput['amount']) ? (float)$paymentInput['amount'] : $paid_value;
@@ -148,7 +192,7 @@ class InventoryController extends Controller
 
             return response()->json([
                   'message' => 'GRN saved successfully',
-                  'data' => $record,
+                  'data' => $record->load(['creator:id,name','approver:id,name','items']),
             ], 201);
       }
 
@@ -158,6 +202,7 @@ class InventoryController extends Controller
             $record = Inventory::with([
                   'creator:id,name',
                   'approver:id,name',
+                  'items'
             ])->find($id);
 
             if (!$record) {

@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use App\Models\inventory_product;
 
 class Inventory extends Model
 {
@@ -57,5 +58,13 @@ class Inventory extends Model
     public function latestPayment(): HasOne
     {
         return $this->hasOne(Payment::class, 'inventory_id')->latestOfMany();
+    }
+
+    /**
+     * Line items associated with this inventory record (GRN lines).
+     */
+    public function items(): HasMany
+    {
+        return $this->hasMany(inventory_product::class, 'inventory_id');
     }
 }
