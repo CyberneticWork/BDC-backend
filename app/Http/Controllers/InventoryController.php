@@ -4,9 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\Inventory;
 use App\Models\Payment;
-use App\Models\inventory_product;
+use App\Models\product;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
 class InventoryController extends Controller
@@ -54,26 +53,42 @@ class InventoryController extends Controller
 
             $unitPrice = $request->input('unitPrice');
 
-            // If items[] are provided, derive sensible defaults
-            $items = $request->input('items', []);
-            if (is_array($items) && count($items) > 0) {
-                  // Sum quantities
+            // If item level payloads are provided under any supported key, derive sensible defaults
+            $candidateLineGroups = [
+                  $request->input('items'),
+                  $request->input('inventory_products'),
+                  $request->input('inventoryProducts'),
+                  $request->input('products'),
+                  $request->input('lines'),
+            ];
+
+            $items = [];
+            foreach ($candidateLineGroups as $group) {
+                  if (is_array($group) && count($group) > 0) {
+                        $items = $group;
+                        break;
+                  }
+            }
+
+            if (!empty($items)) {
                   if ($quantity === null) {
                         $quantity = collect($items)->sum(function ($it) {
-                              return (int)($it['quantity'] ?? 0);
+                              return (int)($it['quantity'] ?? $it['qty'] ?? data_get($it, 'pivot.quantity', 0));
                         });
                   }
-                  // Use first line's unitPrice if not provided
+
                   if ($unitPrice === null) {
                         $firstItem = $items[0];
-                        $unitPrice = (float)($firstItem['unitPrice'] ?? 0);
+                        $unitPrice = (float)($firstItem['unitPrice'] ?? $firstItem['cost'] ?? data_get($firstItem, 'pivot.cost', 0));
                   }
-                  // Calculate total amount if not provided
+
                   if ($amount === null || (float)$amount <= 0) {
                         $amount = collect($items)->sum(function ($it) {
-                              $q = (float)($it['quantity'] ?? 0);
-                              $u = (float)($it['unitPrice'] ?? 0);
-                              return $q * $u;
+                              $q = (float)($it['quantity'] ?? $it['qty'] ?? data_get($it, 'pivot.quantity', 0));
+                              $u = (float)($it['unitPrice'] ?? $it['cost'] ?? data_get($it, 'pivot.cost', 0));
+                              $lineAmount = $it['amount'] ?? $it['total'] ?? data_get($it, 'pivot.amount');
+
+                              return $lineAmount !== null ? (float)$lineAmount : $q * $u;
                         });
                   }
             }
@@ -86,6 +101,97 @@ class InventoryController extends Controller
             $amount = (float)($amount ?? 0);
             $paid_value = (float)($paid_value ?? 0);
 
+            // Resolve creator (require authenticated user or explicit created_by)
+            $creatorId = optional($request->user())->id ?? $request->input('created_by');
+            if (!$creatorId) {
+                  return response()->json([
+                        'message' => 'Unauthenticated: provide a valid token or created_by user id.'
+                  ], 401);
+            }
+
+            // Prepare inventory product payloads ahead of persistence
+            $linePayloads = [];
+            if (!empty($items)) {
+                  foreach ($items as $line) {
+                        if (!is_array($line)) {
+                              continue;
+                        }
+
+                        $productId = $line['product_id']
+                              ?? $line['productId']
+                              ?? $line['id']
+                              ?? data_get($line, 'product.id');
+                        $lineQty = (int)($line['quantity'] ?? $line['qty'] ?? data_get($line, 'pivot.quantity', 0));
+                        if ($lineQty < 0) {
+                              $lineQty = 0;
+                        }
+                        $lineCost = $line['unitPrice'] ?? $line['cost'] ?? data_get($line, 'pivot.cost', 0);
+                        $lineMinPrice = $line['min_price'] ?? $line['minPrice'] ?? data_get($line, 'pivot.min_price', 0);
+                        $lineMrp = $line['mrp'] ?? data_get($line, 'pivot.mrp', 0);
+                        $lineAmount = $line['amount'] ?? $line['total'] ?? data_get($line, 'pivot.amount');
+                        if ($lineAmount === null) {
+                              $lineAmount = $lineQty * (float)$lineCost;
+                        }
+
+                        if ($productId && $lineQty > 0) {
+                              $linePayloads[] = [
+                                    'product_id' => (int)$productId,
+                                    'quantity' => $lineQty,
+                                    'cost' => (float)$lineCost,
+                                    'min_price' => (float)$lineMinPrice,
+                                    'mrp' => (float)$lineMrp,
+                                    'amount' => (float)$lineAmount,
+                                    'created_by' => $creatorId,
+                              ];
+                        }
+                  }
+            }
+
+            if (empty($linePayloads)) {
+                  $rootProductId = $request->input('product_id') ?? $request->input('productId') ?? $request->input('product');
+                  if ($rootProductId && $quantity > 0) {
+                        $linePayloads[] = [
+                              'product_id' => (int)$rootProductId,
+                              'quantity' => $quantity,
+                              'cost' => $unitPrice,
+                              'min_price' => (float)($request->input('min_price') ?? $request->input('minPrice') ?? 0),
+                              'mrp' => (float)($request->input('mrp') ?? 0),
+                              'amount' => (float)($request->input('lineAmount') ?? ($quantity * $unitPrice)),
+                              'created_by' => $creatorId,
+                        ];
+                  }
+            }
+
+            if ($quantity <= 0 && !empty($linePayloads)) {
+                  $quantity = array_sum(array_column($linePayloads, 'quantity'));
+            }
+
+            if ($amount <= 0 && !empty($linePayloads)) {
+                  $amount = array_sum(array_column($linePayloads, 'amount'));
+            }
+
+            if ($unitPrice <= 0 && !empty($linePayloads)) {
+                  $unitPrice = (float)($linePayloads[0]['cost'] ?? 0);
+            }
+
+            if (empty($linePayloads)) {
+                  return response()->json([
+                        'message' => 'No valid inventory item lines were provided.',
+                  ], 422);
+            }
+
+            $productIds = array_unique(array_column($linePayloads, 'product_id'));
+            if (!empty($productIds)) {
+                  $existingIds = product::whereIn('id', $productIds)->pluck('id')->all();
+                  $missingIds = array_diff($productIds, $existingIds);
+                  if (!empty($missingIds)) {
+                        return response()->json([
+                              'message' => 'One or more products referenced in the GRN do not exist.',
+                              'missing_product_ids' => array_values($missingIds),
+                        ], 422);
+                  }
+            }
+
             // Foreign keys (accept both snake_case and camelCase)
             $center_id   = $request->input('center_id', $request->input('centerId'));
             $supplier_id = $request->input('supplier_id', $request->input('supplierId'));
@@ -95,94 +201,6 @@ class InventoryController extends Controller
 
             // Always store status as pending regardless of input
             $status = 'pending';
-
-            // Resolve creator (require authenticated user or explicit created_by)
-            $creatorId = optional($request->user())->id ?? $request->input('created_by');
-            if (!$creatorId) {
-                  return response()->json([
-                        'message' => 'Unauthenticated: provide a valid token or created_by user id.'
-                  ], 401);
-            }
-
-            // Auto-generate GRN number: GRN-YY-XXXX (transactional to minimize race conditions)
-            $voucherNumber = DB::transaction(function () {
-                  $year = date('y');
-                  $prefix = "GRN-{$year}-";
-                  // Get latest voucher and increment its sequence
-                  $latest = Inventory::where('voucherNumber', 'like', $prefix . '%')
-                        ->lockForUpdate()
-                        ->orderBy('voucherNumber', 'desc')
-                        ->value('voucherNumber');
-                  $maxNum = 0;
-                  if ($latest) {
-                        $maxNum = (int)substr($latest, strlen($prefix));
-                  }
-                  $nextNum = $maxNum + 1;
-                  return $prefix . str_pad($nextNum, 4, '0', STR_PAD_LEFT);
-            });
-
-            
-
-            // Persist
-            $record = Inventory::create([
-                  'voucherNumber' => $voucherNumber,
-                  'unitPrice' => $unitPrice,
-                  'quantity' => $quantity,
-                  'amount' => $amount,
-                  'paid_value' => $paid_value,
-                  'discountValue' => $discountValue,
-                  'referNumber' => $referNumber,
-                  'center_id' => $center_id,
-                  'supplier_id' => $supplier_id,
-                  'customer_id' => $customer_id,
-                  'from_center' => $from_center,
-                  'to_center' => $to_center,
-                  'status' => $status,
-                  'created_by' => $creatorId,
-                  'approved_by' => null,
-            ]);
-
-            // Persist line items into inventory_products table
-            $createdItems = [];
-            if (is_array($items) && count($items) > 0) {
-                  foreach ($items as $line) {
-                        $productId = $line['product_id'] ?? $line['productId'] ?? $line['id'] ?? null;
-                        $lineQty   = isset($line['quantity']) ? (int)$line['quantity'] : (isset($line['qty']) ? (int)$line['qty'] : 0);
-                        // unitPrice from payload should be stored as cost
-                        $lineCost  = isset($line['unitPrice']) ? (float)$line['unitPrice'] : (isset($line['cost']) ? (float)$line['cost'] : 0.0);
-                        $minPrice  = isset($line['min_price']) ? (float)$line['min_price'] : (isset($line['minPrice']) ? (float)$line['minPrice'] : 0.0);
-                        $mrp       = isset($line['mrp']) ? (float)$line['mrp'] : 0.0;
-                        $lineAmt   = isset($line['amount']) ? (float)$line['amount'] : (float)($lineQty * $lineCost);
-
-                        if ($productId && $lineQty > 0) {
-                              $createdItems[] = inventory_product::create([
-                                    'inventory_id' => $record->id,
-                                    'product_id'   => (int)$productId,
-                                    'quantity'     => $lineQty,
-                                    'cost'         => $lineCost,
-                                    'min_price'    => $minPrice,
-                                    'mrp'          => $mrp,
-                                    'amount'       => $lineAmt,
-                                    'created_by'   => $creatorId,
-                              ]);
-                        }
-                  }
-            } else {
-                  // Back-compat: allow single product on root level
-                  $rootProductId = $request->input('product_id') ?? $request->input('productId') ?? $request->input('product');
-                  if ($rootProductId && $quantity > 0) {
-                        $createdItems[] = inventory_product::create([
-                              'inventory_id' => $record->id,
-                              'product_id'   => (int)$rootProductId,
-                              'quantity'     => (int)$quantity,
-                              'cost'         => (float)$unitPrice,
-                              'min_price'    => (float)($request->input('min_price') ?? $request->input('minPrice') ?? 0),
-                              'mrp'          => (float)($request->input('mrp') ?? 0),
-                              'amount'       => (float)($request->input('lineAmount') ?? ($quantity * $unitPrice)),
-                              'created_by'   => $creatorId,
-                        ]);
-                  }
-            }
 
             // Save payment details (if provided or paid_value > 0)
             $paymentInput = $request->input('payment', []);
@@ -195,25 +213,92 @@ class InventoryController extends Controller
             $chequeNo = $paymentInput['chequeNo'] ?? $paymentInput['cheque_no'] ?? $request->input('chequeNo') ?? $request->input('cheque_no');
             $chequeDate = $paymentInput['chequeDate'] ?? $paymentInput['cheque_date'] ?? $request->input('chequeDate') ?? $request->input('cheque_date');
 
-            if ($paymentAmount && (float)$paymentAmount > 0) {
-                  $payment = Payment::create([
-                        'inventory_id' => $record->id,
-                        'amount' => (float)$paymentAmount,
-                        'mode' => $paymentMode,
-                        'note' => $paymentNote,
-                        'bank_name' => $bankName,
-                        'cheque_no' => $chequeNo,
-                        'cheque_date' => $chequeDate,
+            // Persist inventory, items, and payment atomically
+            $result = DB::transaction(function () use (
+                  $discountValue,
+                  $quantity,
+                  $unitPrice,
+                  $amount,
+                  $paid_value,
+                  $referNumber,
+                  $center_id,
+                  $supplier_id,
+                  $customer_id,
+                  $from_center,
+                  $to_center,
+                  $status,
+                  $creatorId,
+                  $linePayloads,
+                  $paymentAmount,
+                  $paymentMode,
+                  $paymentNote,
+                  $bankName,
+                  $chequeNo,
+                  $chequeDate
+            ) {
+                  $year = date('y');
+                  $prefix = "GRN-{$year}-";
+                  $latest = Inventory::where('voucherNumber', 'like', $prefix . '%')
+                        ->lockForUpdate()
+                        ->orderBy('voucherNumber', 'desc')
+                        ->value('voucherNumber');
+                  $maxNum = $latest ? (int)substr($latest, strlen($prefix)) : 0;
+                  $voucherNumber = $prefix . str_pad($maxNum + 1, 4, '0', STR_PAD_LEFT);
+
+                  $record = Inventory::create([
+                        'voucherNumber' => $voucherNumber,
+                        'unitPrice' => $unitPrice,
+                        'quantity' => $quantity,
+                        'amount' => $amount,
+                        'paid_value' => $paid_value,
+                        'discountValue' => $discountValue,
+                        'referNumber' => $referNumber,
+                        'center_id' => $center_id,
+                        'supplier_id' => $supplier_id,
+                        'customer_id' => $customer_id,
+                        'from_center' => $from_center,
+                        'to_center' => $to_center,
+                        'status' => $status,
                         'created_by' => $creatorId,
+                        'approved_by' => null,
                   ]);
 
-                  // attach payment to response (optional)
-                  $record->payment = $payment;
-            }
+                  $createdItems = [];
+                  if (!empty($linePayloads)) {
+                        $createdItems = $record->items()->createMany($linePayloads);
+                  }
+
+                  $payment = null;
+                  if ($paymentAmount && (float)$paymentAmount > 0) {
+                        $payment = Payment::create([
+                              'inventory_id' => $record->id,
+                              'amount' => (float)$paymentAmount,
+                              'mode' => $paymentMode,
+                              'note' => $paymentNote,
+                              'bank_name' => $bankName,
+                              'cheque_no' => $chequeNo,
+                              'cheque_date' => $chequeDate,
+                              'created_by' => $creatorId,
+                        ]);
+                  }
+
+                  return [
+                        'record' => $record,
+                        'items' => $createdItems,
+                        'payment' => $payment,
+                  ];
+            });
+
+            $record = $result['record'];
+            $payment = $result['payment'];
 
             return response()->json([
                   'message' => 'GRN saved successfully',
-                  'data' => $record->load(['creator:id,name','approver:id,name','items']),
+                  'data' => tap($record->load(['creator:id,name', 'approver:id,name', 'items.product']), function ($loaded) use ($payment) {
+                        if ($payment) {
+                              $loaded->payment = $payment;
+                        }
+                  }),
             ], 201);
       }
 

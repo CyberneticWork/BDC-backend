@@ -350,7 +350,6 @@ Route::middleware('auth:sanctum')->group(function () {
 
     //Center routes
     Route::apiResource('centers', CentersController::class);
-    Route::apiResource('products', ProductController::class);
 
 });
 
@@ -372,6 +371,8 @@ Route::delete('product-types/{id}/force', [ProductTypeController::class, 'forceD
 Route::middleware('auth:sanctum')->group(function () {
     // Add this new route
     Route::post('/pms/kpi-task-assignments/check-weights', [PmsController::class, 'checkAssigneeWeights']);
+    Route::apiResource('products', ProductController::class);
+
 });
 
 
@@ -383,4 +384,6 @@ Route::get('/grn/next', [InventoryController::class, 'nextGrn']);
 
 //for inventory Products
 Route::apiResource('inventory-products', InventoryProductController::class);
+
+
 
