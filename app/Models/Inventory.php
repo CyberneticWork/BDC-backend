@@ -1,0 +1,61 @@
+<?php
+
+namespace App\Models;
+
+use App\Models\User;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
+
+class Inventory extends Model
+{
+    use SoftDeletes;
+
+    protected $table = 'inventory';
+
+    protected $fillable = [
+        'voucherNumber',
+        'unitPrice',
+        'quantity',
+        'amount',
+        'paid_value',
+        'discountValue',
+        'referNumber',
+        'status',
+        'center_id',
+        'supplier_id',
+        'customer_id',
+        'from_center',
+        'to_center',
+        'created_by',
+        'approved_by',
+    ];
+
+    public function creator(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function approver(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'approved_by');
+    }
+
+    /**
+     * Payments made against this inventory/GRN.
+     */
+    public function payments(): HasMany
+    {
+        return $this->hasMany(Payment::class, 'inventory_id');
+    }
+
+    /**
+     * Most recent payment record (shortcut).
+     */
+    public function latestPayment(): HasOne
+    {
+        return $this->hasOne(Payment::class, 'inventory_id')->latestOfMany();
+    }
+}

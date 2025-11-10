@@ -40,6 +40,7 @@ use App\Http\Controllers\DiscountLevelController;
 use App\Http\Controllers\ProductTypeController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\CentersController;
+use App\Http\Controllers\InventoryController;
 
 
 Route::get('/user', function (Request $request) {
@@ -371,3 +372,9 @@ Route::middleware('auth:sanctum')->group(function () {
     // Add this new route
     Route::post('/pms/kpi-task-assignments/check-weights', [PmsController::class, 'checkAssigneeWeights']);
 });
+
+
+// Inventory routes
+
+Route::apiResource('inventories', InventoryController::class);
+

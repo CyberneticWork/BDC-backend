@@ -5,9 +5,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration {
-    /**
-     * Run the migrations.
-     */
+
     public function up(): void
     {
         Schema::create('products', function (Blueprint $table) {
@@ -15,6 +13,7 @@ return new class extends Migration {
             $table->string('barcode');
             $table->string('code');
             $table->decimal('cost', 10, 2);
+            $table->integer('quantity')->default(0); //add for quantity column for product quantitiy
             $table->text('description');
             $table->foreignId('discount_level_id')->constrained('discount_levels');
             $table->foreignId('created_by')->constrained('users');
