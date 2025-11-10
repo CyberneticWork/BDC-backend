@@ -19,6 +19,7 @@ return new class extends Migration {
 
             $table->boolean('enable_epf_etf')->nullable()->default(false);
             $table->boolean('ot_active')->nullable()->default(false);
+            $table->boolean('ot_active_special')->nullable()->default(false);
             $table->boolean('early_deduction')->nullable()->default(false);
             $table->boolean('increment_active')->nullable()->default(false);
             $table->boolean('active_nopay')->nullable()->default(false);
@@ -26,6 +27,11 @@ return new class extends Migration {
             $table->boolean('ot_evening')->nullable()->default(false);
             $table->decimal('ot_morning_rate', 10, 2)->nullable()->default(0);
             $table->decimal('ot_night_rate', 10, 2)->nullable()->default(0);
+
+            $table->boolean('ot_morning_special')->nullable()->default(false);
+            $table->boolean('ot_evening_special')->nullable()->default(false);
+            $table->decimal('ot_morning_rate_special', 10, 2)->nullable()->default(0);
+            $table->decimal('ot_night_rate_special', 10, 2)->nullable()->default(0);
 
             $table->string('bank_name')->nullable();
             $table->string('branch_name')->nullable();
