@@ -368,11 +368,18 @@ Route::get('product-types/trashed/list', [ProductTypeController::class, 'getTras
 Route::get('product-types/stats/overview', [ProductTypeController::class, 'getStats']);
 Route::delete('product-types/{id}/force', [ProductTypeController::class, 'forceDestroy']);
 
+// Product routes
+Route::middleware('auth:sanctum')->group(function () {
+    // Add this new route
+    Route::post('/pms/kpi-task-assignments/check-weights', [PmsController::class, 'checkAssigneeWeights']);
+});
 
 
 // Inventory routes
 
 Route::apiResource('inventories', InventoryController::class);
+Route::post('/grn', [InventoryController::class, 'store']);
+Route::get('/grn/next', [InventoryController::class, 'nextGrn']);
 
 //for inventory Products
 Route::apiResource('inventory-products', InventoryProductController::class);

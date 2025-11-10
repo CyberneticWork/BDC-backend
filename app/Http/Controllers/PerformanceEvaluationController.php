@@ -117,20 +117,92 @@ class PerformanceEvaluationController extends Controller
                 ], 422);
             }
 
-            $evaluation = PerformanceEvaluation::create($validator->validated());
+            $validated = $validator->validated();
 
-            // Load relationships for response
+            // Check for existing evaluation with same employee and exact date range (including soft-deleted records)
+            $existingEvaluation = PerformanceEvaluation::withTrashed()
+                ->where('employee_id', $validated['employee_id'])
+                ->where('start_date', $validated['start_date'])
+                ->where('end_date', $validated['end_date'])
+                ->first();
+
+            if ($existingEvaluation) {
+                // If the existing record is soft-deleted, we can restore and update it
+                if ($existingEvaluation->trashed()) {
+                    // Restore the soft-deleted record
+                    $existingEvaluation->restore();
+                    
+                    // Update with new data
+                    $existingEvaluation->update($validated);
+                    $existingEvaluation->load(['employee:id,full_name,attendance_employee_no', 'evaluator:id,name']);
+                    
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Performance evaluation restored and updated successfully',
+                        'data' => $existingEvaluation,
+                        'action' => 'restored_and_updated'
+                    ], 200);
+                }
+
+                // If not soft-deleted, check if the data is actually different (excluding timestamps and ID)
+                $newDataHash = md5(serialize([
+                    'percentage' => $validated['percentage'],
+                    'grade' => $validated['grade'],
+                    'performance_label' => $validated['performance_label'],
+                    'calculation_details' => $validated['calculation_details'],
+                    'task_count' => $validated['task_count'],
+                ]));
+
+                $existingDataHash = md5(serialize([
+                    'percentage' => $existingEvaluation->percentage,
+                    'grade' => $existingEvaluation->grade,
+                    'performance_label' => $existingEvaluation->performance_label,
+                    'calculation_details' => $existingEvaluation->calculation_details,
+                    'task_count' => $existingEvaluation->task_count,
+                ]));
+
+                if ($newDataHash === $existingDataHash) {
+                    // Data is exactly the same - return duplicate error
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Performance evaluation with identical data already exists for this employee and date range',
+                        'error_type' => 'duplicate_data',
+                        'existing_id' => $existingEvaluation->id,
+                        'existing_created_at' => $existingEvaluation->created_at->format('Y-m-d H:i:s')
+                    ], 409);
+                } else {
+                    // Data is different - update the existing record
+                    $existingEvaluation->update($validated);
+                    $existingEvaluation->load(['employee:id,full_name,attendance_employee_no', 'evaluator:id,name']);
+                    
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Performance evaluation updated successfully (data was different)',
+                        'data' => $existingEvaluation,
+                        'action' => 'updated'
+                    ], 200);
+                }
+            }
+
+            // No existing record found - create new evaluation
+            $evaluation = PerformanceEvaluation::create($validated);
             $evaluation->load(['employee:id,full_name,attendance_employee_no', 'evaluator:id,name']);
+
+            Log::info('Performance evaluation created successfully', [
+                'evaluation_id' => $evaluation->id,
+                'employee_id' => $validated['employee_id'],
+                'evaluator_id' => $validated['evaluator_id']
+            ]);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Performance evaluation saved successfully',
-                'data' => $evaluation
+                'data' => $evaluation,
+                'action' => 'created'
             ], 201);
 
         } catch (\Exception $e) {
             Log::error('Error saving performance evaluation', [
-                'data' => $request->all(),
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -544,12 +616,17 @@ class PerformanceEvaluationController extends Controller
     public function storeBulk(Request $request)
     {
         try {
+            Log::info('Bulk save performance evaluations request received', [
+                'data_count' => is_array($request->get('evaluations')) ? count($request->get('evaluations')) : 0,
+                'user_id' => auth()->id()
+            ]);
+
             $validator = Validator::make($request->all(), [
                 'evaluations' => 'required|array|min:1',
                 'evaluations.*.employee_id' => 'required|exists:employees,id',
                 'evaluations.*.evaluator_id' => 'required|exists:users,id',
                 'evaluations.*.start_date' => 'required|date',
-                'evaluations.*.end_date' => 'required|date|after:start_date',
+                'evaluations.*.end_date' => 'required|date|after:evaluations.*.start_date',
                 'evaluations.*.percentage' => 'required|integer|min:0|max:100',
                 'evaluations.*.grade' => 'required|string|max:10',
                 'evaluations.*.performance_label' => 'required|string|max:255',
@@ -558,6 +635,10 @@ class PerformanceEvaluationController extends Controller
             ]);
 
             if ($validator->fails()) {
+                Log::warning('Bulk save validation failed', [
+                    'errors' => $validator->errors()->toArray()
+                ]);
+
                 return response()->json([
                     'success' => false,
                     'message' => 'Validation failed',
@@ -568,131 +649,161 @@ class PerformanceEvaluationController extends Controller
             $evaluationsData = $validator->validated()['evaluations'];
             $savedEvaluations = [];
             $duplicates = [];
+            $updated = [];
+            $restored = [];
             $errors = [];
 
             DB::beginTransaction();
 
-            foreach ($evaluationsData as $index => $evaluationData) {
-                try {
-                    // Check for existing evaluation for same employee and date range
-                    $existingEvaluation = PerformanceEvaluation::where('employee_id', $evaluationData['employee_id'])
-                        ->where('start_date', $evaluationData['start_date'])
-                        ->where('end_date', $evaluationData['end_date'])
-                        ->whereNull('deleted_at') // Only check non-deleted records
-                        ->first();
-
-                    if ($existingEvaluation) {
-                        // Get employee name for better duplicate reporting
-                        $employee = employee::find($evaluationData['employee_id']);
-                        $employeeName = $employee ? $employee->full_name : 'Unknown Employee';
+            try {
+                foreach ($evaluationsData as $index => $evaluationData) {
+                    try {
+                        // Check for existing evaluation with same employee and exact date range (including soft-deleted)
+                        $existing = PerformanceEvaluation::withTrashed()
+                            ->where('employee_id', $evaluationData['employee_id'])
+                            ->where('start_date', $evaluationData['start_date'])
+                            ->where('end_date', $evaluationData['end_date'])
+                            ->first();
                         
-                        $duplicates[] = [
+                        if ($existing) {
+                            // If soft-deleted, restore and update
+                            if ($existing->trashed()) {
+                                $existing->restore();
+                                $existing->update($evaluationData);
+                                $existing->load(['employee:id,full_name,attendance_employee_no', 'evaluator:id,name']);
+                                $restored[] = $existing;
+                                
+                                Log::info('Performance evaluation restored and updated in bulk', [
+                                    'evaluation_id' => $existing->id,
+                                    'employee_id' => $evaluationData['employee_id'],
+                                    'restored_by' => auth()->id() ?? 'system'
+                                ]);
+                                continue;
+                            }
+
+                            // Check if data is different
+                            $newDataHash = md5(serialize([
+                                'percentage' => $evaluationData['percentage'],
+                                'grade' => $evaluationData['grade'],
+                                'performance_label' => $evaluationData['performance_label'],
+                                'calculation_details' => $evaluationData['calculation_details'],
+                                'task_count' => $evaluationData['task_count'],
+                            ]));
+
+                            $existingDataHash = md5(serialize([
+                                'percentage' => $existing->percentage,
+                                'grade' => $existing->grade,
+                                'performance_label' => $existing->performance_label,
+                                'calculation_details' => $existing->calculation_details,
+                                'task_count' => $existing->task_count,
+                            ]));
+
+                            if ($newDataHash === $existingDataHash) {
+                                // Exact duplicate
+                                $employee = employee::find($evaluationData['employee_id']);
+                                $employeeName = $employee ? $employee->full_name : 'Unknown Employee';
+                                
+                                $duplicates[] = [
+                                    'index' => $index,
+                                    'employee_id' => $evaluationData['employee_id'],
+                                    'employee_name' => $employeeName,
+                                    'start_date' => $evaluationData['start_date'],
+                                    'end_date' => $evaluationData['end_date'],
+                                    'existing_id' => $existing->id,
+                                    'existing_created_at' => $existing->created_at->format('Y-m-d H:i:s'),
+                                    'message' => 'Performance evaluation with identical data already exists for this employee and date range'
+                                ];
+                                continue;
+                            } else {
+                                // Data is different - update existing
+                                $existing->update($evaluationData);
+                                $existing->load(['employee:id,full_name,attendance_employee_no', 'evaluator:id,name']);
+                                $updated[] = $existing;
+                                
+                                Log::info('Performance evaluation updated in bulk (data was different)', [
+                                    'evaluation_id' => $existing->id,
+                                    'employee_id' => $evaluationData['employee_id'],
+                                    'updated_by' => auth()->id() ?? 'system'
+                                ]);
+                                continue;
+                            }
+                        }
+
+                        // No existing record - create new
+                        $evaluation = PerformanceEvaluation::create($evaluationData);
+                        $evaluation->load(['employee:id,full_name,attendance_employee_no', 'evaluator:id,name']);
+                        $savedEvaluations[] = $evaluation;
+
+                        Log::info('Performance evaluation saved in bulk', [
+                            'evaluation_id' => $evaluation->id,
+                            'employee_id' => $evaluationData['employee_id'],
+                            'saved_by' => auth()->id() ?? 'system'
+                        ]);
+
+                    } catch (\Exception $e) {
+                        Log::error('Error saving individual evaluation in bulk', [
                             'index' => $index,
                             'employee_id' => $evaluationData['employee_id'],
-                            'employee_name' => $employeeName,
-                            'start_date' => $evaluationData['start_date'],
-                            'end_date' => $evaluationData['end_date'],
-                            'existing_id' => $existingEvaluation->id,
-                            'existing_created_at' => $existingEvaluation->created_at->format('Y-m-d H:i:s'),
-                            'message' => 'Evaluation already exists for this employee and date range'
-                        ];
-                        continue; // Skip this duplicate entry
-                    }
-
-                    // Additional check for overlapping date ranges for the same employee
-                    $overlappingEvaluation = PerformanceEvaluation::where('employee_id', $evaluationData['employee_id'])
-                        ->where(function($query) use ($evaluationData) {
-                            $query->where(function($q) use ($evaluationData) {
-                                // New start date falls within existing range
-                                $q->where('start_date', '<=', $evaluationData['start_date'])
-                                  ->where('end_date', '>=', $evaluationData['start_date']);
-                            })->orWhere(function($q) use ($evaluationData) {
-                                // New end date falls within existing range
-                                $q->where('start_date', '<=', $evaluationData['end_date'])
-                                  ->where('end_date', '>=', $evaluationData['end_date']);
-                            })->orWhere(function($q) use ($evaluationData) {
-                                // Existing range falls within new range
-                                $q->where('start_date', '>=', $evaluationData['start_date'])
-                                  ->where('end_date', '<=', $evaluationData['end_date']);
-                            });
-                        })
-                        ->whereNull('deleted_at')
-                        ->first();
-
-                    if ($overlappingEvaluation) {
-                        // Get employee name for better duplicate reporting
-                        $employee = employee::find($evaluationData['employee_id']);
-                        $employeeName = $employee ? $employee->full_name : 'Unknown Employee';
+                            'error' => $e->getMessage(),
+                            'trace' => $e->getTraceAsString()
+                        ]);
                         
-                        $duplicates[] = [
+                        $errors[] = [
                             'index' => $index,
                             'employee_id' => $evaluationData['employee_id'],
-                            'employee_name' => $employeeName,
-                            'start_date' => $evaluationData['start_date'],
-                            'end_date' => $evaluationData['end_date'],
-                            'existing_id' => $overlappingEvaluation->id,
-                            'existing_start_date' => $overlappingEvaluation->start_date->format('Y-m-d'),
-                            'existing_end_date' => $overlappingEvaluation->end_date->format('Y-m-d'),
-                            'existing_created_at' => $overlappingEvaluation->created_at->format('Y-m-d H:i:s'),
-                            'message' => 'Overlapping evaluation period exists for this employee'
+                            'message' => 'Failed to save evaluation: ' . $e->getMessage()
                         ];
-                        continue; // Skip this overlapping entry
                     }
-
-                    // If no duplicates found, create the evaluation
-                    $evaluation = PerformanceEvaluation::create($evaluationData);
-                    $evaluation->load(['employee:id,full_name,attendance_employee_no', 'evaluator:id,name']);
-                    $savedEvaluations[] = $evaluation;
-
-                } catch (\Exception $e) {
-                    Log::error('Error saving individual evaluation in bulk', [
-                        'index' => $index,
-                        'employee_id' => $evaluationData['employee_id'],
-                        'error' => $e->getMessage(),
-                        'trace' => $e->getTraceAsString()
-                    ]);
-                    
-                    $errors[] = [
-                        'index' => $index,
-                        'employee_id' => $evaluationData['employee_id'],
-                        'message' => 'Failed to save evaluation: ' . $e->getMessage()
-                    ];
                 }
-            }
 
-            DB::commit();
+                DB::commit();
 
-            Log::info('Bulk performance evaluations processed', [
-                'total_requested' => count($evaluationsData),
-                'saved_count' => count($savedEvaluations),
-                'duplicates_count' => count($duplicates),
-                'errors_count' => count($errors),
-                'processed_by' => auth()->id() ?? 'system'
-            ]);
-
-            // Determine response status based on results
-            $statusCode = 201; // Default success
-            if (count($savedEvaluations) === 0) {
-                $statusCode = 400; // Bad request if nothing was saved
-            } else if (count($duplicates) > 0 || count($errors) > 0) {
-                $statusCode = 207; // Multi-status for partial success
-            }
-
-            return response()->json([
-                'success' => count($savedEvaluations) > 0,
-                'message' => $this->getBulkSaveMessage(count($savedEvaluations), count($duplicates), count($errors)),
-                'data' => [
-                    'saved_evaluations' => $savedEvaluations,
+                Log::info('Bulk performance evaluations processed', [
+                    'total_requested' => count($evaluationsData),
                     'saved_count' => count($savedEvaluations),
-                    'duplicates' => $duplicates,
-                    'errors' => $errors,
-                    'total_requested' => count($evaluationsData)
-                ]
-            ], $statusCode);
+                    'updated_count' => count($updated),
+                    'restored_count' => count($restored),
+                    'duplicates_count' => count($duplicates),
+                    'errors_count' => count($errors),
+                    'processed_by' => auth()->id() ?? 'system'
+                ]);
+
+                // Determine response status based on results
+                $statusCode = 201; // Default success
+                if (count($savedEvaluations) === 0 && count($updated) === 0 && count($restored) === 0) {
+                    $statusCode = 400; // Bad request if nothing was saved/updated
+                } else if (count($duplicates) > 0 || count($errors) > 0) {
+                    $statusCode = 207; // Multi-status for partial success
+                }
+
+                return response()->json([
+                    'success' => count($savedEvaluations) > 0 || count($updated) > 0 || count($restored) > 0,
+                    'message' => $this->getBulkSaveMessage(
+                        count($savedEvaluations), 
+                        count($duplicates), 
+                        count($errors),
+                        count($updated),
+                        count($restored)
+                    ),
+                    'data' => [
+                        'saved_evaluations' => $savedEvaluations,
+                        'saved_count' => count($savedEvaluations),
+                        'updated' => $updated,
+                        'updated_count' => count($updated),
+                        'restored' => $restored,
+                        'restored_count' => count($restored),
+                        'duplicates' => $duplicates,
+                        'errors' => $errors,
+                        'total_requested' => count($evaluationsData)
+                    ]
+                ], $statusCode);
+
+            } catch (\Exception $e) {
+                DB::rollBack();
+                throw $e;
+            }
 
         } catch (\Exception $e) {
-            DB::rollBack();
-            
             Log::error('Error in bulk save performance evaluations', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
@@ -710,27 +821,30 @@ class PerformanceEvaluationController extends Controller
     /**
      * Generate appropriate message based on bulk save results
      */
-    private function getBulkSaveMessage($savedCount, $duplicateCount, $errorCount)
+    private function getBulkSaveMessage($savedCount, $duplicateCount, $errorCount, $updatedCount = 0, $restoredCount = 0)
     {
-        if ($savedCount === 0) {
-            if ($duplicateCount > 0 && $errorCount === 0) {
-                return 'No evaluations saved - all entries were duplicates';
-            } elseif ($errorCount > 0 && $duplicateCount === 0) {
-                return 'No evaluations saved - all entries had errors';
-            } else {
-                return 'No evaluations saved - duplicates and errors found';
-            }
-        } elseif ($duplicateCount === 0 && $errorCount === 0) {
-            return "All {$savedCount} evaluation(s) saved successfully";
-        } else {
-            $message = "{$savedCount} evaluation(s) saved successfully";
-            if ($duplicateCount > 0) {
-                $message .= ", {$duplicateCount} duplicate(s) skipped";
-            }
-            if ($errorCount > 0) {
-                $message .= ", {$errorCount} error(s) encountered";
-            }
-            return $message;
+        $messages = [];
+        
+        if ($savedCount > 0) {
+            $messages[] = "{$savedCount} new performance evaluation(s) created";
         }
+        
+        if ($updatedCount > 0) {
+            $messages[] = "{$updatedCount} existing evaluation(s) updated";
+        }
+        
+        if ($restoredCount > 0) {
+            $messages[] = "{$restoredCount} deleted evaluation(s) restored and updated";
+        }
+        
+        if ($duplicateCount > 0) {
+            $messages[] = "{$duplicateCount} duplicate(s) skipped";
+        }
+        
+        if ($errorCount > 0) {
+            $messages[] = "{$errorCount} error(s) encountered";
+        }
+        
+        return implode(', ', $messages);
     }
 }

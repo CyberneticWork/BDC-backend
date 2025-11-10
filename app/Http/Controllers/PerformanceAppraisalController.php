@@ -170,12 +170,13 @@ class PerformanceAppraisalController extends Controller
 
             $validator = Validator::make($request->all(), [
                 'appraisals' => 'required|array|min:1',
-                'appraisals.*.employee_id' => 'required|exists:employees,id',
+                'appraisals.*.employee_id' => 'required|integer|exists:employees,id',
+                'appraisals.*.appraiser_id' => 'nullable|integer|exists:users,id',
                 'appraisals.*.start_date' => 'required|date',
-                'appraisals.*.end_date' => 'required|date|after:start_date',
-                'appraisals.*.employee_self_rating' => 'required|integer|min:0|max:100',
-                'appraisals.*.supervisor_rating' => 'required|integer|min:0|max:100',
-                'appraisals.*.average_rating' => 'required|numeric|min:0|max:100',
+                'appraisals.*.end_date' => 'required|date|after_or_equal:appraisals.*.start_date',
+                'appraisals.*.employee_self_rating' => 'required|integer|min:0',
+                'appraisals.*.supervisor_rating' => 'required|integer|min:0',
+                'appraisals.*.average_rating' => 'required|numeric|min:0',
                 'appraisals.*.percentage' => 'required|integer|min:0|max:100',
                 'appraisals.*.grade' => 'required|string|max:10',
                 'appraisals.*.performance_label' => 'required|string|max:255',
@@ -200,31 +201,94 @@ class PerformanceAppraisalController extends Controller
 
             $savedAppraisals = [];
             $duplicates = [];
+            $updated = [];
+            $restored = [];
             $errors = [];
             
             DB::beginTransaction();
             
             try {
                 foreach ($request->appraisals as $index => $appraisalData) {
-                    // Check for existing appraisal with same employee and date range
-                    $existing = PerformanceAppraisal::where('employee_id', $appraisalData['employee_id'])
+                    // Set defaults
+                    $appraisalData['appraiser_id'] = $appraisalData['appraiser_id'] ?? auth()->id() ?? 1;
+                    $appraisalData['status'] = $appraisalData['status'] ?? 'Completed';
+
+                    // Check for existing appraisal with same employee and date range (including soft-deleted)
+                    $existing = PerformanceAppraisal::withTrashed()
+                        ->where('employee_id', $appraisalData['employee_id'])
                         ->where('start_date', $appraisalData['start_date'])
                         ->where('end_date', $appraisalData['end_date'])
                         ->first();
                     
                     if ($existing) {
-                        $duplicates[] = [
-                            'index' => $index,
-                            'employee_id' => $appraisalData['employee_id'],
-                            'message' => 'Performance appraisal already exists for this employee and date range'
-                        ];
-                        continue;
+                        // If soft-deleted, restore and update
+                        if ($existing->trashed()) {
+                            $existing->restore();
+                            $existing->update($appraisalData);
+                            $existing->load(['employee:id,full_name,attendance_employee_no', 'appraiser:id,name']);
+                            $restored[] = $existing;
+                            
+                            Log::info('Performance appraisal restored and updated in bulk', [
+                                'appraisal_id' => $existing->id,
+                                'employee_id' => $appraisalData['employee_id'],
+                                'restored_by' => auth()->id() ?? 'system'
+                            ]);
+                            continue;
+                        }
+
+                        // Check if data is different
+                        $newDataHash = md5(serialize([
+                            'employee_self_rating' => $appraisalData['employee_self_rating'],
+                            'supervisor_rating' => $appraisalData['supervisor_rating'],
+                            'average_rating' => (float) $appraisalData['average_rating'],
+                            'percentage' => $appraisalData['percentage'],
+                            'grade' => $appraisalData['grade'],
+                            'performance_label' => $appraisalData['performance_label'],
+                            'calculation_details' => $appraisalData['calculation_details'],
+                            'task_count' => $appraisalData['task_count'],
+                            'supervisor_comments' => $appraisalData['supervisor_comments'] ?? null,
+                            'employee_comments' => $appraisalData['employee_comments'] ?? null,
+                        ]));
+
+                        $existingDataHash = md5(serialize([
+                            'employee_self_rating' => $existing->employee_self_rating,
+                            'supervisor_rating' => $existing->supervisor_rating,
+                            'average_rating' => (float) $existing->average_rating,
+                            'percentage' => $existing->percentage,
+                            'grade' => $existing->grade,
+                            'performance_label' => $existing->performance_label,
+                            'calculation_details' => $existing->calculation_details,
+                            'task_count' => $existing->task_count,
+                            'supervisor_comments' => $existing->supervisor_comments,
+                            'employee_comments' => $existing->employee_comments,
+                        ]));
+
+                        if ($newDataHash === $existingDataHash) {
+                            // Exact duplicate
+                            $duplicates[] = [
+                                'index' => $index,
+                                'employee_id' => $appraisalData['employee_id'],
+                                'message' => 'Performance appraisal with identical data already exists for this employee and date range',
+                                'existing_id' => $existing->id,
+                                'existing_created_at' => $existing->created_at->format('Y-m-d H:i:s')
+                            ];
+                            continue;
+                        } else {
+                            // Data is different - update existing
+                            $existing->update($appraisalData);
+                            $existing->load(['employee:id,full_name,attendance_employee_no', 'appraiser:id,name']);
+                            $updated[] = $existing;
+                            
+                            Log::info('Performance appraisal updated in bulk (data was different)', [
+                                'appraisal_id' => $existing->id,
+                                'employee_id' => $appraisalData['employee_id'],
+                                'updated_by' => auth()->id() ?? 'system'
+                            ]);
+                            continue;
+                        }
                     }
                     
-                    // Set appraiser_id to current authenticated user
-                    $appraisalData['appraiser_id'] = auth()->id() ?? 1;
-                    $appraisalData['status'] = $appraisalData['status'] ?? 'Completed';
-                    
+                    // No existing record - create new
                     try {
                         $appraisal = PerformanceAppraisal::create($appraisalData);
                         $appraisal->load(['employee:id,full_name,attendance_employee_no', 'appraiser:id,name']);
@@ -232,7 +296,7 @@ class PerformanceAppraisalController extends Controller
 
                         Log::info('Performance appraisal saved in bulk', [
                             'appraisal_id' => $appraisal->id,
-                            'employee_id' => $appraisal->employee_id,
+                            'employee_id' => $appraisalData['employee_id'],
                             'saved_by' => auth()->id() ?? 'system'
                         ]);
                     } catch (\Exception $e) {
@@ -254,23 +318,36 @@ class PerformanceAppraisalController extends Controller
                 
                 $response = [
                     'success' => true,
-                    'message' => $this->getBulkSaveMessage(count($savedAppraisals), count($duplicates), count($errors)),
+                    'message' => $this->getBulkSaveMessage(
+                        count($savedAppraisals), 
+                        count($duplicates), 
+                        count($errors),
+                        count($updated),
+                        count($restored)
+                    ),
                     'data' => [
                         'saved' => $savedAppraisals,
                         'saved_count' => count($savedAppraisals),
+                        'updated' => $updated,
+                        'updated_count' => count($updated),
+                        'restored' => $restored,
+                        'restored_count' => count($restored),
                         'duplicate_count' => count($duplicates),
                         'error_count' => count($errors),
                         'duplicates' => $duplicates,
-                        'errors' => $errors
+                        'errors' => $errors,
+                        'total_processed' => count($request->appraisals)
                     ]
                 ];
                 
-                // Return 207 Multi-Status if there were some issues, 201 if all saved successfully
+                // Return 207 Multi-Status if there were some issues, 201 if all processed successfully
                 $statusCode = (count($duplicates) > 0 || count($errors) > 0) ? 207 : 201;
                 
                 Log::info('Bulk save performance appraisals completed', [
                     'total_requested' => count($request->appraisals),
                     'saved_count' => count($savedAppraisals),
+                    'updated_count' => count($updated),
+                    'restored_count' => count($restored),
                     'duplicate_count' => count($duplicates),
                     'error_count' => count($errors),
                     'status_code' => $statusCode
@@ -301,18 +378,31 @@ class PerformanceAppraisalController extends Controller
     /**
      * Generate appropriate message for bulk save operation
      */
-    private function getBulkSaveMessage($savedCount, $duplicateCount, $errorCount)
+    private function getBulkSaveMessage($savedCount, $duplicateCount, $errorCount, $updatedCount = 0, $restoredCount = 0)
     {
-        $message = "{$savedCount} performance appraisal(s) saved successfully";
+        $messages = [];
+        
+        if ($savedCount > 0) {
+            $messages[] = "{$savedCount} new performance appraisal(s) created";
+        }
+        
+        if ($updatedCount > 0) {
+            $messages[] = "{$updatedCount} existing appraisal(s) updated";
+        }
+        
+        if ($restoredCount > 0) {
+            $messages[] = "{$restoredCount} deleted appraisal(s) restored and updated";
+        }
         
         if ($duplicateCount > 0) {
-            $message .= ", {$duplicateCount} duplicate(s) skipped";
-        }
-        if ($errorCount > 0) {
-            $message .= ", {$errorCount} error(s) encountered";
+            $messages[] = "{$duplicateCount} duplicate(s) skipped";
         }
         
-        return $message;
+        if ($errorCount > 0) {
+            $messages[] = "{$errorCount} error(s) encountered";
+        }
+        
+        return implode(', ', $messages);
     }
 
     /**
