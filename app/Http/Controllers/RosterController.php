@@ -253,14 +253,69 @@ class RosterController extends Controller
 
     public function destroy($id)
     {
-        $roster = roster::find($id);
-        if (!$roster) {
-            return response()->json(['message' => 'Roster not found'], 404);
+        try {
+            $roster = roster::findOrFail($id);
+            
+            // Perform soft delete
+            $roster->delete();
+            
+            return response()->json([
+                'message' => 'Roster deleted successfully',
+                'success' => true
+            ], 200);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'message' => 'Roster not found',
+                'success' => false
+            ], 404);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Failed to delete roster',
+                'error' => $e->getMessage(),
+                'success' => false
+            ], 500);
         }
+    }
 
-        $roster->delete();
+    // Add this method to get trashed rosters if needed
+    public function getTrashed()
+    {
+        try {
+            $trashedRosters = roster::onlyTrashed()
+                ->with(['company', 'department', 'subDepartment', 'employee'])
+                ->get();
+            
+            return response()->json([
+                'success' => true,
+                'data' => $trashedRosters
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Failed to fetch trashed rosters',
+                'error' => $e->getMessage(),
+                'success' => false
+            ], 500);
+        }
+    }
 
-        return response()->json(['message' => 'Roster deleted successfully'], 200);
+    // Add this method to restore soft deleted rosters if needed
+    public function restore($id)
+    {
+        try {
+            $roster = roster::onlyTrashed()->findOrFail($id);
+            $roster->restore();
+            
+            return response()->json([
+                'message' => 'Roster restored successfully',
+                'success' => true
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Failed to restore roster',
+                'error' => $e->getMessage(),
+                'success' => false
+            ], 500);
+        }
     }
 
     public function search(Request $request)

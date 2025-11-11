@@ -312,3 +312,10 @@ Route::middleware('auth:sanctum')->group(function () {
     // Add this new route
     Route::post('/pms/kpi-task-assignments/check-weights', [PmsController::class, 'checkAssigneeWeights']);
 });
+
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/rosters/trashed', [RosterController::class, 'getTrashed']);
+    Route::post('/rosters/{id}/restore', [RosterController::class, 'restore']);
+    
+    
+});
