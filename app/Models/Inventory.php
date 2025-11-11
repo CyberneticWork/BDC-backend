@@ -3,6 +3,9 @@
 namespace App\Models;
 
 use App\Models\User;
+use App\Models\Customer;
+use App\Models\Supplier;
+use App\Models\centers;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -42,6 +45,21 @@ class Inventory extends Model
     public function approver(): BelongsTo
     {
         return $this->belongsTo(User::class, 'approved_by');
+    }
+
+    public function customer(): BelongsTo
+    {
+        return $this->belongsTo(Customer::class, 'customer_id');
+    }
+
+    public function supplier(): BelongsTo
+    {
+        return $this->belongsTo(Supplier::class, 'supplier_id');
+    }
+
+    public function center(): BelongsTo
+    {
+        return $this->belongsTo(centers::class, 'center_id');
     }
 
     /**

@@ -470,4 +470,201 @@ class InventoryController extends Controller
                   ]
             ], 200);
       }
+
+      // POST /api/invoices -> create an Invoice as an inventory record
+      public function storeInvoice(Request $request)
+      {
+            // Extract data from the request
+            $voucherNumber = $request->input('id'); // Frontend sends id as INV-0001
+            $centerId = $request->input('center');
+            $customerName = $request->input('customer');
+            $date = $request->input('date');
+            $refNumber = $request->input('refNumber');
+            $amount = (float)($request->input('amount') ?? 0);
+            $items = $request->input('items', []);
+            $paymentData = $request->input('payment', []);
+            $createdBy = $request->input('created_by');
+
+            // Validation
+            if (!$createdBy) {
+                  return response()->json([
+                        'message' => 'Created by user is required.'
+                  ], 401);
+            }
+
+            if (empty($items)) {
+                  return response()->json([
+                        'message' => 'No items provided for the invoice.'
+                  ], 422);
+            }
+
+            // Find or validate customer
+            $customer = \App\Models\Customer::where('name', $customerName)->first();
+            if (!$customer) {
+                  return response()->json([
+                        'message' => "Customer '{$customerName}' not found."
+                  ], 422);
+            }
+
+            // Prepare inventory product payloads
+            $linePayloads = [];
+            $totalQuantity = 0;
+            $totalAmount = 0;
+
+            foreach ($items as $line) {
+                  if (!is_array($line)) {
+                        continue;
+                  }
+
+                  $productId = $line['productId'] ?? null;
+                  $lineQty = (int)($line['quantity'] ?? 0);
+                  $lineCost = (float)($line['unitPrice'] ?? 0);
+                  $lineDiscount = (float)($line['discount'] ?? 0);
+
+                  // Calculate line amount: (unitPrice * quantity) - (discount * quantity)
+                  $lineAmount = ($lineCost * $lineQty) - ($lineDiscount * $lineQty);
+
+                  if ($productId && $lineQty > 0) {
+                        // Verify product exists
+                        $product = product::find($productId);
+                        if (!$product) {
+                              return response()->json([
+                                    'message' => "Product ID {$productId} not found."
+                              ], 422);
+                        }
+
+                        $linePayloads[] = [
+                              'product_id' => (int)$productId,
+                              'quantity' => $lineQty,
+                              'cost' => $lineCost,
+                              'min_price' => (float)($product->min_price ?? 0),
+                              'mrp' => (float)($product->mrp ?? 0),
+                              'amount' => $lineAmount,
+                              'created_by' => $createdBy,
+                        ];
+
+                        $totalQuantity += $lineQty;
+                        $totalAmount += $lineAmount;
+                  }
+            }
+
+            if (empty($linePayloads)) {
+                  return response()->json([
+                        'message' => 'No valid invoice items were provided.',
+                  ], 422);
+            }
+
+            // Use the calculated total if amount not provided or zero
+            if ($amount <= 0) {
+                  $amount = $totalAmount;
+            }
+
+            // Extract payment details
+            $paymentAmount = (float)($paymentData['amount'] ?? 0);
+            $paymentMode = $paymentData['mode'] ?? null;
+            $paymentNote = $paymentData['note'] ?? null;
+            $bankName = $paymentData['bankName'] ?? $paymentData['bank_name'] ?? null;
+            $chequeNo = $paymentData['chequeNo'] ?? $paymentData['cheque_no'] ?? null;
+            $chequeDate = $paymentData['chequeDate'] ?? $paymentData['cheque_date'] ?? null;
+            $referenceNo = $paymentData['referenceNo'] ?? $paymentData['reference_no'] ?? null;
+            $transferDate = $paymentData['transferDate'] ?? $paymentData['transfer_date'] ?? null;
+
+            // Persist inventory, items, and payment atomically
+            $result = DB::transaction(function () use (
+                  $voucherNumber,
+                  $totalQuantity,
+                  $amount,
+                  $refNumber,
+                  $centerId,
+                  $customer,
+                  $createdBy,
+                  $linePayloads,
+                  $paymentAmount,
+                  $paymentMode,
+                  $paymentNote,
+                  $bankName,
+                  $chequeNo,
+                  $chequeDate,
+                  $referenceNo,
+                  $transferDate
+            ) {
+                  // If voucherNumber not provided, generate one
+                  if (!$voucherNumber) {
+                        $year = date('y');
+                        $prefix = "INV-{$year}-";
+                        $latest = Inventory::where('voucherNumber', 'like', $prefix . '%')
+                              ->lockForUpdate()
+                              ->orderBy('voucherNumber', 'desc')
+                              ->value('voucherNumber');
+                        $maxNum = $latest ? (int)substr($latest, strlen($prefix)) : 0;
+                        $voucherNumber = $prefix . str_pad($maxNum + 1, 4, '0', STR_PAD_LEFT);
+                  }
+
+                  // Get the first item's cost for unitPrice
+                  $unitPrice = $linePayloads[0]['cost'] ?? 0;
+
+                  $record = Inventory::create([
+                        'voucherNumber' => $voucherNumber,
+                        'unitPrice' => $unitPrice,
+                        'quantity' => $totalQuantity,
+                        'amount' => $amount,
+                        'paid_value' => $paymentAmount,
+                        'discountValue' => 0, // Can be calculated from items if needed
+                        'referNumber' => $refNumber,
+                        'center_id' => $centerId,
+                        'supplier_id' => null,
+                        'customer_id' => $customer->id,
+                        'from_center' => null,
+                        'to_center' => null,
+                        'status' => 'pending',
+                        'created_by' => $createdBy,
+                        'approved_by' => null,
+                  ]);
+
+                  $createdItems = [];
+                  if (!empty($linePayloads)) {
+                        $createdItems = $record->items()->createMany($linePayloads);
+                  }
+
+                  $payment = null;
+                  if ($paymentAmount && (float)$paymentAmount > 0) {
+                        // Build note combining all payment details
+                        $noteDetails = [];
+                        if ($paymentNote) $noteDetails[] = $paymentNote;
+                        if ($referenceNo) $noteDetails[] = "Ref: {$referenceNo}";
+                        if ($transferDate) $noteDetails[] = "Date: {$transferDate}";
+
+                        $finalNote = !empty($noteDetails) ? implode(' | ', $noteDetails) : $paymentNote;
+
+                        $payment = Payment::create([
+                              'inventory_id' => $record->id,
+                              'amount' => (float)$paymentAmount,
+                              'mode' => $paymentMode,
+                              'note' => $finalNote,
+                              'bank_name' => $bankName,
+                              'cheque_no' => $chequeNo,
+                              'cheque_date' => $chequeDate,
+                              'created_by' => $createdBy,
+                        ]);
+                  }
+
+                  return [
+                        'record' => $record,
+                        'items' => $createdItems,
+                        'payment' => $payment,
+                  ];
+            });
+
+            $record = $result['record'];
+            $payment = $result['payment'];
+
+            return response()->json([
+                  'message' => 'Invoice saved successfully',
+                  'data' => tap($record->load(['creator:id,name', 'approver:id,name', 'items.product', 'customer']), function ($loaded) use ($payment) {
+                        if ($payment) {
+                              $loaded->payment = $payment;
+                        }
+                  }),
+            ], 201);
+      }
 }
