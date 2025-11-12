@@ -15,14 +15,14 @@ class CreatePaymentsTable extends Migration
     {
         Schema::create('payments', function (Blueprint $table) {
             $table->bigIncrements('id');
-            $table->unsignedBigInteger('inventory_id')->nullable()->index();
+            $table->foreignId('inventory_id')->constrained('inventory')->restrictOnDelete();
             $table->decimal('amount', 15, 2)->default(0);
             $table->string('mode')->nullable();
             $table->text('note')->nullable();
             $table->string('bank_name')->nullable();
             $table->string('cheque_no')->nullable();
             $table->date('cheque_date')->nullable();
-            $table->unsignedBigInteger('created_by')->nullable()->index();
+            $table->foreignId('created_by')->nullable()->constrained('users')->restrictOnDelete();
             $table->timestamps();
 
             // If you want a foreign key to inventories, uncomment the lines below
