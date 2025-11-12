@@ -596,22 +596,22 @@ class SalaryProcessController extends Controller
             }, 0);
 
             // OT fees
-            $morning_ot_fees = 0;
-            if ($employeeData['ot_morning'] == 1) {
-                $empid = $employeeData['id'];
-                $morning_ot_time = over_time::where('employee_id', $empid)
-                    ->where('status', 'approved')
-                    ->value('morning_ot');
-                $morning_ot_fees = $morning_ot_time * $employeeData['ot_morning_rate'];
-            }
-            $night_ot_fees = 0;
-            if ($employeeData['ot_evening'] == 1) {
-                $empid = $employeeData['id'];
-                $night_ot_time = over_time::where('employee_id', $empid)
-                    ->where('status', 'approved')
-                    ->value('afternoon_ot');
-                $night_ot_fees = $night_ot_time * $employeeData['ot_night_rate'];
-            }
+            $empid = $employeeData['id'];
+            $approvedOt = over_time::where('employee_id', $empid)
+                ->where('status', 'approved')
+                ->get(['morning_ot_amount', 'morning_ot_special_amount', 'evening_ot_amount', 'evening_ot_special_amount']);
+
+            $morningRegularAmount = $approvedOt->sum('morning_ot_amount');
+            $morningSpecialAmount = $approvedOt->sum('morning_ot_special_amount');
+            $eveningRegularAmount = $approvedOt->sum('evening_ot_amount');
+            $eveningSpecialAmount = $approvedOt->sum('evening_ot_special_amount');
+
+            $morning_ot_fees = $employeeData['ot_morning'] == 1
+                ? $morningRegularAmount + $morningSpecialAmount
+                : 0;
+            $night_ot_fees = $employeeData['ot_evening'] == 1
+                ? $eveningRegularAmount + $eveningSpecialAmount
+                : 0;
 
             // 7. Gross (include 6-month KPI bonus but exclude it from EPF base)
             $grossSalary = $epfEtfBase + $morning_ot_fees + $night_ot_fees + $kpiBonusAllowance;
