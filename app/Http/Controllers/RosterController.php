@@ -14,8 +14,9 @@ class RosterController extends Controller
     public function index()
     {
         // Eager load to avoid N+1
-        $rosters = roster::with(['company', 'department', 'subDepartment', 'employee'])->get();
-
+        $rosters = roster::with(['company', 'department', 'subDepartment', 'employee'])
+            ->orderBy('created_at', 'desc')
+            ->get();
         $data = $rosters->map(function ($r) {
             return [
                 'id' => $r->id,
@@ -33,6 +34,7 @@ class RosterController extends Controller
                     ?? null,
                 'date_from' => $r->date_from,
                 'date_to' => $r->date_to,
+                'created_at' => $r->created_at,
             ];
         });
 
@@ -69,6 +71,7 @@ class RosterController extends Controller
             'notes' => 'nullable|string',
             'date_from' => 'nullable|date',
             'date_to' => 'nullable|date',
+            'custom_created_at' => 'nullable|date',
         ]);
 
         if ($validator->fails()) {
@@ -76,6 +79,12 @@ class RosterController extends Controller
         }
 
         $data = $validator->validated();
+
+        // Set custom created_at if provided, otherwise use current timestamp
+        if (isset($data['custom_created_at'])) {
+            $data['created_at'] = $data['custom_created_at'];
+            unset($data['custom_created_at']); // Remove from data array
+        }
 
         // Build group signature
         $signature = [
@@ -191,6 +200,13 @@ class RosterController extends Controller
         if (!empty($errors)) {
             return response()->json(['errors' => $errors], 422);
         }
+
+        $now = now();
+        $validatedEntries = array_map(function ($entry) use ($now) {
+            $entry['created_at'] = $now;
+            $entry['updated_at'] = $now;
+            return $entry;
+        }, $validatedEntries);
 
         // Prevent creating a new roster group if another one already exists with a different roster_id
         $existingRosterId = $this->findExistingRosterGroupId($commonSignature);
@@ -327,13 +343,15 @@ class RosterController extends Controller
             'department_id' => 'nullable|exists:departments,id',
             'sub_department_id' => 'nullable|exists:sub_departments,id',
             'employee_id' => 'nullable|exists:employees,id',
+            'roster_id' => 'nullable|string', // Add this line
         ]);
 
         if ($validator->fails()) {
             return response()->json(['errors' => $validator->errors()], 422);
         }
 
-        $query = roster::with(['company', 'department', 'subDepartment', 'employee']);
+        $query = roster::with(['company', 'department', 'subDepartment', 'employee'])
+            ->orderBy('created_at', 'desc');
 
         if ($request->filled('date_from') || $request->filled('date_to')) {
             $query->where(function ($q) use ($request) {
@@ -367,6 +385,11 @@ class RosterController extends Controller
 
         if ($request->filled('employee_id')) {
             $query->where('employee_id', $request->employee_id);
+        }
+
+        // Add this new filter condition
+        if ($request->filled('roster_id')) {
+            $query->where('roster_id', 'LIKE', '%' . $request->roster_id . '%');
         }
 
         try {
