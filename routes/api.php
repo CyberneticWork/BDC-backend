@@ -380,7 +380,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
 Route::apiResource('inventories', InventoryController::class);
 Route::post('/grn', [InventoryController::class, 'store']);
-Route::get('/grn/next', [InventoryController::class, 'nextGrn']);
+Route::get(/invoices/next'/grn/next', [InventoryController::class, 'nextGrn']);  //for next GRN number
+Route::get('', [InventoryController::class, 'nextInv']); //for next Invoice number
 Route::post('/invoices', [InventoryController::class, 'storeInvoice']);
 
 //for inventory Products

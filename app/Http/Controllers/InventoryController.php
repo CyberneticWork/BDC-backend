@@ -471,6 +471,29 @@ class InventoryController extends Controller
             ], 200);
       }
 
+      // GET /api/invoices/next -> preview next Invoice number without creating a record
+      public function nextInv()
+      {
+            $year = date('y');
+            $prefix = "INV-{$year}-";
+            $latest = Inventory::where('voucherNumber', 'like', $prefix . '%')
+                  ->orderBy('voucherNumber', 'desc')
+                  ->value('voucherNumber');
+            $maxNum = 0;
+            if ($latest) {
+                  $maxNum = (int)substr($latest, strlen($prefix));
+            }
+            $nextNum = $maxNum + 1;
+            $voucher = $prefix . str_pad($nextNum, 4, '0', STR_PAD_LEFT);
+            return response()->json([
+                  'data' => [
+                        'next' => $voucher,
+                        'year' => $year,
+                        'sequence' => $nextNum,
+                  ]
+            ], 200);
+      }
+
       // POST /api/invoices -> create an Invoice as an inventory record
       public function storeInvoice(Request $request)
       {
