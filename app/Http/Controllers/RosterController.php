@@ -466,4 +466,44 @@ class RosterController extends Controller
 
         return $existing?->roster_id ? (int) $existing->roster_id : null;
     }
+
+    public function bulkDestroy(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'ids' => 'required|array|min:1',
+            'ids.*' => 'integer|exists:rosters,id'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => 'Validation failed',
+                'errors' => $validator->errors(),
+                'success' => false
+            ], 422);
+        }
+
+        try {
+            $ids = $request->input('ids');
+            $deletedCount = roster::whereIn('id', $ids)->delete();
+            
+            if ($deletedCount === 0) {
+                return response()->json([
+                    'message' => 'No rosters were found to delete',
+                    'success' => false
+                ], 404);
+            }
+
+            return response()->json([
+                'message' => "Successfully deleted {$deletedCount} roster record(s)",
+                'deleted_count' => $deletedCount,
+                'success' => true
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Failed to delete rosters',
+                'error' => $e->getMessage(),
+                'success' => false
+            ], 500);
+        }
+    }
 }

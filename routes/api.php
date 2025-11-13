@@ -316,6 +316,6 @@ Route::middleware('auth:sanctum')->group(function () {
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/rosters/trashed', [RosterController::class, 'getTrashed']);
     Route::post('/rosters/{id}/restore', [RosterController::class, 'restore']);
-    
+    Route::delete('/rosters/bulk-delete', [RosterController::class, 'bulkDestroy']);
     
 });
