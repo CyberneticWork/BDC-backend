@@ -162,16 +162,8 @@ class InventoryController extends Controller
                   }
             }
 
-            if ($quantity <= 0 && !empty($linePayloads)) {
-                  $quantity = array_sum(array_column($linePayloads, 'quantity'));
-            }
-
             if ($amount <= 0 && !empty($linePayloads)) {
                   $amount = array_sum(array_column($linePayloads, 'amount'));
-            }
-
-            if ($unitPrice <= 0 && !empty($linePayloads)) {
-                  $unitPrice = (float)($linePayloads[0]['cost'] ?? 0);
             }
 
             if (empty($linePayloads)) {
@@ -216,8 +208,6 @@ class InventoryController extends Controller
             // Persist inventory, items, and payment atomically
             $result = DB::transaction(function () use (
                   $discountValue,
-                  $quantity,
-                  $unitPrice,
                   $amount,
                   $paid_value,
                   $referNumber,
@@ -247,8 +237,6 @@ class InventoryController extends Controller
 
                   $record = Inventory::create([
                         'voucherNumber' => $voucherNumber,
-                        'unitPrice' => $unitPrice,
-                        'quantity' => $quantity,
                         'amount' => $amount,
                         'paid_value' => $paid_value,
                         'discountValue' => $discountValue,
@@ -355,25 +343,9 @@ class InventoryController extends Controller
                   $paid_value = $request->input('paid');
             }
 
-            $quantity = $request->input('quantity');
-            if ($quantity === null) {
-                  $quantity = $request->input('qty');
-            }
-
-            $unitPrice = $request->input('unitPrice');
-
             // If items[] are provided, derive sensible defaults when missing
             $items = $request->input('items', []);
             if (is_array($items) && count($items) > 0) {
-                  if ($quantity === null) {
-                        $quantity = collect($items)->sum(function ($it) {
-                              return (int)($it['quantity'] ?? 0);
-                        });
-                  }
-                  if ($unitPrice === null) {
-                        $firstItem = $items[0];
-                        $unitPrice = (float)($firstItem['unitPrice'] ?? 0);
-                  }
                   if ($amount === null || (float)$amount <= 0) {
                         $amount = collect($items)->sum(function ($it) {
                               $q = (float)($it['quantity'] ?? 0);
@@ -402,8 +374,6 @@ class InventoryController extends Controller
             // Build payload using only provided values
             $payload = [];
             if ($voucherNumber !== null) $payload['voucherNumber'] = (string)$voucherNumber;
-            if ($unitPrice !== null)     $payload['unitPrice'] = (float)$unitPrice;
-            if ($quantity !== null)      $payload['quantity'] = (int)$quantity;
             if ($amount !== null)        $payload['amount'] = (float)$amount;
             if ($paid_value !== null)    $payload['paid_value'] = (float)$paid_value;
             if ($discountValue !== null) $payload['discountValue'] = (float)$discountValue;
@@ -531,7 +501,6 @@ class InventoryController extends Controller
 
             // Prepare inventory product payloads
             $linePayloads = [];
-            $totalQuantity = 0;
             $totalAmount = 0;
 
             foreach ($items as $line) {
@@ -566,7 +535,6 @@ class InventoryController extends Controller
                               'created_by' => $createdBy,
                         ];
 
-                        $totalQuantity += $lineQty;
                         $totalAmount += $lineAmount;
                   }
             }
@@ -595,7 +563,6 @@ class InventoryController extends Controller
             // Persist inventory, items, and payment atomically
             $result = DB::transaction(function () use (
                   $voucherNumber,
-                  $totalQuantity,
                   $amount,
                   $refNumber,
                   $centerId,
@@ -623,13 +590,8 @@ class InventoryController extends Controller
                         $voucherNumber = $prefix . str_pad($maxNum + 1, 4, '0', STR_PAD_LEFT);
                   }
 
-                  // Get the first item's cost for unitPrice
-                  $unitPrice = $linePayloads[0]['cost'] ?? 0;
-
                   $record = Inventory::create([
                         'voucherNumber' => $voucherNumber,
-                        'unitPrice' => $unitPrice,
-                        'quantity' => $totalQuantity,
                         'amount' => $amount,
                         'paid_value' => $paymentAmount,
                         'discountValue' => 0, // Can be calculated from items if needed

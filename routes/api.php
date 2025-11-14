@@ -42,6 +42,7 @@ use App\Http\Controllers\ProductController;
 use App\Http\Controllers\CentersController;
 use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\InventoryProductController;
+use App\Http\Controllers\IncentoryStockController;
 
 
 Route::get('/user', function (Request $request) {
@@ -380,12 +381,16 @@ Route::middleware('auth:sanctum')->group(function () {
 
 Route::apiResource('inventories', InventoryController::class);
 Route::post('/grn', [InventoryController::class, 'store']);
-Route::get(/invoices/next'/grn/next', [InventoryController::class, 'nextGrn']);  //for next GRN number
-Route::get('', [InventoryController::class, 'nextInv']); //for next Invoice number
+Route::get('/grn/next', [InventoryController::class, 'nextGrn']);  //for next GRN number
+Route::get('/invoices/next', [InventoryController::class, 'nextInv']); //for next Invoice number
 Route::post('/invoices', [InventoryController::class, 'storeInvoice']);
 
 //for inventory Products
 Route::apiResource('inventory-products', InventoryProductController::class);
+
+// Incentory stock routes
+Route::apiResource('incentory-stocks', IncentoryStockController::class);
+Route::post('inventory-stocks/sync', [IncentoryStockController::class, 'syncFromGrn']);
 
 
 

@@ -21,8 +21,6 @@ class Inventory extends Model
 
     protected $fillable = [
         'voucherNumber',
-        'unitPrice',
-        'quantity',
         'amount',
         'paid_value',
         'discountValue',

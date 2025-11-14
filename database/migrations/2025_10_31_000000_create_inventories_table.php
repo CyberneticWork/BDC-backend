@@ -10,8 +10,6 @@ return new class extends Migration {
         Schema::create('inventory', function (Blueprint $table) {
             $table->id();
             $table->string('voucherNumber');
-            $table->float('unitPrice')->default(0);
-            $table->integer('quantity')->default(0);
             $table->float('amount')->default(0);
             $table->float('paid_value')->default(0);
             $table->float('discountValue')->default(0);
