@@ -389,8 +389,7 @@ Route::post('/invoices', [InventoryController::class, 'storeInvoice']);
 Route::apiResource('inventory-products', InventoryProductController::class);
 
 // Incentory stock routes
-Route::apiResource('incentory-stocks', IncentoryStockController::class);
-Route::post('inventory-stocks/sync', [IncentoryStockController::class, 'syncFromGrn']);
+Route::apiResource('invntory-stocks', IncentoryStockController::class);
 
 
 

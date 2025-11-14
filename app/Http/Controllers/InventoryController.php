@@ -4,652 +4,832 @@ namespace App\Http\Controllers;
 
 use App\Models\Inventory;
 use App\Models\Payment;
+use App\Models\inventory_stock;
 use App\Models\product;
+use App\Models\Customer;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class InventoryController extends Controller
 {
-      // GET /api/inventories -> return all inventory records
-      public function index()
-      {
-            $inventory = Inventory::with([
-                  'creator:id,name',
-                  'approver:id,name',
-                  'items'
-            ])->orderByDesc('id')->get();
 
-            return response()->json([
-                  'data' => $inventory,
-            ], 200);
-      }
+    // INDEX - GET ALL INVENTORY RECORDS
+    /**
+     * GET /api/inventories
+     * Return all inventory records with related data
+     */
+    public function index()
+    {
+        $inventory = Inventory::with([
+            'creator:id,name',
+            'approver:id,name',
+            'items'
+        ])->orderByDesc('id')->get();
 
-      // POST /api/grn -> create a GRN as an inventory record
-      public function store(Request $request)
-      {
-            // Support flexible payload keys from the frontend
-            $referNumber = $request->input('referNumber')
-                  ?? $request->input('refNumber');
+        return response()->json([
+            'data' => $inventory,
+        ], 200);
+    }
 
-            $discountValue = $request->input('discountValue');
-            if ($discountValue === null) {
-                  $discountValue = $request->input('discount', 0);
+    // STORE - CREATE INVENTORY RECORD (USED BY BOTH GRN AND INVOICE ROUTES)
+   /**
+     * POST /api/inventories (from apiResource)
+     * POST /api/grn (specific GRN route)
+     * POST /api/invoices (specific Invoice route)
+     * Creates GRN or Invoice based on the endpoint called
+     */
+    public function store(Request $request)
+    {
+        // DETERMINE DOCUMENT TYPE BASED ON ROUTE
+        $documentType = 'grn'; // Default for apiResource inventories
+
+        if (str_contains($request->url(), 'invoices')) {
+            $documentType = 'invoice';
+        } else if (str_contains($request->url(), 'grn')) {
+            $documentType = 'grn';
+        } else {
+            // For apiResource inventories endpoint, check type parameter
+            $documentType = strtolower($request->input('type', 'grn'));
+        }
+
+
+        // Reference number handling
+        $referNumber = $request->input('referNumber') ?? $request->input('refNumber');
+
+        // Discount value handling
+        $discountValue = $request->input('discountValue');
+        if ($discountValue === null) {
+            $discountValue = $request->input('discount', 0);
+        }
+
+        // Total amount handling
+        $amount = $request->input('amount');
+        if ($amount === null) {
+            $amount = $request->input('total', $request->input('totalAmount', 0));
+        }
+
+        // Paid value handling
+        $paid_value = $request->input('paid_value');
+        if ($paid_value === null) {
+            $paid_value = $request->input('paid', 0);
+        }
+
+        // Quantity handling
+        $quantity = $request->input('quantity');
+        if ($quantity === null) {
+            $quantity = $request->input('qty');
+        }
+
+        $unitPrice = $request->input('unitPrice');
+
+        // ITEM LINE DETECTION - Try multiple possible keys for line items
+        $candidateLineGroups = [
+            $request->input('items'),
+            $request->input('inventory_products'),
+            $request->input('inventoryProducts'),
+            $request->input('products'),
+            $request->input('lines'),
+        ];
+
+        $items = [];
+        foreach ($candidateLineGroups as $group) {
+            if (is_array($group) && count($group) > 0) {
+                $items = $group;
+                break;
             }
+        }
 
-            $amount = $request->input('amount');
-            if ($amount === null) {
-                  $amount = $request->input('total', $request->input('totalAmount', 0));
-            }
-
-            $paid_value = $request->input('paid_value');
-            if ($paid_value === null) {
-                  $paid_value = $request->input('paid', 0);
-            }
-
-            $quantity = $request->input('quantity');
+        // CALCULATE DERIVED VALUES FROM LINE ITEMS
+        if (!empty($items)) {
+            // Calculate total quantity from line items if not provided at root
             if ($quantity === null) {
-                  $quantity = $request->input('qty');
+                $quantity = collect($items)->sum(function ($it) {
+                    return (int)($it['quantity'] ?? $it['qty'] ?? data_get($it, 'pivot.quantity', 0));
+                });
             }
 
-            $unitPrice = $request->input('unitPrice');
+            // Get unit price from first item if not provided at root
+            if ($unitPrice === null) {
+                $firstItem = $items[0];
+                $unitPrice = (float)($firstItem['unitPrice'] ?? $firstItem['cost'] ?? data_get($firstItem, 'pivot.cost', 0));
+            }
 
-            // If item level payloads are provided under any supported key, derive sensible defaults
-            $candidateLineGroups = [
-                  $request->input('items'),
-                  $request->input('inventory_products'),
-                  $request->input('inventoryProducts'),
-                  $request->input('products'),
-                  $request->input('lines'),
+            // Calculate total amount from line items if not provided or invalid
+            if ($amount === null || (float)$amount <= 0) {
+                $amount = collect($items)->sum(function ($it) {
+                    $q = (float)($it['quantity'] ?? $it['qty'] ?? data_get($it, 'pivot.quantity', 0));
+                    $u = (float)($it['unitPrice'] ?? $it['cost'] ?? data_get($it, 'pivot.cost', 0));
+                    $lineAmount = $it['amount'] ?? $it['total'] ?? data_get($it, 'pivot.amount');
+
+                    return $lineAmount !== null ? (float)$lineAmount : $q * $u;
+                });
+            }
+        }
+
+        // FINAL DATA TYPE CASTING AND VALIDATION
+        $referNumber = $referNumber ? (string)$referNumber : null;
+        $discountValue = (float)$discountValue;
+        $quantity = (int)($quantity ?? 0);
+        $unitPrice = (float)($unitPrice ?? 0);
+        $amount = (float)($amount ?? 0);
+        $paid_value = (float)($paid_value ?? 0);
+
+        // AUTHENTICATION CHECK - Ensure we have a valid creator
+        $creatorId = optional($request->user())->id ?? $request->input('created_by');
+        if (!$creatorId) {
+            return response()->json([
+                'message' => 'Unauthenticated: provide a valid token or created_by user id.'
+            ], 401);
+        }
+
+        // PREPARE LINE ITEM PAYLOADS
+        $linePayloads = [];
+        if (!empty($items)) {
+            foreach ($items as $line) {
+                if (!is_array($line)) {
+                    continue;
+                }
+
+                // Extract product ID from multiple possible keys
+                $productId = $line['product_id']
+                    ?? $line['productId']
+                    ?? $line['id']
+                    ?? data_get($line, 'product.id');
+
+                $lineQty = (int)($line['quantity'] ?? $line['qty'] ?? data_get($line, 'pivot.quantity', 0));
+                if ($lineQty < 0) {
+                    $lineQty = 0;
+                }
+
+                $lineCost = $line['unitPrice'] ?? $line['cost'] ?? data_get($line, 'pivot.cost', 0);
+                $lineMinPrice = $line['min_price'] ?? $line['minPrice'] ?? data_get($line, 'pivot.min_price', 0);
+                $lineMrp = $line['mrp'] ?? data_get($line, 'pivot.mrp', 0);
+                $lineAmount = $line['amount'] ?? $line['total'] ?? data_get($line, 'pivot.amount');
+
+                // CALCULATE LINE AMOUNT BASED ON DOCUMENT TYPE
+                if ($lineAmount === null) {
+                    if ($documentType === 'invoice') {
+                        // For invoices: (unitPrice * quantity) - (discount * quantity)
+                        $lineDiscount = (float)($line['discount'] ?? 0);
+                        $lineAmount = ($lineCost * $lineQty) - ($lineDiscount * $lineQty);
+                    } else {
+                        // For GRN: simple quantity * cost
+                        $lineAmount = $lineQty * (float)$lineCost;
+                    }
+                }
+
+                // Only add valid line items with product and quantity
+                if ($productId && $lineQty > 0) {
+                    $linePayloads[] = [
+                        'product_id' => (int)$productId,
+                        'quantity' => $lineQty,
+                        'cost' => (float)$lineCost,
+                        'min_price' => (float)$lineMinPrice,
+                        'mrp' => (float)$lineMrp,
+                        'amount' => (float)$lineAmount,
+                        'created_by' => $creatorId,
+                    ];
+                }
+            }
+        }
+
+        // EXTRACT STOCK LINES FOR INVENTORY ADJUSTMENTS (GRN ONLY)
+        $stockLines = [];
+        if ($documentType === 'grn') {
+            $stockLines = $this->extractStockLines($items, $linePayloads);
+        }
+
+        // FALLBACK: Handle single product case (legacy support)
+        if (empty($linePayloads)) {
+            $rootProductId = $request->input('product_id') ?? $request->input('productId') ?? $request->input('product');
+            if ($rootProductId && $quantity > 0) {
+                $linePayloads[] = [
+                    'product_id' => (int)$rootProductId,
+                    'quantity' => $quantity,
+                    'cost' => $unitPrice,
+                    'min_price' => (float)($request->input('min_price') ?? $request->input('minPrice') ?? 0),
+                    'mrp' => (float)($request->input('mrp') ?? 0),
+                    'amount' => (float)($request->input('lineAmount') ?? ($quantity * $unitPrice)),
+                    'created_by' => $creatorId,
+                ];
+            }
+        }
+
+        // VALIDATION: Ensure we have line items
+        if (empty($linePayloads)) {
+            return response()->json([
+                'message' => 'No valid inventory item lines were provided.',
+            ], 422);
+        }
+
+        // VALIDATION: Check if all products exist
+        $productIds = array_unique(array_column($linePayloads, 'product_id'));
+        if (!empty($productIds)) {
+            $existingIds = product::whereIn('id', $productIds)->pluck('id')->all();
+            $missingIds = array_diff($productIds, $existingIds);
+            if (!empty($missingIds)) {
+                return response()->json([
+                    'message' => 'One or more products referenced do not exist.',
+                    'missing_product_ids' => array_values($missingIds),
+                ], 422);
+            }
+        }
+
+        // DOCUMENT TYPE SPECIFIC VALIDATIONS AND DATA PREPARATION
+        if ($documentType === 'invoice') {
+            // INVOICE SPECIFIC VALIDATION: Customer is required
+            $customerName = $request->input('customer');
+            if (!$customerName) {
+                return response()->json([
+                    'message' => 'Customer name is required for invoices.'
+                ], 422);
+            }
+
+            $customer = Customer::where('name', $customerName)->first();
+            if (!$customer) {
+                return response()->json([
+                    'message' => "Customer '{$customerName}' not found."
+                ], 422);
+            }
+            $customer_id = $customer->id;
+            $supplier_id = null;
+            $from_center = null;
+            $to_center = null;
+
+        } else {
+            // GRN SPECIFIC: Handle supplier and center relationships
+            $customer_id = $request->input('customer_id', $request->input('customerId'));
+            $supplier_id = $request->input('supplier_id', $request->input('supplierId'));
+            $from_center = $request->input('from_center', $request->input('fromCenter'));
+            $to_center = $request->input('to_center', $request->input('toCenter'));
+
+            // Find customer by ID if provided, otherwise null
+            if ($customer_id) {
+                $customer = Customer::find($customer_id);
+                if (!$customer) {
+                    return response()->json([
+                        'message' => "Customer ID {$customer_id} not found."
+                    ], 422);
+                }
+            }
+        }
+
+        // COMMON FOREIGN KEY HANDLING
+        $center_id = $request->input('center_id', $request->input('centerId'));
+
+        // Determine stock center for GRN (priority: stock_center_id > to_center > center_id > from_center)
+        $stockCenterId = null;
+        if ($documentType === 'grn') {
+            $stockCenterId = $request->input('stock_center_id')
+                ?? $to_center
+                ?? $center_id
+                ?? $from_center;
+        }
+
+        // STATUS - Always set to pending regardless of input
+        $status = 'pending';
+
+        // PAYMENT DATA EXTRACTION - Support nested payment object and root level fields
+        $paymentInput = $request->input('payment', []);
+        $paymentAmount = isset($paymentInput['amount']) ? (float)$paymentInput['amount'] : $paid_value;
+
+        // Payment mode and details with multiple key support
+        $paymentMode = $paymentInput['mode'] ?? $request->input('mode') ?? null;
+        $paymentNote = $paymentInput['note'] ?? $request->input('note') ?? null;
+        $bankName = $paymentInput['bankName'] ?? $paymentInput['bank_name'] ?? $request->input('bankName') ?? $request->input('bank_name');
+        $chequeNo = $paymentInput['chequeNo'] ?? $paymentInput['cheque_no'] ?? $request->input('chequeNo') ?? $request->input('cheque_no');
+        $chequeDate = $paymentInput['chequeDate'] ?? $paymentInput['cheque_date'] ?? $request->input('chequeDate') ?? $request->input('cheque_date');
+
+        // INVOICE SPECIFIC PAYMENT FIELDS
+        $referenceNo = $paymentInput['referenceNo'] ?? $paymentInput['reference_no'] ?? null;
+        $transferDate = $paymentInput['transferDate'] ?? $paymentInput['transfer_date'] ?? null;
+
+        // DATABASE TRANSACTION - Atomic persistence of inventory, items, and payment
+        $result = DB::transaction(function () use (
+            $documentType,
+            $request,
+            $discountValue,
+            $amount,
+            $paid_value,
+            $referNumber,
+            $center_id,
+            $supplier_id,
+            $customer_id,
+            $from_center,
+            $to_center,
+            $status,
+            $creatorId,
+            $linePayloads,
+            $stockLines,
+            $stockCenterId,
+            $paymentAmount,
+            $paymentMode,
+            $paymentNote,
+            $bankName,
+            $chequeNo,
+            $chequeDate,
+            $referenceNo,
+            $transferDate
+        ) {
+            // VOUCHER NUMBER GENERATION BASED ON DOCUMENT TYPE
+            $voucherNumber = $request->input('id'); // Frontend may send pre-generated ID
+
+            if (!$voucherNumber) {
+                $year = date('y');
+
+                if ($documentType === 'invoice') {
+                    $prefix = "INV-{$year}-";
+                } else {
+                    $prefix = "GRN-{$year}-";
+                }
+
+                $latest = Inventory::where('voucherNumber', 'like', $prefix . '%')
+                    ->lockForUpdate()
+                    ->orderBy('voucherNumber', 'desc')
+                    ->value('voucherNumber');
+                $maxNum = $latest ? (int)substr($latest, strlen($prefix)) : 0;
+                $voucherNumber = $prefix . str_pad($maxNum + 1, 4, '0', STR_PAD_LEFT);
+            }
+
+            // CREATE INVENTORY RECORD
+            $recordData = [
+                'voucherNumber' => $voucherNumber,
+                'amount' => $amount,
+                'paid_value' => $paid_value,
+                'discountValue' => $discountValue,
+                'referNumber' => $referNumber,
+                'center_id' => $center_id,
+                'supplier_id' => $supplier_id,
+                'customer_id' => $customer_id,
+                'from_center' => $from_center,
+                'to_center' => $to_center,
+                'status' => $status,
+                'created_by' => $creatorId,
+                'approved_by' => null,
             ];
 
-            $items = [];
-            foreach ($candidateLineGroups as $group) {
-                  if (is_array($group) && count($group) > 0) {
-                        $items = $group;
-                        break;
-                  }
+            $record = Inventory::create($recordData);
+
+            // CREATE LINE ITEMS
+            $createdItems = [];
+            if (!empty($linePayloads)) {
+                $createdItems = $record->items()->createMany($linePayloads);
             }
 
-            if (!empty($items)) {
-                  if ($quantity === null) {
-                        $quantity = collect($items)->sum(function ($it) {
-                              return (int)($it['quantity'] ?? $it['qty'] ?? data_get($it, 'pivot.quantity', 0));
-                        });
-                  }
+            // CREATE PAYMENT RECORD IF PAYMENT AMOUNT > 0
+            $payment = null;
+            if ($paymentAmount && (float)$paymentAmount > 0) {
+                // Build comprehensive payment note for invoices
+                $finalNote = $paymentNote;
+                if ($documentType === 'invoice') {
+                    $noteDetails = [];
+                    if ($paymentNote) $noteDetails[] = $paymentNote;
+                    if ($referenceNo) $noteDetails[] = "Ref: {$referenceNo}";
+                    if ($transferDate) $noteDetails[] = "Date: {$transferDate}";
 
-                  if ($unitPrice === null) {
-                        $firstItem = $items[0];
-                        $unitPrice = (float)($firstItem['unitPrice'] ?? $firstItem['cost'] ?? data_get($firstItem, 'pivot.cost', 0));
-                  }
+                    $finalNote = !empty($noteDetails) ? implode(' | ', $noteDetails) : $paymentNote;
+                }
 
-                  if ($amount === null || (float)$amount <= 0) {
-                        $amount = collect($items)->sum(function ($it) {
-                              $q = (float)($it['quantity'] ?? $it['qty'] ?? data_get($it, 'pivot.quantity', 0));
-                              $u = (float)($it['unitPrice'] ?? $it['cost'] ?? data_get($it, 'pivot.cost', 0));
-                              $lineAmount = $it['amount'] ?? $it['total'] ?? data_get($it, 'pivot.amount');
-
-                              return $lineAmount !== null ? (float)$lineAmount : $q * $u;
-                        });
-                  }
+                $payment = Payment::create([
+                    'inventory_id' => $record->id,
+                    'amount' => (float)$paymentAmount,
+                    'mode' => $paymentMode,
+                    'note' => $finalNote,
+                    'bank_name' => $bankName,
+                    'cheque_no' => $chequeNo,
+                    'cheque_date' => $chequeDate,
+                    'created_by' => $creatorId,
+                ]);
             }
 
-            // Final fallbacks
-            $referNumber = $referNumber ? (string)$referNumber : null;
-            $discountValue = (float)$discountValue;
-            $quantity = (int)($quantity ?? 0);
-            $unitPrice = (float)($unitPrice ?? 0);
-            $amount = (float)($amount ?? 0);
-            $paid_value = (float)($paid_value ?? 0);
-
-            // Resolve creator (require authenticated user or explicit created_by)
-            $creatorId = optional($request->user())->id ?? $request->input('created_by');
-            if (!$creatorId) {
-                  return response()->json([
-                        'message' => 'Unauthenticated: provide a valid token or created_by user id.'
-                  ], 401);
+            // UPDATE INVENTORY STOCK FOR GRN ONLY
+            if ($documentType === 'grn' && !empty($stockLines) && $stockCenterId) {
+                $this->applyInventoryStockAdjustments($stockLines, (int)$stockCenterId, (int)$creatorId);
             }
 
-            // Prepare inventory product payloads ahead of persistence
-            $linePayloads = [];
-            if (!empty($items)) {
-                  foreach ($items as $line) {
-                        if (!is_array($line)) {
-                              continue;
-                        }
+            return [
+                'record' => $record,
+                'items' => $createdItems,
+                'payment' => $payment,
+                'document_type' => $documentType,
+            ];
+        });
 
-                        $productId = $line['product_id']
-                              ?? $line['productId']
-                              ?? $line['id']
-                              ?? data_get($line, 'product.id');
-                        $lineQty = (int)($line['quantity'] ?? $line['qty'] ?? data_get($line, 'pivot.quantity', 0));
-                        if ($lineQty < 0) {
-                              $lineQty = 0;
-                        }
-                        $lineCost = $line['unitPrice'] ?? $line['cost'] ?? data_get($line, 'pivot.cost', 0);
-                        $lineMinPrice = $line['min_price'] ?? $line['minPrice'] ?? data_get($line, 'pivot.min_price', 0);
-                        $lineMrp = $line['mrp'] ?? data_get($line, 'pivot.mrp', 0);
-                        $lineAmount = $line['amount'] ?? $line['total'] ?? data_get($line, 'pivot.amount');
-                        if ($lineAmount === null) {
-                              $lineAmount = $lineQty * (float)$lineCost;
-                        }
+        $record = $result['record'];
+        $payment = $result['payment'];
+        $documentType = $result['document_type'];
 
-                        if ($productId && $lineQty > 0) {
-                              $linePayloads[] = [
-                                    'product_id' => (int)$productId,
-                                    'quantity' => $lineQty,
-                                    'cost' => (float)$lineCost,
-                                    'min_price' => (float)$lineMinPrice,
-                                    'mrp' => (float)$lineMrp,
-                                    'amount' => (float)$lineAmount,
-                                    'created_by' => $creatorId,
-                              ];
-                        }
-                  }
+        // LOAD RELATIONSHIPS BASED ON DOCUMENT TYPE
+        $relationships = ['creator:id,name', 'approver:id,name', 'items.product'];
+        if ($documentType === 'invoice') {
+            $relationships[] = 'customer';
+        }
+
+        // SUCCESS RESPONSE
+        $message = $documentType === 'invoice' ? 'Invoice saved successfully' : 'GRN saved successfully';
+
+        return response()->json([
+            'message' => $message,
+            'data' => tap($record->load($relationships), function ($loaded) use ($payment) {
+                if ($payment) {
+                    $loaded->payment = $payment;
+                }
+            }),
+            'document_type' => $documentType,
+        ], 201);
+    }
+
+    // ======================================================================
+    // SHOW - GET SINGLE INVENTORY RECORD
+    // ======================================================================
+    /**
+     * GET /api/inventories/{id}
+     * Return a single inventory record with related data
+     */
+    public function show($id)
+    {
+        $record = Inventory::with([
+            'creator:id,name',
+            'approver:id,name',
+            'items'
+        ])->find($id);
+
+        if (!$record) {
+            return response()->json([
+                'message' => 'Inventory record not found.'
+            ], 404);
+        }
+
+        return response()->json([
+            'data' => $record,
+        ], 200);
+    }
+
+    // ======================================================================
+    // UPDATE - MODIFY EXISTING INVENTORY RECORD
+    // ======================================================================
+    /**
+     * PUT/PATCH /api/inventories/{id}
+     * Update an existing inventory record with flexible input handling
+     */
+    public function update(Request $request, $id)
+    {
+        $record = Inventory::find($id);
+        if (!$record) {
+            return response()->json([
+                'message' => 'Inventory record not found.'
+            ], 404);
+        }
+
+
+        $voucherNumber = $request->input('voucherNumber')
+            ?? $request->input('grnNumber')
+            ?? $request->input('id');
+
+        $referNumber = $request->input('referNumber')
+            ?? $request->input('refNumber');
+
+        $discountValue = $request->input('discountValue');
+        if ($discountValue === null) {
+            $discountValue = $request->input('discount');
+        }
+
+        $amount = $request->input('amount');
+        if ($amount === null) {
+            $amount = $request->input('total', $request->input('totalAmount'));
+        }
+
+        $paid_value = $request->input('paid_value');
+        if ($paid_value === null) {
+            $paid_value = $request->input('paid');
+        }
+
+
+        $items = $request->input('items', []);
+        if (is_array($items) && count($items) > 0) {
+            if ($amount === null || (float)$amount <= 0) {
+                $amount = collect($items)->sum(function ($it) {
+                    $q = (float)($it['quantity'] ?? 0);
+                    $u = (float)($it['unitPrice'] ?? 0);
+                    return $q * $u;
+                });
             }
+        }
 
-            if (empty($linePayloads)) {
-                  $rootProductId = $request->input('product_id') ?? $request->input('productId') ?? $request->input('product');
-                  if ($rootProductId && $quantity > 0) {
-                        $linePayloads[] = [
-                              'product_id' => (int)$rootProductId,
-                              'quantity' => $quantity,
-                              'cost' => $unitPrice,
-                              'min_price' => (float)($request->input('min_price') ?? $request->input('minPrice') ?? 0),
-                              'mrp' => (float)($request->input('mrp') ?? 0),
-                              'amount' => (float)($request->input('lineAmount') ?? ($quantity * $unitPrice)),
-                              'created_by' => $creatorId,
+
+        $status = $request->input('status');
+        $allowedStatus = ['pending', 'reject', 'completed'];
+        if ($status !== null && !in_array($status, $allowedStatus, true)) {
+            return response()->json([
+                'message' => 'Invalid status value. Allowed: pending, reject, completed.'
+            ], 422);
+        }
+
+        // FOREIGN KEY FIELDS
+        $center_id   = $request->input('center_id');
+        $supplier_id = $request->input('supplier_id');
+        $customer_id = $request->input('customer_id');
+        $from_center = $request->input('from_center');
+        $to_center   = $request->input('to_center');
+
+        // BUILD UPDATE PAYLOAD - Only include provided fields
+        $payload = [];
+        if ($voucherNumber !== null) $payload['voucherNumber'] = (string)$voucherNumber;
+        if ($amount !== null)        $payload['amount'] = (float)$amount;
+        if ($paid_value !== null)    $payload['paid_value'] = (float)$paid_value;
+        if ($discountValue !== null) $payload['discountValue'] = (float)$discountValue;
+        if ($referNumber !== null)   $payload['referNumber'] = $referNumber ? (string)$referNumber : null;
+        if ($status !== null)        $payload['status'] = $status;
+        if ($request->exists('center_id'))     $payload['center_id'] = $center_id;
+        if ($request->exists('supplier_id'))   $payload['supplier_id'] = $supplier_id;
+        if ($request->exists('customer_id'))   $payload['customer_id'] = $customer_id;
+        if ($request->exists('from_center'))   $payload['from_center'] = $from_center;
+        if ($request->exists('to_center'))     $payload['to_center'] = $to_center;
+
+        // VALIDATION: Ensure at least one field is being updated
+        if (empty($payload)) {
+            return response()->json([
+                'message' => 'No updatable fields provided.'
+            ], 422);
+        }
+
+        // PERFORM UPDATE
+        $record->update($payload);
+
+        // LOAD FRESH DATA WITH RELATIONSHIPS
+        $record->load(['creator:id,name', 'approver:id,name']);
+
+        return response()->json([
+            'message' => 'Inventory updated successfully',
+            'data' => $record,
+        ], 200);
+    }
+
+    // ======================================================================
+    // DESTROY - SOFT DELETE INVENTORY RECORD
+    // ======================================================================
+    /**
+     * DELETE /api/inventories/{id}
+     * Soft delete an inventory record
+     */
+    public function destroy($id)
+    {
+        $record = Inventory::find($id);
+        if (!$record) {
+            return response()->json([
+                'message' => 'Inventory record not found.'
+            ], 404);
+        }
+
+        $record->delete();
+
+        return response()->json([
+            'message' => 'Inventory deleted successfully'
+        ], 200);
+    }
+
+    // ======================================================================
+    // NEXT GRN - PREVIEW NEXT GRN NUMBER
+    // ======================================================================
+    /**
+     * GET /api/grn/next
+     * Preview next GRN number without creating a record
+     */
+    public function nextGrn()
+    {
+        $year = date('y');
+        $prefix = "GRN-{$year}-";
+        $latest = Inventory::where('voucherNumber', 'like', $prefix . '%')
+            ->orderBy('voucherNumber', 'desc')
+            ->value('voucherNumber');
+        $maxNum = 0;
+        if ($latest) {
+            $maxNum = (int)substr($latest, strlen($prefix));
+        }
+        $nextNum = $maxNum + 1;
+        $voucher = $prefix . str_pad($nextNum, 4, '0', STR_PAD_LEFT);
+        return response()->json([
+            'data' => [
+                'next' => $voucher,
+                'year' => $year,
+                'sequence' => $nextNum,
+            ]
+        ], 200);
+    }
+
+    // ======================================================================
+    // NEXT INVOICE - PREVIEW NEXT INVOICE NUMBER
+    // ======================================================================
+    /**
+     * GET /api/invoices/next
+     * Preview next Invoice number without creating a record
+     */
+    public function nextInv()
+    {
+        $year = date('y');
+        $prefix = "INV-{$year}-";
+        $latest = Inventory::where('voucherNumber', 'like', $prefix . '%')
+            ->orderBy('voucherNumber', 'desc')
+            ->value('voucherNumber');
+        $maxNum = 0;
+        if ($latest) {
+            $maxNum = (int)substr($latest, strlen($prefix));
+        }
+        $nextNum = $maxNum + 1;
+        $voucher = $prefix . str_pad($nextNum, 4, '0', STR_PAD_LEFT);
+        return response()->json([
+            'data' => [
+                'next' => $voucher,
+                'year' => $year,
+                'sequence' => $nextNum,
+            ]
+        ], 200);
+    }
+
+
+    // STORE INVOICE - LEGACY METHOD (NOW HANDLED BY STORE METHOD)
+    /**
+     * POST /api/invoices
+     * Legacy method - now handled by the main store() method
+     * Kept for backward compatibility
+     */
+    public function storeInvoice(Request $request)
+    {
+        // Simply call the main store method
+        // The URL detection in store() will handle it as an invoice
+        return $this->store($request);
+    }
+
+
+    // PRIVATE HELPER METHODS
+    /**
+     * Extract stock lines (product, quantity, batch) from raw request items
+     */
+    private function extractStockLines($rawItems, array $linePayloads): array
+    {
+        $stockLines = [];
+
+        if (is_array($rawItems) && !empty($rawItems)) {
+            foreach ($rawItems as $line) {
+                if (!is_array($line)) {
+                    continue;
+                }
+
+                $productId = $line['product_id']
+                    ?? $line['productId']
+                    ?? $line['id']
+                    ?? data_get($line, 'product.id');
+                if (!$productId) {
+                    continue;
+                }
+
+                // Handle batch collections
+                $batchCollections = $line['batches'] ?? $line['batchEntries'] ?? null;
+                if (is_array($batchCollections) && !empty($batchCollections)) {
+                    foreach ($batchCollections as $batchLine) {
+                        $qty = (int)($batchLine['quantity'] ?? $batchLine['qty'] ?? 0);
+                        if ($qty <= 0) {
+                            continue;
+                        }
+                        $batchNumber = $batchLine['batch_number']
+                            ?? $batchLine['batchNumber']
+                            ?? $batchLine['batch']
+                            ?? null;
+                        $stockLines[] = [
+                            'product_id' => (int)$productId,
+                            'quantity' => $qty,
+                            'batch_number' => $this->normalizeBatchNumber($batchNumber),
                         ];
-                  }
+                    }
+                    continue;
+                }
+
+                // Handle simple line items
+                $qty = (int)($line['quantity'] ?? $line['qty'] ?? data_get($line, 'pivot.quantity', 0));
+                if ($qty <= 0) {
+                    continue;
+                }
+
+                $batchNumber = $line['batch_number']
+                    ?? $line['batchNumber']
+                    ?? $line['batch']
+                    ?? null;
+
+                $stockLines[] = [
+                    'product_id' => (int)$productId,
+                    'quantity' => $qty,
+                    'batch_number' => $this->normalizeBatchNumber($batchNumber),
+                ];
+            }
+        }
+
+        // Fallback to line payloads
+        if (empty($stockLines) && !empty($linePayloads)) {
+            foreach ($linePayloads as $line) {
+                $stockLines[] = [
+                    'product_id' => (int)$line['product_id'],
+                    'quantity' => (int)$line['quantity'],
+                    'batch_number' => null,
+                ];
+            }
+        }
+
+        return $stockLines;
+    }
+
+    /**
+     * Merge incoming quantities into inventory_stocks per product/batch/center
+     */
+    private function applyInventoryStockAdjustments(array $stockLines, ?int $centerId, int $userId): void
+    {
+        if (!$centerId || empty($stockLines)) {
+            return;
+        }
+
+        $aggregated = [];
+        foreach ($stockLines as $line) {
+            $productId = (int)($line['product_id'] ?? 0);
+            $qty = (int)($line['quantity'] ?? 0);
+            $batchNumber = array_key_exists('batch_number', $line)
+                ? $this->normalizeBatchNumber($line['batch_number'])
+                : null;
+
+            if ($productId <= 0 || $qty <= 0) {
+                continue;
             }
 
-            if ($amount <= 0 && !empty($linePayloads)) {
-                  $amount = array_sum(array_column($linePayloads, 'amount'));
+            $batchKey = $batchNumber ?? '';
+            $key = $productId . '|' . $batchKey;
+
+            if (!isset($aggregated[$key])) {
+                $aggregated[$key] = [
+                    'product_id' => $productId,
+                    'quantity' => 0,
+                    'batch_number' => $batchNumber,
+                ];
             }
 
-            if (empty($linePayloads)) {
-                  return response()->json([
-                        'message' => 'No valid inventory item lines were provided.',
-                  ], 422);
-            }
+            $aggregated[$key]['quantity'] += $qty;
+        }
 
-            $productIds = array_unique(array_column($linePayloads, 'product_id'));
-            if (!empty($productIds)) {
-                  $existingIds = product::whereIn('id', $productIds)->pluck('id')->all();
-                  $missingIds = array_diff($productIds, $existingIds);
-                  if (!empty($missingIds)) {
-                        return response()->json([
-                              'message' => 'One or more products referenced in the GRN do not exist.',
-                              'missing_product_ids' => array_values($missingIds),
-                        ], 422);
-                  }
-            }
+        foreach ($aggregated as $payload) {
+            $this->upsertInventoryStockRow(
+                $payload['product_id'],
+                $centerId,
+                $payload['batch_number'],
+                $payload['quantity'],
+                $userId
+            );
+        }
+    }
 
-            // Foreign keys (accept both snake_case and camelCase)
-            $center_id   = $request->input('center_id', $request->input('centerId'));
-            $supplier_id = $request->input('supplier_id', $request->input('supplierId'));
-            $customer_id = $request->input('customer_id', $request->input('customerId'));
-            $from_center = $request->input('from_center', $request->input('fromCenter'));
-            $to_center   = $request->input('to_center', $request->input('toCenter'));
+    /**
+     * Normalize batch number
+     */
+    private function normalizeBatchNumber($batchNumber): ?string
+    {
+        if ($batchNumber === null) {
+            return null;
+        }
 
-            // Always store status as pending regardless of input
-            $status = 'pending';
+        $trimmed = trim((string)$batchNumber);
+        return $trimmed === '' ? null : $trimmed;
+    }
 
-            // Save payment details (if provided or paid_value > 0)
-            $paymentInput = $request->input('payment', []);
-            $paymentAmount = isset($paymentInput['amount']) ? (float)$paymentInput['amount'] : $paid_value;
+    /**
+     * Upsert inventory stock row
+     */
+    private function upsertInventoryStockRow(int $productId, int $centerId, ?string $batchNumber, int $quantityDelta, int $userId): void
+    {
+        if ($quantityDelta <= 0) {
+            return;
+        }
 
-            // Also support payment fields at root level for backwards compatibility
-            $paymentMode = $paymentInput['mode'] ?? $request->input('mode') ?? null;
-            $paymentNote = $paymentInput['note'] ?? $request->input('note') ?? null;
-            $bankName = $paymentInput['bankName'] ?? $paymentInput['bank_name'] ?? $request->input('bankName') ?? $request->input('bank_name');
-            $chequeNo = $paymentInput['chequeNo'] ?? $paymentInput['cheque_no'] ?? $request->input('chequeNo') ?? $request->input('cheque_no');
-            $chequeDate = $paymentInput['chequeDate'] ?? $paymentInput['cheque_date'] ?? $request->input('chequeDate') ?? $request->input('cheque_date');
+        $query = inventory_stock::where('product_id', $productId)
+            ->where('center_id', $centerId);
 
-            // Persist inventory, items, and payment atomically
-            $result = DB::transaction(function () use (
-                  $discountValue,
-                  $amount,
-                  $paid_value,
-                  $referNumber,
-                  $center_id,
-                  $supplier_id,
-                  $customer_id,
-                  $from_center,
-                  $to_center,
-                  $status,
-                  $creatorId,
-                  $linePayloads,
-                  $paymentAmount,
-                  $paymentMode,
-                  $paymentNote,
-                  $bankName,
-                  $chequeNo,
-                  $chequeDate
-            ) {
-                  $year = date('y');
-                  $prefix = "GRN-{$year}-";
-                  $latest = Inventory::where('voucherNumber', 'like', $prefix . '%')
-                        ->lockForUpdate()
-                        ->orderBy('voucherNumber', 'desc')
-                        ->value('voucherNumber');
-                  $maxNum = $latest ? (int)substr($latest, strlen($prefix)) : 0;
-                  $voucherNumber = $prefix . str_pad($maxNum + 1, 4, '0', STR_PAD_LEFT);
+        if ($batchNumber === null) {
+            $query->whereNull('batch_number');
+        } else {
+            $query->where('batch_number', $batchNumber);
+        }
 
-                  $record = Inventory::create([
-                        'voucherNumber' => $voucherNumber,
-                        'amount' => $amount,
-                        'paid_value' => $paid_value,
-                        'discountValue' => $discountValue,
-                        'referNumber' => $referNumber,
-                        'center_id' => $center_id,
-                        'supplier_id' => $supplier_id,
-                        'customer_id' => $customer_id,
-                        'from_center' => $from_center,
-                        'to_center' => $to_center,
-                        'status' => $status,
-                        'created_by' => $creatorId,
-                        'approved_by' => null,
-                  ]);
+        $stock = $query->lockForUpdate()->first();
 
-                  $createdItems = [];
-                  if (!empty($linePayloads)) {
-                        $createdItems = $record->items()->createMany($linePayloads);
-                  }
+        if ($stock) {
+            $stock->quantity = ($stock->quantity ?? 0) + $quantityDelta;
+            $stock->updated_by = $userId;
+            $stock->save();
+            return;
+        }
 
-                  $payment = null;
-                  if ($paymentAmount && (float)$paymentAmount > 0) {
-                        $payment = Payment::create([
-                              'inventory_id' => $record->id,
-                              'amount' => (float)$paymentAmount,
-                              'mode' => $paymentMode,
-                              'note' => $paymentNote,
-                              'bank_name' => $bankName,
-                              'cheque_no' => $chequeNo,
-                              'cheque_date' => $chequeDate,
-                              'created_by' => $creatorId,
-                        ]);
-                  }
-
-                  return [
-                        'record' => $record,
-                        'items' => $createdItems,
-                        'payment' => $payment,
-                  ];
-            });
-
-            $record = $result['record'];
-            $payment = $result['payment'];
-
-            return response()->json([
-                  'message' => 'GRN saved successfully',
-                  'data' => tap($record->load(['creator:id,name', 'approver:id,name', 'items.product']), function ($loaded) use ($payment) {
-                        if ($payment) {
-                              $loaded->payment = $payment;
-                        }
-                  }),
-            ], 201);
-      }
-
-      // GET /api/inventories/{id} -> return a single inventory record
-      public function show($id)
-      {
-            $record = Inventory::with([
-                  'creator:id,name',
-                  'approver:id,name',
-                  'items'
-            ])->find($id);
-
-            if (!$record) {
-                  return response()->json([
-                        'message' => 'Inventory record not found.'
-                  ], 404);
-            }
-
-            return response()->json([
-                  'data' => $record,
-            ], 200);
-      }
-
-      // PUT/PATCH /api/inventories/{id} -> update an inventory record
-      public function update(Request $request, $id)
-      {
-            $record = Inventory::find($id);
-            if (!$record) {
-                  return response()->json([
-                        'message' => 'Inventory record not found.'
-                  ], 404);
-            }
-
-            // Flexible inputs similar to store()
-            $voucherNumber = $request->input('voucherNumber')
-                  ?? $request->input('grnNumber')
-                  ?? $request->input('id');
-
-            $referNumber = $request->input('referNumber')
-                  ?? $request->input('refNumber');
-
-            $discountValue = $request->input('discountValue');
-            if ($discountValue === null) {
-                  $discountValue = $request->input('discount');
-            }
-
-            $amount = $request->input('amount');
-            if ($amount === null) {
-                  $amount = $request->input('total', $request->input('totalAmount'));
-            }
-
-            $paid_value = $request->input('paid_value');
-            if ($paid_value === null) {
-                  $paid_value = $request->input('paid');
-            }
-
-            // If items[] are provided, derive sensible defaults when missing
-            $items = $request->input('items', []);
-            if (is_array($items) && count($items) > 0) {
-                  if ($amount === null || (float)$amount <= 0) {
-                        $amount = collect($items)->sum(function ($it) {
-                              $q = (float)($it['quantity'] ?? 0);
-                              $u = (float)($it['unitPrice'] ?? 0);
-                              return $q * $u;
-                        });
-                  }
-            }
-
-            // Optional status, restrict to allowed enum values
-            $status = $request->input('status');
-            $allowedStatus = ['pending', 'reject', 'completed'];
-            if ($status !== null && !in_array($status, $allowedStatus, true)) {
-                  return response()->json([
-                        'message' => 'Invalid status value. Allowed: pending, reject, completed.'
-                  ], 422);
-            }
-
-            // Foreign keys
-            $center_id   = $request->input('center_id');
-            $supplier_id = $request->input('supplier_id');
-            $customer_id = $request->input('customer_id');
-            $from_center = $request->input('from_center');
-            $to_center   = $request->input('to_center');
-
-            // Build payload using only provided values
-            $payload = [];
-            if ($voucherNumber !== null) $payload['voucherNumber'] = (string)$voucherNumber;
-            if ($amount !== null)        $payload['amount'] = (float)$amount;
-            if ($paid_value !== null)    $payload['paid_value'] = (float)$paid_value;
-            if ($discountValue !== null) $payload['discountValue'] = (float)$discountValue;
-            if ($referNumber !== null)   $payload['referNumber'] = $referNumber ? (string)$referNumber : null;
-            if ($status !== null)        $payload['status'] = $status;
-            if ($request->exists('center_id'))     $payload['center_id'] = $center_id;
-            if ($request->exists('supplier_id'))   $payload['supplier_id'] = $supplier_id;
-            if ($request->exists('customer_id'))   $payload['customer_id'] = $customer_id;
-            if ($request->exists('from_center'))   $payload['from_center'] = $from_center;
-            if ($request->exists('to_center'))     $payload['to_center'] = $to_center;
-
-            if (empty($payload)) {
-                  return response()->json([
-                        'message' => 'No updatable fields provided.'
-                  ], 422);
-            }
-
-            $record->update($payload);
-
-            $record->load(['creator:id,name', 'approver:id,name']);
-
-            return response()->json([
-                  'message' => 'Inventory updated successfully',
-                  'data' => $record,
-            ], 200);
-      }
-
-      // DELETE /api/inventories/{id} -> soft delete an inventory
-      public function destroy($id)
-      {
-            $record = Inventory::find($id);
-            if (!$record) {
-                  return response()->json([
-                        'message' => 'Inventory record not found.'
-                  ], 404);
-            }
-
-            $record->delete();
-
-            return response()->json([
-                  'message' => 'Inventory deleted successfully'
-            ], 200);
-      }
-
-      // GET /api/grn/next -> preview next GRN number without creating a record
-      public function nextGrn()
-      {
-            $year = date('y');
-            $prefix = "GRN-{$year}-";
-            $latest = Inventory::where('voucherNumber', 'like', $prefix . '%')
-                  ->orderBy('voucherNumber', 'desc')
-                  ->value('voucherNumber');
-            $maxNum = 0;
-            if ($latest) {
-                  $maxNum = (int)substr($latest, strlen($prefix));
-            }
-            $nextNum = $maxNum + 1;
-            $voucher = $prefix . str_pad($nextNum, 4, '0', STR_PAD_LEFT);
-            return response()->json([
-                  'data' => [
-                        'next' => $voucher,
-                        'year' => $year,
-                        'sequence' => $nextNum,
-                  ]
-            ], 200);
-      }
-
-      // GET /api/invoices/next -> preview next Invoice number without creating a record
-      public function nextInv()
-      {
-            $year = date('y');
-            $prefix = "INV-{$year}-";
-            $latest = Inventory::where('voucherNumber', 'like', $prefix . '%')
-                  ->orderBy('voucherNumber', 'desc')
-                  ->value('voucherNumber');
-            $maxNum = 0;
-            if ($latest) {
-                  $maxNum = (int)substr($latest, strlen($prefix));
-            }
-            $nextNum = $maxNum + 1;
-            $voucher = $prefix . str_pad($nextNum, 4, '0', STR_PAD_LEFT);
-            return response()->json([
-                  'data' => [
-                        'next' => $voucher,
-                        'year' => $year,
-                        'sequence' => $nextNum,
-                  ]
-            ], 200);
-      }
-
-      // POST /api/invoices -> create an Invoice as an inventory record
-      public function storeInvoice(Request $request)
-      {
-            // Extract data from the request
-            $voucherNumber = $request->input('id'); // Frontend sends id as INV-0001
-            $centerId = $request->input('center');
-            $customerName = $request->input('customer');
-            $date = $request->input('date');
-            $refNumber = $request->input('refNumber');
-            $amount = (float)($request->input('amount') ?? 0);
-            $items = $request->input('items', []);
-            $paymentData = $request->input('payment', []);
-            $createdBy = $request->input('created_by');
-
-            // Validation
-            if (!$createdBy) {
-                  return response()->json([
-                        'message' => 'Created by user is required.'
-                  ], 401);
-            }
-
-            if (empty($items)) {
-                  return response()->json([
-                        'message' => 'No items provided for the invoice.'
-                  ], 422);
-            }
-
-            // Find or validate customer
-            $customer = \App\Models\Customer::where('name', $customerName)->first();
-            if (!$customer) {
-                  return response()->json([
-                        'message' => "Customer '{$customerName}' not found."
-                  ], 422);
-            }
-
-            // Prepare inventory product payloads
-            $linePayloads = [];
-            $totalAmount = 0;
-
-            foreach ($items as $line) {
-                  if (!is_array($line)) {
-                        continue;
-                  }
-
-                  $productId = $line['productId'] ?? null;
-                  $lineQty = (int)($line['quantity'] ?? 0);
-                  $lineCost = (float)($line['unitPrice'] ?? 0);
-                  $lineDiscount = (float)($line['discount'] ?? 0);
-
-                  // Calculate line amount: (unitPrice * quantity) - (discount * quantity)
-                  $lineAmount = ($lineCost * $lineQty) - ($lineDiscount * $lineQty);
-
-                  if ($productId && $lineQty > 0) {
-                        // Verify product exists
-                        $product = product::find($productId);
-                        if (!$product) {
-                              return response()->json([
-                                    'message' => "Product ID {$productId} not found."
-                              ], 422);
-                        }
-
-                        $linePayloads[] = [
-                              'product_id' => (int)$productId,
-                              'quantity' => $lineQty,
-                              'cost' => $lineCost,
-                              'min_price' => (float)($product->min_price ?? 0),
-                              'mrp' => (float)($product->mrp ?? 0),
-                              'amount' => $lineAmount,
-                              'created_by' => $createdBy,
-                        ];
-
-                        $totalAmount += $lineAmount;
-                  }
-            }
-
-            if (empty($linePayloads)) {
-                  return response()->json([
-                        'message' => 'No valid invoice items were provided.',
-                  ], 422);
-            }
-
-            // Use the calculated total if amount not provided or zero
-            if ($amount <= 0) {
-                  $amount = $totalAmount;
-            }
-
-            // Extract payment details
-            $paymentAmount = (float)($paymentData['amount'] ?? 0);
-            $paymentMode = $paymentData['mode'] ?? null;
-            $paymentNote = $paymentData['note'] ?? null;
-            $bankName = $paymentData['bankName'] ?? $paymentData['bank_name'] ?? null;
-            $chequeNo = $paymentData['chequeNo'] ?? $paymentData['cheque_no'] ?? null;
-            $chequeDate = $paymentData['chequeDate'] ?? $paymentData['cheque_date'] ?? null;
-            $referenceNo = $paymentData['referenceNo'] ?? $paymentData['reference_no'] ?? null;
-            $transferDate = $paymentData['transferDate'] ?? $paymentData['transfer_date'] ?? null;
-
-            // Persist inventory, items, and payment atomically
-            $result = DB::transaction(function () use (
-                  $voucherNumber,
-                  $amount,
-                  $refNumber,
-                  $centerId,
-                  $customer,
-                  $createdBy,
-                  $linePayloads,
-                  $paymentAmount,
-                  $paymentMode,
-                  $paymentNote,
-                  $bankName,
-                  $chequeNo,
-                  $chequeDate,
-                  $referenceNo,
-                  $transferDate
-            ) {
-                  // If voucherNumber not provided, generate one
-                  if (!$voucherNumber) {
-                        $year = date('y');
-                        $prefix = "INV-{$year}-";
-                        $latest = Inventory::where('voucherNumber', 'like', $prefix . '%')
-                              ->lockForUpdate()
-                              ->orderBy('voucherNumber', 'desc')
-                              ->value('voucherNumber');
-                        $maxNum = $latest ? (int)substr($latest, strlen($prefix)) : 0;
-                        $voucherNumber = $prefix . str_pad($maxNum + 1, 4, '0', STR_PAD_LEFT);
-                  }
-
-                  $record = Inventory::create([
-                        'voucherNumber' => $voucherNumber,
-                        'amount' => $amount,
-                        'paid_value' => $paymentAmount,
-                        'discountValue' => 0, // Can be calculated from items if needed
-                        'referNumber' => $refNumber,
-                        'center_id' => $centerId,
-                        'supplier_id' => null,
-                        'customer_id' => $customer->id,
-                        'from_center' => null,
-                        'to_center' => null,
-                        'status' => 'pending',
-                        'created_by' => $createdBy,
-                        'approved_by' => null,
-                  ]);
-
-                  $createdItems = [];
-                  if (!empty($linePayloads)) {
-                        $createdItems = $record->items()->createMany($linePayloads);
-                  }
-
-                  $payment = null;
-                  if ($paymentAmount && (float)$paymentAmount > 0) {
-                        // Build note combining all payment details
-                        $noteDetails = [];
-                        if ($paymentNote) $noteDetails[] = $paymentNote;
-                        if ($referenceNo) $noteDetails[] = "Ref: {$referenceNo}";
-                        if ($transferDate) $noteDetails[] = "Date: {$transferDate}";
-
-                        $finalNote = !empty($noteDetails) ? implode(' | ', $noteDetails) : $paymentNote;
-
-                        $payment = Payment::create([
-                              'inventory_id' => $record->id,
-                              'amount' => (float)$paymentAmount,
-                              'mode' => $paymentMode,
-                              'note' => $finalNote,
-                              'bank_name' => $bankName,
-                              'cheque_no' => $chequeNo,
-                              'cheque_date' => $chequeDate,
-                              'created_by' => $createdBy,
-                        ]);
-                  }
-
-                  return [
-                        'record' => $record,
-                        'items' => $createdItems,
-                        'payment' => $payment,
-                  ];
-            });
-
-            $record = $result['record'];
-            $payment = $result['payment'];
-
-            return response()->json([
-                  'message' => 'Invoice saved successfully',
-                  'data' => tap($record->load(['creator:id,name', 'approver:id,name', 'items.product', 'customer']), function ($loaded) use ($payment) {
-                        if ($payment) {
-                              $loaded->payment = $payment;
-                        }
-                  }),
-            ], 201);
-      }
+        inventory_stock::create([
+            'product_id' => $productId,
+            'center_id' => $centerId,
+            'batch_number' => $batchNumber,
+            'quantity' => $quantityDelta,
+            'created_by' => $userId,
+            'updated_by' => $userId,
+        ]);
+    }
 }
