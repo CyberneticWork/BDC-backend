@@ -29,6 +29,7 @@ use App\Http\Controllers\ExamController;
 use App\Http\Controllers\PmsController;
 use App\Http\Controllers\PerformanceEvaluationController;
 use App\Http\Controllers\PerformanceAppraisalController;
+use App\Http\Controllers\ShiftOvertimeRateController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -319,3 +320,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/rosters/bulk-delete', [RosterController::class, 'bulkDestroy']);
     
 });
+
+// Shift Overtime Rates routes - MOVE THESE BEFORE apiResource
+Route::get('/shift-overtime-rates/shifts/dropdown', [ShiftOvertimeRateController::class, 'getShifts']);
+Route::get('/shift-overtime-rates/by-shift/{shiftId}', [ShiftOvertimeRateController::class, 'getByShiftId']);
+Route::apiResource('shift-overtime-rates', ShiftOvertimeRateController::class);
