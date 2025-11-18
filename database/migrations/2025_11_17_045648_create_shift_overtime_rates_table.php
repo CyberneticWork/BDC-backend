@@ -14,9 +14,10 @@ return new class extends Migration
         Schema::create('shift_overtime_rates', function (Blueprint $table) {
             $table->id();
             $table->foreignId('shift_id')->constrained('shifts')->onDelete('cascade');
-            $table->decimal('normal_hours_rate', 8, 2)->default(0.00);
-            $table->decimal('ot_rate', 8, 2)->default(0.00);
-            $table->decimal('holiday_rate', 8, 2)->default(0.00);
+            $table->decimal('shift_hours_per_day', 4, 2)->default(8.00);
+            $table->decimal('working_days_per_month', 4, 2)->default(30.00);
+            $table->decimal('ot_multiplier', 4, 2)->default(1.50);
+            $table->decimal('holiday_multiplier', 4, 2)->default(2.00);
             $table->decimal('ignore_hours_threshold', 4, 2)->default(1.00); // Hours to ignore before calculating OT
             $table->softDeletes();
             $table->timestamps();
