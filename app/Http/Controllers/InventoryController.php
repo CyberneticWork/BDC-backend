@@ -9,6 +9,7 @@ use App\Models\product;
 use App\Models\Customer;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class InventoryController extends Controller
 {
@@ -193,11 +194,8 @@ class InventoryController extends Controller
             }
         }
 
-        // EXTRACT STOCK LINES FOR INVENTORY ADJUSTMENTS (GRN ONLY)
-        $stockLines = [];
-        if ($documentType === 'grn') {
-            $stockLines = $this->extractStockLines($items, $linePayloads);
-        }
+        // EXTRACT STOCK LINES FOR INVENTORY ADJUSTMENTS
+        $stockLines = $this->extractStockLines($items, $linePayloads);
 
         // FALLBACK: Handle single product case (legacy support)
         if (empty($linePayloads)) {
@@ -277,13 +275,18 @@ class InventoryController extends Controller
         // COMMON FOREIGN KEY HANDLING
         $center_id = $request->input('center_id', $request->input('centerId'));
 
-        // Determine stock center for GRN (priority: stock_center_id > to_center > center_id > from_center)
+        // Determine stock center (GRN adds, Invoice deducts)
         $stockCenterId = null;
         if ($documentType === 'grn') {
             $stockCenterId = $request->input('stock_center_id')
                 ?? $to_center
                 ?? $center_id
                 ?? $from_center;
+        } else {
+            $stockCenterId = $request->input('stock_center_id')
+                ?? $center_id
+                ?? $from_center
+                ?? $request->input('center');
         }
 
         // STATUS - Always set to pending regardless of input
@@ -402,9 +405,13 @@ class InventoryController extends Controller
                 ]);
             }
 
-            // UPDATE INVENTORY STOCK FOR GRN ONLY
-            if ($documentType === 'grn' && !empty($stockLines) && $stockCenterId) {
-                $this->applyInventoryStockAdjustments($stockLines, (int)$stockCenterId, (int)$creatorId);
+            // UPDATE INVENTORY STOCK BASED ON DOCUMENT TYPE -----------------------------*
+            if (!empty($stockLines) && $stockCenterId) {
+                if ($documentType === 'grn') {
+                    $this->applyInventoryStockAdjustments($stockLines, (int)$stockCenterId, (int)$creatorId, 'add');
+                } elseif ($documentType === 'invoice') {
+                    $this->applyInventoryStockAdjustments($stockLines, (int)$stockCenterId, (int)$creatorId, 'subtract');
+                }
             }
 
             return [
@@ -740,11 +747,13 @@ class InventoryController extends Controller
     /**
      * Merge incoming quantities into inventory_stocks per product/batch/center
      */
-    private function applyInventoryStockAdjustments(array $stockLines, ?int $centerId, int $userId): void
+    private function applyInventoryStockAdjustments(array $stockLines, ?int $centerId, int $userId, string $mode = 'add'): void
     {
         if (!$centerId || empty($stockLines)) {
             return;
         }
+
+        $mode = strtolower($mode) === 'subtract' ? 'subtract' : 'add';
 
         $aggregated = [];
         foreach ($stockLines as $line) {
@@ -773,14 +782,53 @@ class InventoryController extends Controller
         }
 
         foreach ($aggregated as $payload) {
-            $this->upsertInventoryStockRow(
-                $payload['product_id'],
-                $centerId,
-                $payload['batch_number'],
-                $payload['quantity'],
-                $userId
-            );
+            if ($mode === 'subtract') {
+                $this->deductInventoryStockRow(
+                    $payload['product_id'],
+                    $centerId,
+                    $payload['batch_number'],
+                    $payload['quantity'],
+                    $userId
+                );
+            } else {
+                $this->upsertInventoryStockRow(
+                    $payload['product_id'],
+                    $centerId,
+                    $payload['batch_number'],
+                    $payload['quantity'],
+                    $userId
+                );
+            }
         }
+    }
+
+    private function deductInventoryStockRow(int $productId, int $centerId, ?string $batchNumber, int $quantityDelta, int $userId): void
+    {
+        if ($quantityDelta <= 0) {
+            return;
+        }
+
+        $query = inventory_stock::where('product_id', $productId)
+            ->where('center_id', $centerId);
+
+        if ($batchNumber === null) {
+            $query->whereNull('batch_number');
+        } else {
+            $query->where('batch_number', $batchNumber);
+        }
+
+        $stock = $query->lockForUpdate()->first();
+
+        if (!$stock || ($stock->quantity ?? 0) < $quantityDelta) {
+            $batchText = $batchNumber ? " (batch {$batchNumber})" : '';
+            throw ValidationException::withMessages([
+                'inventory_stock' => "Insufficient stock for product {$productId}{$batchText} at center {$centerId}.",
+            ]);
+        }
+
+        $stock->quantity = ($stock->quantity ?? 0) - $quantityDelta;
+        $stock->updated_by = $userId;
+        $stock->save();
     }
 
     /**
