@@ -384,6 +384,7 @@ Route::apiResource('inventories', InventoryController::class);
 Route::post('/grn', [InventoryController::class, 'store']);
 Route::get('/grn/next', [InventoryController::class, 'nextGrn']);  //for next GRN number
 Route::get('/invoices/next', [InventoryController::class, 'nextInv']); //for next Invoice number
+Route::post('/salesOrder', [InventoryController::class, 'storeSalesOrder']);
 Route::get('/salesOrder/next', [InventoryController::class, 'nextSalesOrder']); //for next Sales Order number
 Route::post('/invoices', [InventoryController::class, 'storeInvoice']);
 

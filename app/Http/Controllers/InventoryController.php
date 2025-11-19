@@ -41,10 +41,15 @@ class InventoryController extends Controller
      */
     public function store(Request $request)
     {
+        // SALES ORDER INTEGRATION: the /salesOrder endpoint also lands here so
+        // that sales orders share the same persistence + stock deduction logic
+        // as invoices/GRNs. Keep this block aligned with the frontend payload.
         // DETERMINE DOCUMENT TYPE BASED ON ROUTE
         $documentType = 'grn'; // Default for apiResource inventories
 
-        if (str_contains($request->url(), 'invoices')) {
+        if (str_contains($request->url(), 'salesOrder')) {
+            $documentType = 'sales_order';
+        } else if (str_contains($request->url(), 'invoices')) {
             $documentType = 'invoice';
         } else if (str_contains($request->url(), 'grn')) {
             $documentType = 'grn';
@@ -169,7 +174,7 @@ class InventoryController extends Controller
 
                 // CALCULATE LINE AMOUNT BASED ON DOCUMENT TYPE
                 if ($lineAmount === null) {
-                    if ($documentType === 'invoice') {
+                    if (in_array($documentType, ['invoice', 'sales_order'], true)) {
                         // For invoices: (unitPrice * quantity) - (discount * quantity)
                         $lineDiscount = (float)($line['discount'] ?? 0);
                         $lineAmount = ($lineCost * $lineQty) - ($lineDiscount * $lineQty);
@@ -233,23 +238,78 @@ class InventoryController extends Controller
             }
         }
 
+        $center_id = $request->input('center_id', $request->input('centerId'));
+        $supplier_id = null;
+        $customer_id = null;
+        $from_center = null;
+        $to_center = null;
+
         // DOCUMENT TYPE SPECIFIC VALIDATIONS AND DATA PREPARATION
         if ($documentType === 'invoice') {
             // INVOICE SPECIFIC VALIDATION: Customer is required
-            $customerName = $request->input('customer');
-            if (!$customerName) {
+            $customer_id = $request->input('customer_id', $request->input('customerId'));
+            $customerName = $request->input('customer') ?? $request->input('customerName');
+
+            if (!$customer_id) {
+                if (!$customerName) {
+                    return response()->json([
+                        'message' => 'Customer is required for invoices.'
+                    ], 422);
+                }
+
+                $customer = Customer::where('name', $customerName)->first();
+                if (!$customer) {
+                    return response()->json([
+                        'message' => "Customer '{$customerName}' not found."
+                    ], 422);
+                }
+                $customer_id = $customer->id;
+            } else {
+                $customer = Customer::find($customer_id);
+                if (!$customer) {
+                    return response()->json([
+                        'message' => "Customer ID {$customer_id} not found."
+                    ], 422);
+                }
+            }
+
+            $supplier_id = null;
+            $from_center = null;
+            $to_center = null;
+
+        } elseif ($documentType === 'sales_order') {
+            $customer_id = $request->input('customer_id', $request->input('customerId'));
+            $customerName = $request->input('customer') ?? $request->input('customerName');
+
+            if (!$customer_id) {
+                if (!$customerName) {
+                    return response()->json([
+                        'message' => 'Customer is required for sales orders.'
+                    ], 422);
+                }
+
+                $customer = Customer::where('name', $customerName)->first();
+                if (!$customer) {
+                    return response()->json([
+                        'message' => "Customer '{$customerName}' not found."
+                    ], 422);
+                }
+                $customer_id = $customer->id;
+            } else {
+                $customer = Customer::find($customer_id);
+                if (!$customer) {
+                    return response()->json([
+                        'message' => "Customer ID {$customer_id} not found."
+                    ], 422);
+                }
+            }
+
+            if (!$center_id) {
                 return response()->json([
-                    'message' => 'Customer name is required for invoices.'
+                    'message' => 'Center is required for sales orders.'
                 ], 422);
             }
 
-            $customer = Customer::where('name', $customerName)->first();
-            if (!$customer) {
-                return response()->json([
-                    'message' => "Customer '{$customerName}' not found."
-                ], 422);
-            }
-            $customer_id = $customer->id;
             $supplier_id = null;
             $from_center = null;
             $to_center = null;
@@ -271,9 +331,6 @@ class InventoryController extends Controller
                 }
             }
         }
-
-        // COMMON FOREIGN KEY HANDLING
-        $center_id = $request->input('center_id', $request->input('centerId'));
 
         // Determine stock center (GRN adds, Invoice deducts)
         $stockCenterId = null;
@@ -335,13 +392,18 @@ class InventoryController extends Controller
             $transferDate
         ) {
             // VOUCHER NUMBER GENERATION BASED ON DOCUMENT TYPE
-            $voucherNumber = $request->input('id'); // Frontend may send pre-generated ID
+            $voucherNumber = $request->input('voucherNumber')
+                ?? $request->input('voucher_number')
+                ?? $request->input('orderNumber')
+                ?? $request->input('id'); // Frontend may send pre-generated ID
 
             if (!$voucherNumber) {
                 $year = date('y');
 
                 if ($documentType === 'invoice') {
                     $prefix = "INV-{$year}-";
+                } elseif ($documentType === 'sales_order') {
+                    $prefix = "SO-{$year}-";
                 } else {
                     $prefix = "GRN-{$year}-";
                 }
@@ -409,7 +471,7 @@ class InventoryController extends Controller
             if (!empty($stockLines) && $stockCenterId) {
                 if ($documentType === 'grn') {
                     $this->applyInventoryStockAdjustments($stockLines, (int)$stockCenterId, (int)$creatorId, 'add');
-                } elseif ($documentType === 'invoice') {
+                } elseif (in_array($documentType, ['invoice', 'sales_order'], true)) {
                     $this->applyInventoryStockAdjustments($stockLines, (int)$stockCenterId, (int)$creatorId, 'subtract');
                 }
             }
@@ -428,12 +490,17 @@ class InventoryController extends Controller
 
         // LOAD RELATIONSHIPS BASED ON DOCUMENT TYPE
         $relationships = ['creator:id,name', 'approver:id,name', 'items.product'];
-        if ($documentType === 'invoice') {
+        if (in_array($documentType, ['invoice', 'sales_order'], true)) {
             $relationships[] = 'customer';
         }
 
         // SUCCESS RESPONSE
-        $message = $documentType === 'invoice' ? 'Invoice saved successfully' : 'GRN saved successfully';
+        $messageMap = [
+            'grn' => 'GRN saved successfully',
+            'invoice' => 'Invoice saved successfully',
+            'sales_order' => 'Sales order saved successfully',
+        ];
+        $message = $messageMap[$documentType] ?? 'Inventory saved successfully';
 
         return response()->json([
             'message' => $message,
@@ -681,6 +748,62 @@ class InventoryController extends Controller
                 'sequence' => $nextNum,
             ]
         ], 200);
+    }
+
+
+    // ======================================================================
+    // STORE SALES ORDER - ROUTE NORMALIZER
+    // ======================================================================
+    /**
+     * POST /api/salesOrder
+     * Normalize incoming payload and delegate to store()
+     */
+    public function storeSalesOrder(Request $request)
+    {
+        $normalizations = [
+            'type' => 'sales_order',
+        ];
+
+        if (!$request->has('voucherNumber') && !$request->has('voucher_number')) {
+            $orderNumber = $request->input('orderNumber');
+            if ($orderNumber) {
+                $normalizations['voucherNumber'] = $orderNumber;
+            }
+        }
+
+        if (!$request->has('center_id') && $request->has('centerId')) {
+            $normalizations['center_id'] = $request->input('centerId');
+        }
+
+        if (!$request->has('customer_id') && $request->has('customerId')) {
+            $normalizations['customer_id'] = $request->input('customerId');
+        }
+
+        if (!$request->has('referNumber') && $request->has('refNumber')) {
+            $normalizations['referNumber'] = $request->input('refNumber');
+        }
+
+        if (!$request->has('discountValue') && $request->has('discountTotal')) {
+            $normalizations['discountValue'] = $request->input('discountTotal');
+        }
+
+        if (!$request->has('amount') && $request->has('totalAmount')) {
+            $normalizations['amount'] = $request->input('totalAmount');
+        }
+
+        if (!$request->has('paid_value') && $request->has('paidValue')) {
+            $normalizations['paid_value'] = $request->input('paidValue');
+        }
+
+        if (!$request->has('created_by') && ($request->has('created_by_id') || $request->has('createdById'))) {
+            $normalizations['created_by'] = $request->input('created_by_id', $request->input('createdById'));
+        }
+
+        if (!empty($normalizations)) {
+            $request->merge($normalizations);
+        }
+
+        return $this->store($request);
     }
 
 
