@@ -369,8 +369,9 @@ Route::get('product-types/stats/overview', [ProductTypeController::class, 'getSt
 Route::delete('product-types/{id}/force', [ProductTypeController::class, 'forceDestroy']);
 
 // Product routes
+Route::get('products/inventory/details', [ProductController::class, 'inventoryDetails']);
+
 Route::middleware('auth:sanctum')->group(function () {
-    // Add this new route
     Route::post('/pms/kpi-task-assignments/check-weights', [PmsController::class, 'checkAssigneeWeights']);
     Route::apiResource('products', ProductController::class);
 
@@ -383,6 +384,7 @@ Route::apiResource('inventories', InventoryController::class);
 Route::post('/grn', [InventoryController::class, 'store']);
 Route::get('/grn/next', [InventoryController::class, 'nextGrn']);  //for next GRN number
 Route::get('/invoices/next', [InventoryController::class, 'nextInv']); //for next Invoice number
+Route::get('/salesOrder/next', [InventoryController::class, 'nextSalesOrder']); //for next Sales Order number
 Route::post('/invoices', [InventoryController::class, 'storeInvoice']);
 
 //for inventory Products
@@ -390,6 +392,9 @@ Route::apiResource('inventory-products', InventoryProductController::class);
 
 // Incentory stock routes
 Route::apiResource('invntory-stocks', IncentoryStockController::class);
+
+// Product routes
+Route::get('products/inventory/details', [ProductController::class, 'inventoryDetails']);
 
 
 

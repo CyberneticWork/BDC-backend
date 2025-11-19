@@ -654,6 +654,37 @@ class InventoryController extends Controller
     }
 
 
+       // ======================================================================
+    // NEXT SALES ORDER - PREVIEW NEXT SALES ORDER NUMBER
+    // ======================================================================
+    /**
+     * GET /api/salesOrder/next
+     * Preview next SALES ORDER number without creating a record
+     */
+    public function nextSalesOrder()
+    {
+        $year = date('y');
+        $prefix = "SO-{$year}-";
+        $latest = Inventory::where('voucherNumber', 'like', $prefix . '%')
+            ->orderBy('voucherNumber', 'desc')
+            ->value('voucherNumber');
+        $maxNum = 0;
+        if ($latest) {
+            $maxNum = (int)substr($latest, strlen($prefix));
+        }
+        $nextNum = $maxNum + 1;
+        $voucher = $prefix . str_pad($nextNum, 4, '0', STR_PAD_LEFT);
+        return response()->json([
+            'data' => [
+                'next' => $voucher,
+                'year' => $year,
+                'sequence' => $nextNum,
+            ]
+        ], 200);
+    }
+
+
+
     // STORE INVOICE - LEGACY METHOD (NOW HANDLED BY STORE METHOD)
     /**
      * POST /api/invoices
