@@ -383,4 +383,7 @@ Route::middleware('auth:sanctum')->group(function () {
 // Shift Overtime Rates routes - MOVE THESE BEFORE apiResource
 Route::get('/shift-overtime-rates/shifts/dropdown', [ShiftOvertimeRateController::class, 'getShifts']);
 Route::get('/shift-overtime-rates/by-shift/{shiftId}', [ShiftOvertimeRateController::class, 'getByShiftId']);
+Route::post('/shift-overtime-rates/{shiftId}/calculate', [ShiftOvertimeRateController::class, 'calculateRates']);
+
+// Then the standard resource routes
 Route::apiResource('shift-overtime-rates', ShiftOvertimeRateController::class);
