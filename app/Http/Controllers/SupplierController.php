@@ -3,7 +3,7 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-use App\Models\Supplier;
+use App\Models\supplier;
 use Illuminate\Http\JsonResponse;
 
 class SupplierController extends Controller
