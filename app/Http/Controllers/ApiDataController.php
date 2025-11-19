@@ -83,6 +83,19 @@ class ApiDataController extends Controller
         return response()->json($designations, 200);
     }
 
+    public function addNewDesignation(Request $request)
+    {
+        $request->validate([
+            'name' => 'required|string|max:255|unique:designations,name',
+        ]);
+
+        $designation = designation::create([
+            'name' => $request->name,
+        ]);
+
+        return response()->json(['message' => 'Designation added successfully', 'designation' => $designation], 201);
+    }
+
     public function companiesById($id)
     {
         $company = company::find($id);

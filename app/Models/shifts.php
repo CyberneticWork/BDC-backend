@@ -14,12 +14,12 @@ class shifts extends Model
         'shift_description',
         'start_time',
         'end_time',
+        'morning_ot_start',
+        'morning_ot_end',
+        'night_ot_start',
+        'night_ot_end',
         'midnight_roster'
     ];
 
-    protected $casts = [
-        'midnight_roster' => 'boolean',
-        'start_time' => 'datetime:H:i',
-        'end_time' => 'datetime:H:i',
-    ];
+
 }

@@ -27,9 +27,21 @@ use App\Http\Controllers\LMSController;
 use App\Http\Controllers\LMSAdmincontroller;
 use App\Http\Controllers\ExamController;
 use App\Http\Controllers\PmsController;
+use App\Http\Controllers\AccountController;
+use App\Http\Controllers\AccountGroupController;
+use App\Http\Controllers\SupplierController;
+use App\Http\Controllers\CustomerController;
+use App\Http\Controllers\CustomerCategoryController;
+use App\Http\Controllers\CustomerTypeController;
 use App\Http\Controllers\PerformanceEvaluationController;
 use App\Http\Controllers\PerformanceAppraisalController;
 use App\Http\Controllers\ShiftOvertimeRateController;
+use App\Http\Controllers\JournalEntryController;
+use App\Http\Controllers\DiscountLevelController;
+use App\Http\Controllers\ProductTypeController;
+use App\Http\Controllers\ProductController;
+use App\Http\Controllers\CentersController;
+
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -77,7 +89,24 @@ Route::post('/salary/process/fetchExcelData', [SalaryProcessController::class, '
 Route::post('/salary/process/importExcelData', [SalaryProcessController::class, 'importExcelData']);
 Route::get('/salary/update/status', [SalaryProcessController::class, 'updateSlaryStatus']);
 // Route::apiResource('salary', SalaryController::class);
+
+
 // Route::get('salary/{id}/audit', [SalaryController::class, 'getAuditLogs']);
+Route::apiResource('customers', CustomerController::class);
+
+// Discount levels (index/show are public; create/update/delete require auth)
+Route::get('/discount-levels', [DiscountLevelController::class, 'index']);
+Route::get('/discount-levels/{id}', [DiscountLevelController::class, 'show']);
+Route::middleware('auth:sanctum')->group(function () {
+    Route::post('/discount-levels', [DiscountLevelController::class, 'store']);
+    Route::put('/discount-levels/{id}', [DiscountLevelController::class, 'update']);
+    Route::delete('/discount-levels/{id}', [DiscountLevelController::class, 'destroy']);
+});
+
+Route::get('customer-categories', [CustomerCategoryController::class, 'index']);
+Route::post('customer-categories', [CustomerCategoryController::class, 'store']);
+Route::get('customer-types', [CustomerTypeController::class, 'index']);
+Route::post('customer-types', [CustomerTypeController::class, 'store']);
 
 
 Route::get('/Leave-Master/{employeeId}/counts', [LeaveMasterController::class, 'getLeaveRecordCountsByEmployee']);
@@ -95,6 +124,7 @@ Route::prefix('apiData')->group(function () {
     Route::get('/departments', [ApiDataController::class, 'departments']);
     Route::get('/subDepartments', [ApiDataController::class, 'subDepartments']);
     Route::get('/designations', [ApiDataController::class, 'designations']);
+    Route::post('/addNewDesignation', [ApiDataController::class, 'addNewDesignation']);
     Route::get('/companies/{id}/employees', [ApiDataController::class, 'employeesByCompany']);
     Route::get('/companies/{id}', [ApiDataController::class, 'companiesById']);
     Route::get('/departments/{id}', [ApiDataController::class, 'departmentsById']);
@@ -160,7 +190,12 @@ Route::get('/salary/process/csv', [SalaryController::class, 'salaryCSV']);
 
 // LMS Routes
 
-Route::apiResource('courses', LMSController::class);  // Handles all CRUD: GET /courses (index), POST /courses (store), GET /courses/{id} (show), etc.
+Route::apiResource('courses', LMSController::class);
+Route::apiResource('accounts', AccountController::class);
+Route::apiResource('journal-entries', JournalEntryController::class);
+Route::get('journal-entries-next-number', [JournalEntryController::class, 'getNextEntryNumber']);
+//Route::apiResource('account-groups', AccountGroupController::class);
+
 Route::delete('/attachments/{id}', [LMSController::class, 'removeAttachment']);
 Route::middleware('auth:sanctum')->group(function () {
     // Exam routes
@@ -206,14 +241,14 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/pms/performance-reviews/{assignmentId}/details', [PmsController::class, 'getPerformanceReviewDetails']);
     Route::get('/pms/performance-reviews/{assignmentId}/documents', [PmsController::class, 'getAssignmentDocuments']);
     Route::put('/pms/performance-reviews/{assignmentId}', [PmsController::class, 'updatePerformanceReview']);
-    
-    
+
+
     // Other PMS routes that require authentication
     Route::get('/pms/kpi-task-assignments/employee/{employeeId}', [PmsController::class, 'getEmployeeKpiTaskAssignments']);
     Route::post('/pms/task-progress-submissions', [PmsController::class, 'storeTaskProgressSubmission']);
     Route::get('/pms/task-progress-submissions/assignment/{assignmentId}', [PmsController::class, 'getTaskProgressSubmissions']);
     Route::get('/pms/task-progress-submissions/employee/{employeeId}', [PmsController::class, 'getEmployeeTaskProgressSubmissions']);
-    
+
     // PMS Dashboard endpoints
     Route::get('/pms/dashboard/stats', [PmsController::class, 'getDashboardStats']);
     Route::get('/pms/dashboard/upcoming-deadlines', [PmsController::class, 'getUpcomingDeadlines']);
@@ -255,6 +290,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::delete('/pms/kpi-weights/{id}', [PmsController::class, 'deleteKpiWeight']);
 });
 
+// Supplier routes
+Route::apiResource('suppliers', SupplierController::class);
+
+
 // Employee Performance Evaluation endpoints (these can remain public if needed)
 Route::post('/pms/employee-performance/calculate', [PmsController::class, 'calculateEmployeePerformance']);
 Route::post('/pms/employee-performance/save', [PmsController::class, 'saveEmployeePerformance']);
@@ -280,7 +319,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/performance-evaluations/{id}', [App\Http\Controllers\PerformanceEvaluationController::class, 'show']);
     Route::put('/performance-evaluations/{id}', [App\Http\Controllers\PerformanceEvaluationController::class, 'update']);
     Route::delete('/performance-evaluations/{id}', [App\Http\Controllers\PerformanceEvaluationController::class, 'destroy']);
-    
+
     // Additional functionality
     Route::get('/performance-evaluations/employee/{employeeId}', [App\Http\Controllers\PerformanceEvaluationController::class, 'getByEmployee']);
 
@@ -300,15 +339,35 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/performance-appraisals/{id}', [App\Http\Controllers\PerformanceAppraisalController::class, 'show']);
     Route::put('/performance-appraisals/{id}', [App\Http\Controllers\PerformanceAppraisalController::class, 'update']);
     Route::delete('/performance-appraisals/{id}', [App\Http\Controllers\PerformanceAppraisalController::class, 'destroy']);
-    
+
     // Additional functionality
     Route::get('/performance-appraisals/employee/{employeeId}', [App\Http\Controllers\PerformanceAppraisalController::class, 'getByEmployee']);
     Route::get('/performance-appraisals/trashed/list', [App\Http\Controllers\PerformanceAppraisalController::class, 'getTrashed']);
     Route::post('/performance-appraisals/{id}/restore', [App\Http\Controllers\PerformanceAppraisalController::class, 'restore']);
     Route::delete('/performance-appraisals/{id}/force', [App\Http\Controllers\PerformanceAppraisalController::class, 'forceDestroy']);
     Route::get('/performance-appraisals/stats/overview', [App\Http\Controllers\PerformanceAppraisalController::class, 'getStats']);
+
+    //Center routes
+    Route::apiResource('centers', CentersController::class);
+    Route::apiResource('products', ProductController::class);
+
 });
 
+//  Customer routes
+Route::get('/customer/email/{email}', [CustomerController::class, 'getByEmail']);
+Route::get('/customer/type/{typeId}', [CustomerController::class, 'getByType']);
+Route::get('/customer/name/{name}', [CustomerController::class, 'getByName']);
+
+// Product Type routes
+Route::apiResource('product-types', ProductTypeController::class);
+Route::post('product-types', [ProductTypeController::class, 'store']);
+Route::post('product-types/{id}/restore', [ProductTypeController::class, 'restore']);
+Route::post('product-types/{id}/status', [ProductTypeController::class, 'setStatus']);
+Route::get('product-types/trashed/list', [ProductTypeController::class, 'getTrashed']);
+Route::get('product-types/stats/overview', [ProductTypeController::class, 'getStats']);
+Route::delete('product-types/{id}/force', [ProductTypeController::class, 'forceDestroy']);
+
+// Product routes
 Route::middleware('auth:sanctum')->group(function () {
     // Add this new route
     Route::post('/pms/kpi-task-assignments/check-weights', [PmsController::class, 'checkAssigneeWeights']);

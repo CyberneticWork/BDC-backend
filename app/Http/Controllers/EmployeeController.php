@@ -249,6 +249,7 @@ class EmployeeController extends Controller
                 'primaryEmploymentBasic' => 'required|boolean',
                 'enableEpfEtf' => 'required|boolean',
                 'otActive' => 'required|boolean',
+                'otActiveSpecial' => 'required|boolean',
                 'earlyDeduction' => 'required|boolean',
                 'incrementActive' => 'required|boolean',
                 'nopayActive' => 'required|boolean',
@@ -256,6 +257,12 @@ class EmployeeController extends Controller
                 'eveningOt' => 'required|boolean',
                 'ot_morning_rate' => 'nullable|numeric',
                 'ot_night_rate' => 'nullable|numeric',
+
+                'morningOtSpecial' => 'required|boolean',
+                'ot_morning_rate_special' => 'nullable|numeric',
+                'ot_night_rate_special' => 'nullable|numeric',
+                'eveningOtSpecial' => 'required|boolean',
+
                 'budgetaryReliefAllowance2015' => 'required|boolean',
                 'budgetaryReliefAllowance2016' => 'required|boolean',
                 'stamp' => 'required|boolean',
@@ -437,7 +444,7 @@ class EmployeeController extends Controller
                 'email' => $address['email'],
                 'employee_id' => $employee->id,
                 'password' => Hash::make($pwd),
-                'role' => 'employee',
+                'role' => 'user',
             ]);
 
             $mail_data = [
@@ -530,6 +537,7 @@ class EmployeeController extends Controller
                 'primary_emp_basic' => $compensation['primaryEmploymentBasic'],
                 'enable_epf_etf' => $compensation['enableEpfEtf'],
                 'ot_active' => $compensation['otActive'],
+                'ot_active_special' => $compensation['otActiveSpecial'],
                 'early_deduction' => $compensation['earlyDeduction'],
                 'increment_active' => $compensation['incrementActive'],
                 'active_nopay' => $compensation['nopayActive'],
@@ -537,6 +545,12 @@ class EmployeeController extends Controller
                 'ot_evening' => $compensation['eveningOt'],
                 'ot_morning_rate' => $compensation['ot_morning_rate'],
                 'ot_night_rate' => $compensation['ot_night_rate'],
+
+                'ot_morning_special' => $compensation['morningOtSpecial'],
+                'ot_evening_special' => $compensation['eveningOtSpecial'],
+                'ot_morning_rate_special' => $compensation['ot_morning_rate_special'],
+                'ot_night_rate_special' => $compensation['ot_night_rate_special'],
+
                 'br1' => $compensation['budgetaryReliefAllowance2015'],
                 'br2' => $compensation['budgetaryReliefAllowance2016'],
                 'stamp' => $compensation['stamp'],

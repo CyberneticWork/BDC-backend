@@ -12,6 +12,7 @@ return new class extends Migration {
             $table->foreignId('user_id')->constrained('users');
             $table->foreignId('exam_id')->constrained('exams');
             $table->integer('score');
+            $table->integer('attempt_number');
             $table->boolean('passed');
             $table->timestamp('submitted_at')->useCurrent();
 
