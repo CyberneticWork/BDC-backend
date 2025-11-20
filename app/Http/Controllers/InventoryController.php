@@ -346,8 +346,19 @@ class InventoryController extends Controller
                 ?? $request->input('center');
         }
 
-        // STATUS - Always set to pending regardless of input
+        // STATUS - Allow frontend-supplied status while enforcing the enum on save
+        $allowedStatuses = ['pending', 'reject', 'completed'];
+        $statusInput = $request->input('status');
         $status = 'pending';
+        if ($statusInput !== null) {
+            $normalizedStatus = strtolower(trim($statusInput));
+            if (!in_array($normalizedStatus, $allowedStatuses, true)) {
+                return response()->json([
+                    'message' => "Invalid status value. Allowed: " . implode(', ', $allowedStatuses) . ".",
+                ], 422);
+            }
+            $status = $normalizedStatus;
+        }
 
         // PAYMENT DATA EXTRACTION - Support nested payment object and root level fields
         $paymentInput = $request->input('payment', []);
@@ -398,22 +409,7 @@ class InventoryController extends Controller
                 ?? $request->input('id'); // Frontend may send pre-generated ID
 
             if (!$voucherNumber) {
-                $year = date('y');
-
-                if ($documentType === 'invoice') {
-                    $prefix = "INV-{$year}-";
-                } elseif ($documentType === 'sales_order') {
-                    $prefix = "SO-{$year}-";
-                } else {
-                    $prefix = "GRN-{$year}-";
-                }
-
-                $latest = Inventory::where('voucherNumber', 'like', $prefix . '%')
-                    ->lockForUpdate()
-                    ->orderBy('voucherNumber', 'desc')
-                    ->value('voucherNumber');
-                $maxNum = $latest ? (int)substr($latest, strlen($prefix)) : 0;
-                $voucherNumber = $prefix . str_pad($maxNum + 1, 4, '0', STR_PAD_LEFT);
+                $voucherNumber = $this->buildNextVoucherResponse($documentType, true)['next'];
             }
 
             // CREATE INVENTORY RECORD
@@ -671,23 +667,8 @@ class InventoryController extends Controller
      */
     public function nextGrn()
     {
-        $year = date('y');
-        $prefix = "GRN-{$year}-";
-        $latest = Inventory::where('voucherNumber', 'like', $prefix . '%')
-            ->orderBy('voucherNumber', 'desc')
-            ->value('voucherNumber');
-        $maxNum = 0;
-        if ($latest) {
-            $maxNum = (int)substr($latest, strlen($prefix));
-        }
-        $nextNum = $maxNum + 1;
-        $voucher = $prefix . str_pad($nextNum, 4, '0', STR_PAD_LEFT);
         return response()->json([
-            'data' => [
-                'next' => $voucher,
-                'year' => $year,
-                'sequence' => $nextNum,
-            ]
+            'data' => $this->buildNextVoucherResponse('grn')
         ], 200);
     }
 
@@ -700,23 +681,8 @@ class InventoryController extends Controller
      */
     public function nextInv()
     {
-        $year = date('y');
-        $prefix = "INV-{$year}-";
-        $latest = Inventory::where('voucherNumber', 'like', $prefix . '%')
-            ->orderBy('voucherNumber', 'desc')
-            ->value('voucherNumber');
-        $maxNum = 0;
-        if ($latest) {
-            $maxNum = (int)substr($latest, strlen($prefix));
-        }
-        $nextNum = $maxNum + 1;
-        $voucher = $prefix . str_pad($nextNum, 4, '0', STR_PAD_LEFT);
         return response()->json([
-            'data' => [
-                'next' => $voucher,
-                'year' => $year,
-                'sequence' => $nextNum,
-            ]
+            'data' => $this->buildNextVoucherResponse('invoice')
         ], 200);
     }
 
@@ -730,23 +696,8 @@ class InventoryController extends Controller
      */
     public function nextSalesOrder()
     {
-        $year = date('y');
-        $prefix = "SO-{$year}-";
-        $latest = Inventory::where('voucherNumber', 'like', $prefix . '%')
-            ->orderBy('voucherNumber', 'desc')
-            ->value('voucherNumber');
-        $maxNum = 0;
-        if ($latest) {
-            $maxNum = (int)substr($latest, strlen($prefix));
-        }
-        $nextNum = $maxNum + 1;
-        $voucher = $prefix . str_pad($nextNum, 4, '0', STR_PAD_LEFT);
         return response()->json([
-            'data' => [
-                'next' => $voucher,
-                'year' => $year,
-                'sequence' => $nextNum,
-            ]
+            'data' => $this->buildNextVoucherResponse('sales_order')
         ], 200);
     }
 
@@ -826,6 +777,36 @@ class InventoryController extends Controller
     /**
      * Extract stock lines (product, quantity, batch) from raw request items
      */
+    private function getVoucherPrefix(string $documentType, string $year): string
+    {
+        return match ($documentType) {
+            'invoice' => "INV-{$year}-",
+            'sales_order' => "SO-{$year}-",
+            default => "GRN-{$year}-",
+        };
+    }
+
+    private function buildNextVoucherResponse(string $documentType, bool $lockForUpdate = false): array
+    {
+        $year = date('y');
+        $prefix = $this->getVoucherPrefix($documentType, $year);
+        $query = Inventory::where('voucherNumber', 'like', $prefix . '%');
+
+        if ($lockForUpdate) {
+            $query->lockForUpdate();
+        }
+
+        $latest = $query->orderBy('voucherNumber', 'desc')->value('voucherNumber');
+        $maxNum = $latest ? (int)substr($latest, strlen($prefix)) : 0;
+        $nextNum = $maxNum + 1;
+
+        return [
+            'next' => $prefix . str_pad($nextNum, 4, '0', STR_PAD_LEFT),
+            'year' => $year,
+            'sequence' => $nextNum,
+        ];
+    }
+
     private function extractStockLines($rawItems, array $linePayloads): array
     {
         $stockLines = [];

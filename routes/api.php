@@ -387,7 +387,10 @@ Route::get('/invoices/next', [InventoryController::class, 'nextInv']); //for nex
 Route::post('/salesOrder', [InventoryController::class, 'storeSalesOrder']);
 Route::get('/salesOrder/next', [InventoryController::class, 'nextSalesOrder']); //for next Sales Order number
 Route::post('/invoices', [InventoryController::class, 'storeInvoice']);
-
+ ++4
+ 'poiuytrewq    CVBNM,./
+ 8',MNBVCXZ  `1234567890-/*-*=-23
+ 0
 //for inventory Products
 Route::apiResource('inventory-products', InventoryProductController::class);
 
