@@ -62,6 +62,20 @@ class InventoryController extends Controller
         // Reference number handling
         $referNumber = $request->input('referNumber') ?? $request->input('refNumber');
 
+        // Reference voucher tracking (new columns)
+        $referVoucherNumberInput = $request->input('refervoucherNumber')
+            ?? $request->input('referVoucherNumber')
+            ?? $request->input('refVoucherNumber')
+            ?? $request->input('refer_voucher_number')
+            ?? $request->input('ref_voucher_number');
+
+        $isRefInput = null;
+        if ($request->exists('is_ref')) {
+            $isRefInput = filter_var($request->input('is_ref'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+        } elseif ($request->exists('isRef')) {
+            $isRefInput = filter_var($request->input('isRef'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+        }
+
         // Discount value handling
         $discountValue = $request->input('discountValue');
         if ($discountValue === null) {
@@ -139,6 +153,8 @@ class InventoryController extends Controller
         $unitPrice = (float)($unitPrice ?? 0);
         $amount = (float)($amount ?? 0);
         $paid_value = (float)($paid_value ?? 0);
+        $referVoucherNumber = $referVoucherNumberInput ? (string)$referVoucherNumberInput : null;
+        $isRef = (bool)($isRefInput ?? false);
 
         // AUTHENTICATION CHECK - Ensure we have a valid creator
         $creatorId = optional($request->user())->id ?? $request->input('created_by');
@@ -383,6 +399,7 @@ class InventoryController extends Controller
             $amount,
             $paid_value,
             $referNumber,
+            $referVoucherNumber,
             $center_id,
             $supplier_id,
             $customer_id,
@@ -400,7 +417,8 @@ class InventoryController extends Controller
             $chequeNo,
             $chequeDate,
             $referenceNo,
-            $transferDate
+            $transferDate,
+            $isRef
         ) {
             // VOUCHER NUMBER GENERATION BASED ON DOCUMENT TYPE
             $voucherNumber = $request->input('voucherNumber')
@@ -419,11 +437,13 @@ class InventoryController extends Controller
                 'paid_value' => $paid_value,
                 'discountValue' => $discountValue,
                 'referNumber' => $referNumber,
+                    'refervoucherNumber' => $referVoucherNumber,
                 'center_id' => $center_id,
                 'supplier_id' => $supplier_id,
                 'customer_id' => $customer_id,
                 'from_center' => $from_center,
                 'to_center' => $to_center,
+                    'is_ref' => $isRef,
                 'status' => $status,
                 'created_by' => $creatorId,
                 'approved_by' => null,
@@ -559,6 +579,32 @@ class InventoryController extends Controller
         $referNumber = $request->input('referNumber')
             ?? $request->input('refNumber');
 
+        $refVoucherNumber = null;
+        $refVoucherNumberProvided = false;
+        foreach ([
+            'refervoucherNumber',
+            'referVoucherNumber',
+            'refVoucherNumber',
+            'refer_voucher_number',
+            'ref_voucher_number',
+        ] as $key) {
+            if ($request->exists($key)) {
+                $refVoucherNumberProvided = true;
+                $refVoucherNumber = $request->input($key);
+                break;
+            }
+        }
+
+        $isRefProvided = false;
+        $isRefValue = null;
+        foreach (['is_ref', 'isRef'] as $key) {
+            if ($request->exists($key)) {
+                $isRefProvided = true;
+                $isRefValue = filter_var($request->input($key), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+                break;
+            }
+        }
+
         $discountValue = $request->input('discountValue');
         if ($discountValue === null) {
             $discountValue = $request->input('discount');
@@ -609,7 +655,11 @@ class InventoryController extends Controller
         if ($paid_value !== null)    $payload['paid_value'] = (float)$paid_value;
         if ($discountValue !== null) $payload['discountValue'] = (float)$discountValue;
         if ($referNumber !== null)   $payload['referNumber'] = $referNumber ? (string)$referNumber : null;
+        if ($refVoucherNumberProvided) {
+            $payload['refervoucherNumber'] = $refVoucherNumber ? (string)$refVoucherNumber : null;
+        }
         if ($status !== null)        $payload['status'] = $status;
+        if ($isRefProvided)          $payload['is_ref'] = (bool)($isRefValue ?? false);
         if ($request->exists('center_id'))     $payload['center_id'] = $center_id;
         if ($request->exists('supplier_id'))   $payload['supplier_id'] = $supplier_id;
         if ($request->exists('customer_id'))   $payload['customer_id'] = $customer_id;
@@ -698,6 +748,52 @@ class InventoryController extends Controller
     {
         return response()->json([
             'data' => $this->buildNextVoucherResponse('sales_order')
+        ], 200);
+    }
+
+
+    // ======================================================================
+    // LIST SALES ORDERS - GET ALL SALES ORDERS
+    // ======================================================================
+    /**
+     * GET /api/salesOrder
+     * Return all sales order inventory records with related data
+     */
+    public function listSalesOrders(Request $request)
+    {
+        $allowedStatuses = ['pending', 'reject', 'completed'];
+
+        $query = Inventory::with([
+            'creator:id,name',
+            'approver:id,name',
+            'customer:id,name',
+            'items.product',
+            'latestPayment',
+        ])->where('voucherNumber', 'like', 'SO-%');
+
+        $statusFilter = $request->input('status');
+        if ($statusFilter !== null) {
+            $normalizedStatus = strtolower(trim($statusFilter));
+            if (!in_array($normalizedStatus, $allowedStatuses, true)) {
+                return response()->json([
+                    'message' => 'Invalid status filter. Allowed: ' . implode(', ', $allowedStatuses) . '.',
+                ], 422);
+            }
+            $query->where('status', $normalizedStatus);
+        }
+
+        if ($request->filled('center_id')) {
+            $query->where('center_id', (int)$request->input('center_id'));
+        }
+
+        if ($request->filled('customer_id')) {
+            $query->where('customer_id', (int)$request->input('customer_id'));
+        }
+
+        $records = $query->orderByDesc('id')->get();
+
+        return response()->json([
+            'data' => $records,
         ], 200);
     }
 
