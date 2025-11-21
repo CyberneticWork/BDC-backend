@@ -226,7 +226,7 @@ class TimeCardController extends Controller
     public function attendance(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'empno' => 'required|integer',
+            'empno' => ['required','regex:/^[A-Za-z0-9_\-]+$/'], // removed integer constraint
             'date' => 'required|date',
             'time' => 'required|date_format:H:i:s',
         ]);
@@ -235,7 +235,16 @@ class TimeCardController extends Controller
             return response()->json(['errors' => $validator->errors()], 422);
         }
 
-        $employee = employee::where('attendance_employee_no', $request->empno)->first();
+        $rawEmpNo = trim($request->empno);
+
+        // First attempt: attendance_employee_no exact
+        $employee = employee::where('attendance_employee_no', $rawEmpNo)->first();
+
+        // Fallback: if purely digits and not found, treat as internal ID
+        if (!$employee && ctype_digit($rawEmpNo)) {
+            $employee = employee::find((int)$rawEmpNo);
+        }
+
         if (!$employee) {
             return response()->json(['message' => 'Employee not found'], 404);
         }
@@ -820,20 +829,73 @@ class TimeCardController extends Controller
             return;
         }
 
+        // Enforce compensation OT activation rules BEFORE saving
+        $comp = $employee->compensation;
+        if (!$comp || !$comp->ot_active) {
+            // Employee OT is not active at all -> do not create any OT record
+            return;
+        }
+
+        $allowMorning = (bool) ($comp->ot_morning ?? false);
+        $allowEvening = (bool) ($comp->ot_evening ?? false);
+        $allowMorningSpecial = (bool) ($comp->ot_morning_special ?? false);
+        $allowEveningSpecial = (bool) ($comp->ot_evening_special ?? false);
+
+        // Start from calculator result and zero-out any disabled buckets
+        $hours = $breakdown['hours'];
+        if (!$allowMorning) {
+            $hours['morning_regular'] = 0.0;
+        }
+        if (!$allowMorningSpecial) {
+            $hours['morning_special'] = 0.0;
+        }
+        if (!$allowEvening) {
+            $hours['evening_regular'] = 0.0;
+        }
+        if (!$allowEveningSpecial) {
+            $hours['evening_special'] = 0.0;
+        }
+
+        $hours['total'] = round(
+            ($hours['morning_regular'] + $hours['morning_special'] + $hours['evening_regular'] + $hours['evening_special']),
+            2
+        );
+
+        // If nothing remains payable under current activation flags, skip saving
+        if ($hours['total'] <= 0) {
+            return;
+        }
+
+        // Recompute amounts for filtered hours (use employee compensation rates)
+        $rates = [
+            'morning_regular' => (float) ($comp->ot_morning_rate ?? 0),
+            'morning_special' => (float) ($comp->ot_morning_rate_special ?? $comp->ot_morning_rate ?? 0),
+            'evening_regular' => (float) ($comp->ot_night_rate ?? 0),
+            'evening_special' => (float) ($comp->ot_night_rate_special ?? $comp->ot_night_rate ?? 0),
+        ];
+        $amounts = [
+            'morning_regular' => round($hours['morning_regular'] * $rates['morning_regular'], 2),
+            'morning_special' => round($hours['morning_special'] * $rates['morning_special'], 2),
+            'evening_regular' => round($hours['evening_regular'] * $rates['evening_regular'], 2),
+            'evening_special' => round($hours['evening_special'] * $rates['evening_special'], 2),
+        ];
+        $amounts['total'] = round(array_sum($amounts), 2);
+
+        // Save only the allowed buckets
         over_time::create([
             'employee_id' => $employee->id,
             'shift_code' => $resolvedShift->id,
             'time_cards_id' => $outCard->id,
-            'ot_hours' => $totalHours,
-            'morning_ot' => $breakdown['hours']['morning_regular'] ?? 0,
-            'afternoon_ot' => $breakdown['hours']['evening_regular'] ?? 0,
-            'morning_ot_special' => $breakdown['hours']['morning_special'] ?? 0,
-            'evening_ot_special' => $breakdown['hours']['evening_special'] ?? 0,
-            'morning_ot_amount' => $breakdown['amounts']['morning_regular'] ?? 0,
-            'morning_ot_special_amount' => $breakdown['amounts']['morning_special'] ?? 0,
-            'evening_ot_amount' => $breakdown['amounts']['evening_regular'] ?? 0,
-            'evening_ot_special_amount' => $breakdown['amounts']['evening_special'] ?? 0,
-            'total_ot_amount' => $breakdown['amounts']['total'] ?? 0,
+            'ot_hours' => $hours['total'],
+            'morning_ot' => $hours['morning_regular'],
+            'afternoon_ot' => $hours['evening_regular'],
+            'morning_ot_special' => $hours['morning_special'],
+            'evening_ot_special' => $hours['evening_special'],
+            'morning_ot_amount' => $amounts['morning_regular'],
+            'morning_ot_special_amount' => $amounts['morning_special'],
+            'evening_ot_amount' => $amounts['evening_regular'],
+            'evening_ot_special_amount' => $amounts['evening_special'],
+            'total_ot_amount' => $amounts['total'],
             'status' => 'pending',
         ]);
     }
@@ -988,13 +1050,7 @@ class TimeCardController extends Controller
                                 if (!$lastInCard) {
                                     $lastInCard = time_card::where('employee_id', $employee->id)
                                         ->where('status', 'IN')
-                                        ->where(function($query) use ($date, $time) {
-                                            $query->where('date', '<', $date)
-                                                  ->orWhere(function($q) use ($date, $time) {
-                                                      $q->where('date', $date)
-                                                        ->where('time', '<', $time);
-                                                  });
-                                        })
+                                        ->where('date', '<', $date)
                                         ->orderBy('date', 'desc')
                                         ->orderBy('time', 'desc')
                                         ->first();

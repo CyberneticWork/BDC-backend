@@ -5,6 +5,7 @@ namespace App\Services\Overtime;
 use App\Models\employee;
 use App\Models\shifts;
 use Carbon\Carbon;
+use App\Models\ShiftOvertimeRate;
 
 class OvertimeCalculator
 {
@@ -41,20 +42,67 @@ class OvertimeCalculator
         if (!($compensation?->ot_morning)) {
             $hours['morning_regular'] = 0.0;
         }
-
         if (!($compensation?->ot_morning_special)) {
             $hours['morning_special'] = 0.0;
         }
-
         if (!($compensation?->ot_evening)) {
             $hours['evening_regular'] = 0.0;
         }
-
         if (!($compensation?->ot_evening_special)) {
             $hours['evening_special'] = 0.0;
         }
 
-        $hours = array_map(fn ($value) => round((float) $value, 2), $hours);
+        // --- IGNORE THRESHOLD LOGIC (chunked multiples) ---
+        // Fetch shift overtime rate (if exists)
+        $rate = ShiftOvertimeRate::where('shift_id', $shift->id)->whereNull('deleted_at')->first();
+        if ($rate && !empty($rate->ignore_hours_threshold)) {
+            $thresholdConfig = $rate->ignore_hours_threshold; // cast to array
+            $thHours = (float)($thresholdConfig['hours'] ?? 0);
+            $thMinutes = (float)($thresholdConfig['minutes'] ?? 0);
+
+            // Convert threshold to whole minutes to avoid floating errors
+            $thresholdMinutes = (int) round(($thHours * 60.0) + $thMinutes);
+
+            if ($thresholdMinutes > 0) {
+                // Helper: apply floor(total/threshold)*threshold minutes, distribute proportionally
+                $applyChunkedThreshold = function (float $regular, float $special) use ($thresholdMinutes): array {
+                    $totalHours = $regular + $special;
+                    if ($totalHours <= 0) {
+                        return [0.0, 0.0];
+                    }
+
+                    $totalMinutes = (int) round($totalHours * 60.0);
+                    $chunks = intdiv($totalMinutes, $thresholdMinutes);
+                    $allowedMinutes = $chunks * $thresholdMinutes;
+
+                    if ($allowedMinutes <= 0) {
+                        return [0.0, 0.0];
+                    }
+
+                    // Proportional distribution with minute-level rounding
+                    $regMinutesRaw = ($regular * 60.0);
+                    $specMinutesRaw = ($special * 60.0);
+                    $sumRaw = max(1.0, $regMinutesRaw + $specMinutesRaw); // guard
+
+                    $regMinutes = (int) round(($regMinutesRaw / $sumRaw) * $allowedMinutes);
+                    $specMinutes = $allowedMinutes - $regMinutes; // ensure sum consistency
+
+                    return [round($regMinutes / 60.0, 2), round($specMinutes / 60.0, 2)];
+                };
+
+                // Morning combined (regular + special)
+                [$hours['morning_regular'], $hours['morning_special']] =
+                    $applyChunkedThreshold($hours['morning_regular'], $hours['morning_special']);
+
+                // Evening combined (regular + special)
+                [$hours['evening_regular'], $hours['evening_special']] =
+                    $applyChunkedThreshold($hours['evening_regular'], $hours['evening_special']);
+            }
+        }
+        // --- END IGNORE THRESHOLD LOGIC ---
+
+        // Final rounding & total recompute after threshold adjustments
+        $hours = array_map(fn ($v) => round((float)$v, 2), $hours);
         $hours['total'] = round(array_sum($hours), 2);
 
         $rates = [
@@ -70,7 +118,6 @@ class OvertimeCalculator
             'evening_regular' => round($hours['evening_regular'] * $rates['evening_regular'], 2),
             'evening_special' => round($hours['evening_special'] * $rates['evening_special'], 2),
         ];
-
         $amounts['total'] = round(array_sum($amounts), 2);
 
         return [
