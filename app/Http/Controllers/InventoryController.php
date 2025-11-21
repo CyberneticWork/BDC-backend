@@ -799,6 +799,52 @@ class InventoryController extends Controller
 
 
     // ======================================================================
+    // LIST INVOICES - GET ALL INVOICES
+    // ======================================================================
+    /**
+     * GET /api/invoices
+     * Return all invoice inventory records with related data
+     */
+    public function listInvoices(Request $request)
+    {
+        $allowedStatuses = ['pending', 'reject', 'completed'];
+
+        $query = Inventory::with([
+            'creator:id,name',
+            'approver:id,name',
+            'customer:id,name',
+            'items.product',
+            'latestPayment',
+        ])->where('voucherNumber', 'like', 'INV-%');
+
+        $statusFilter = $request->input('status');
+        if ($statusFilter !== null) {
+            $normalizedStatus = strtolower(trim($statusFilter));
+            if (!in_array($normalizedStatus, $allowedStatuses, true)) {
+                return response()->json([
+                    'message' => 'Invalid status filter. Allowed: ' . implode(', ', $allowedStatuses) . '.',
+                ], 422);
+            }
+            $query->where('status', $normalizedStatus);
+        }
+
+        if ($request->filled('center_id')) {
+            $query->where('center_id', (int)$request->input('center_id'));
+        }
+
+        if ($request->filled('customer_id')) {
+            $query->where('customer_id', (int)$request->input('customer_id'));
+        }
+
+        $records = $query->orderByDesc('id')->get();
+
+        return response()->json([
+            'data' => $records,
+        ], 200);
+    }
+
+
+    // ======================================================================
     // STORE SALES ORDER - ROUTE NORMALIZER
     // ======================================================================
     /**
