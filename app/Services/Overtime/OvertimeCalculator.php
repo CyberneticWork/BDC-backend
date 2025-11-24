@@ -155,23 +155,16 @@ class OvertimeCalculator
             return null;
         }
 
-        if ($shift->morning_ot_start && $shift->morning_ot_end) {
-            return $this->makeWindowFromTimes($shiftStart, $shift->morning_ot_start, $shift->morning_ot_end, allowPast: true);
+        // Explicit configured window (any of start/end present)
+        if ($shift->morning_ot_start || $shift->morning_ot_end) {
+            $startTime = $shift->morning_ot_start ?? $shift->morning_ot_end;        // fallback to end if start missing
+            $endTime   = $shift->morning_ot_end   ?? $shift->morning_ot_start;      // fallback to start if end missing
+            return $this->makeWindowFromTimes($shiftStart, $startTime, $endTime, allowPast: true);
         }
 
+        // Fallback (legacy) = 12h before shift start
         $start = $shiftStart->copy()->subHours(12);
         return [$start, $shiftStart->copy()];
-    }
-
-    private function buildMorningSpecialWindow(shifts $shift, ?array $regularWindow, ?bool $specialEnabled): ?array
-    {
-        if (!$specialEnabled || !$regularWindow || !($shift->morning_ot_start && $shift->morning_ot_end)) {
-            return null;
-        }
-
-        [$regularStart] = $regularWindow;
-        $start = $regularStart->copy()->subHours(12);
-        return [$start, $regularStart->copy()];
     }
 
     private function buildEveningRegularWindow(shifts $shift, ?Carbon $shiftStart, ?Carbon $shiftEnd): ?array
@@ -180,34 +173,52 @@ class OvertimeCalculator
             return null;
         }
 
-        if ($shift->night_ot_start) {
-            return $this->buildEveningWindowWithTimes($shiftStart ?? $shiftEnd, $shiftEnd, $shift->night_ot_start, $shift->night_ot_end);
+        // Explicit configured window (any of start/end present)
+        if ($shift->night_ot_start || $shift->night_ot_end) {
+            $startTime = $shift->night_ot_start ?? $shift->night_ot_end;        // fallback if start missing
+            $endTime   = $shift->night_ot_end   ?? $shift->night_ot_start;      // fallback if end missing
+            return $this->buildEveningWindowWithTimes($shiftStart ?? $shiftEnd, $shiftEnd, $startTime, $endTime);
         }
 
+        // Fallback (legacy) = 12h after shift end
         $start = $shiftEnd->copy();
         $end = $shiftEnd->copy()->addHours(12);
         return [$start, $end];
     }
 
+    private function buildMorningSpecialWindow(shifts $shift, ?array $regularWindow, ?bool $specialEnabled): ?array
+    {
+        // Only allow special window if explicitly enabled AND explicit morning window exists (both start/end defined)
+        if (
+            !$specialEnabled ||
+            !$regularWindow ||
+            !($shift->morning_ot_start || $shift->morning_ot_end)
+        ) {
+            return null;
+        }
+
+        [$regularStart] = $regularWindow;
+        // Special = 12h block immediately preceding configured morning window
+        $start = $regularStart->copy()->subHours(12);
+        return [$start, $regularStart->copy()];
+    }
+
     private function buildEveningSpecialWindow(shifts $shift, ?array $regularWindow, ?bool $specialEnabled): ?array
     {
-        if (!$specialEnabled || !$regularWindow) {
+        // Only allow special window if explicitly enabled AND explicit evening window exists
+        if (
+            !$specialEnabled ||
+            !$regularWindow ||
+            !($shift->night_ot_start || $shift->night_ot_end)
+        ) {
             return null;
         }
 
         [, $regularEnd] = $regularWindow;
 
-        if ($shift->night_ot_end) {
-            $specialStart = $this->alignTime($regularEnd, $shift->night_ot_end, $regularEnd);
-        } else {
-            $specialStart = $regularEnd->copy();
-        }
-
-        if ($specialStart->lessThan($regularEnd)) {
-            $specialStart = $regularEnd->copy();
-        }
-
-        $specialEnd = $specialStart->copy()->addHours(12);
+        // Start immediately after evening regular end (no extension beyond configured window end trigger times)
+        $specialStart = $regularEnd->copy();
+        $specialEnd = $specialStart->copy()->addHours(12); // capped to 12h span
         return [$specialStart, $specialEnd];
     }
 
