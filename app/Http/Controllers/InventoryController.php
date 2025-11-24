@@ -49,6 +49,8 @@ class InventoryController extends Controller
 
         if (str_contains($request->url(), 'salesOrder')) {
             $documentType = 'sales_order';
+        } elseif (str_contains($request->url(), 'salesreturn') || str_contains($request->url(), 'salesReturn') || str_contains($request->url(), 'sales-return')) {
+            $documentType = 'sales_return';
         } else if (str_contains($request->url(), 'invoices')) {
             $documentType = 'invoice';
         } else if (str_contains($request->url(), 'grn')) {
@@ -753,6 +755,21 @@ class InventoryController extends Controller
 
 
     // ======================================================================
+    // NEXT SALES RETURN - PREVIEW NEXT SALES RETURN NUMBER
+    // ======================================================================
+    /**
+     * GET /api/salesreturn/next
+     * Preview next Sales Return number without creating a record
+     */
+    public function nextSalesReturn()
+    {
+        return response()->json([
+            'data' => $this->buildNextVoucherResponse('sales_return')
+        ], 200);
+    }
+
+
+    // ======================================================================
     // LIST SALES ORDERS - GET ALL SALES ORDERS
     // ======================================================================
     /**
@@ -924,6 +941,7 @@ class InventoryController extends Controller
         return match ($documentType) {
             'invoice' => "INV-{$year}-",
             'sales_order' => "SO-{$year}-",
+            'sales_return' => "SRET-{$year}-",
             default => "GRN-{$year}-",
         };
     }

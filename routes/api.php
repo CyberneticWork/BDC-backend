@@ -387,6 +387,7 @@ Route::get('/salesOrder', [InventoryController::class, 'listSalesOrders']); //fo
 Route::get('/invoices', [InventoryController::class, 'listInvoices']); //for get all invoices
 Route::post('/salesOrder', [InventoryController::class, 'storeSalesOrder']);
 Route::get('/salesOrder/next', [InventoryController::class, 'nextSalesOrder']); //for next Sales Order number
+Route::get('/salesreturn/next', [InventoryController::class, 'nextSalesReturn']); //for next Sales Return number
 Route::post('/invoices', [InventoryController::class, 'storeInvoice']);
 
 
