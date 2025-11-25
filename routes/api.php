@@ -380,6 +380,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
 // Inventory routes
 Route::apiResource('inventories', InventoryController::class);
+Route::get('/inventory-pending', [InventoryController::class, 'getPending']); // return all inventory records with status 'pending'
 Route::post('/grn', [InventoryController::class, 'store']);
 Route::get('/grn/next', [InventoryController::class, 'nextGrn']);  //for next GRN number
 Route::get('/invoices/next', [InventoryController::class, 'nextInv']); //for next Invoice number
@@ -389,7 +390,7 @@ Route::post('/salesOrder', [InventoryController::class, 'storeSalesOrder']);
 Route::get('/salesOrder/next', [InventoryController::class, 'nextSalesOrder']); //for next Sales Order number
 Route::get('/salesreturn/next', [InventoryController::class, 'nextSalesReturn']); //for next Sales Return number
 Route::post('/invoices', [InventoryController::class, 'storeInvoice']);
-
+Route::post('/salesreturn', [InventoryController::class, 'storeSalesReturn']);
 
 //for inventory Products
 Route::apiResource('inventory-products', InventoryProductController::class);

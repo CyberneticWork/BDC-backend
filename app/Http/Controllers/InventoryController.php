@@ -7,6 +7,7 @@ use App\Models\Payment;
 use App\Models\inventory_stock;
 use App\Models\product;
 use App\Models\Customer;
+use App\Models\centers;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -332,6 +333,57 @@ class InventoryController extends Controller
             $from_center = null;
             $to_center = null;
 
+        } elseif ($documentType === 'sales_return') {
+            // Sales Return: customer is required, center is required (accept name or id)
+            $customer_id = $request->input('customer_id', $request->input('customerId'));
+            $customerName = $request->input('customer') ?? $request->input('customerName');
+
+            if (!$customer_id) {
+                if (!$customerName) {
+                    return response()->json([
+                        'message' => 'Customer is required for sales returns.'
+                    ], 422);
+                }
+
+                $customer = Customer::where('name', $customerName)->first();
+                if (!$customer) {
+                    return response()->json([
+                        'message' => "Customer '{$customerName}' not found."
+                    ], 422);
+                }
+                $customer_id = $customer->id;
+            } else {
+                $customer = Customer::find($customer_id);
+                if (!$customer) {
+                    return response()->json([
+                        'message' => "Customer ID {$customer_id} not found."
+                    ], 422);
+                }
+            }
+
+            // Center: allow name or id
+            $center_id = $request->input('center_id', $request->input('centerId'));
+            if (!$center_id && $request->filled('center')) {
+                $centerName = $request->input('center');
+                $centerModel = centers::where('name', $centerName)->first();
+                if ($centerModel) {
+                    $center_id = $centerModel->id;
+                } else {
+                    return response()->json([
+                        'message' => "Center '{$centerName}' not found."
+                    ], 422);
+                }
+            }
+
+            if (!$center_id) {
+                return response()->json([
+                    'message' => 'Center is required for sales returns.'
+                ], 422);
+            }
+
+            $supplier_id = null;
+            $from_center = null;
+            $to_center = null;
         } else {
             // GRN SPECIFIC: Handle supplier and center relationships
             $customer_id = $request->input('customer_id', $request->input('customerId'));
@@ -486,10 +538,13 @@ class InventoryController extends Controller
             }
 
             // UPDATE INVENTORY STOCK BASED ON DOCUMENT TYPE -----------------------------*
+            // Note: Sales Orders should not modify `inventory_stock` quantities.
             if (!empty($stockLines) && $stockCenterId) {
-                if ($documentType === 'grn') {
+                if ($documentType === 'grn' || $documentType === 'sales_return') {
+                    // GRN and Sales Return both add to stock
                     $this->applyInventoryStockAdjustments($stockLines, (int)$stockCenterId, (int)$creatorId, 'add');
-                } elseif (in_array($documentType, ['invoice', 'sales_order'], true)) {
+                } elseif ($documentType === 'invoice') {
+                    // Only invoices subtract from stock; sales orders do not affect stock levels
                     $this->applyInventoryStockAdjustments($stockLines, (int)$stockCenterId, (int)$creatorId, 'subtract');
                 }
             }
@@ -517,6 +572,7 @@ class InventoryController extends Controller
             'grn' => 'GRN saved successfully',
             'invoice' => 'Invoice saved successfully',
             'sales_order' => 'Sales order saved successfully',
+            'sales_return' => 'Sales return saved successfully',
         ];
         $message = $messageMap[$documentType] ?? 'Inventory saved successfully';
 
@@ -809,6 +865,62 @@ class InventoryController extends Controller
 
         $records = $query->orderByDesc('id')->get();
 
+        // Collect center_ids and product_ids to fetch stock and batch details
+        $centerIds = $records->pluck('center_id')->filter()->unique()->values()->all();
+
+        // collect product ids per record
+        $productIds = [];
+        foreach ($records as $rec) {
+            foreach ($rec->items as $it) {
+                $pid = $it->product_id ?? ($it->product->id ?? null);
+                if ($pid) $productIds[] = (int)$pid;
+            }
+        }
+        $productIds = array_values(array_unique($productIds));
+
+        $stockMap = [];
+        $batchMap = [];
+        if (!empty($centerIds) && !empty($productIds)) {
+            // Aggregate total per center/product
+            $stockRows = inventory_stock::selectRaw('product_id, center_id, SUM(quantity) as qty')
+                ->whereIn('center_id', $centerIds)
+                ->whereIn('product_id', $productIds)
+                ->groupBy('product_id', 'center_id')
+                ->get();
+
+            foreach ($stockRows as $row) {
+                $key = $row->center_id . '|' . $row->product_id;
+                $stockMap[$key] = (int)$row->qty;
+            }
+
+            // Fetch batch-level rows for each product/center
+            $batchRows = inventory_stock::selectRaw('product_id, center_id, batch_number, SUM(quantity) as qty')
+                ->whereIn('center_id', $centerIds)
+                ->whereIn('product_id', $productIds)
+                ->groupBy('product_id', 'center_id', 'batch_number')
+                ->get();
+
+            foreach ($batchRows as $row) {
+                $key = $row->center_id . '|' . $row->product_id;
+                if (!isset($batchMap[$key])) $batchMap[$key] = [];
+                $batchMap[$key][] = [
+                    'batch_number' => $row->batch_number,
+                    'quantity' => (int)$row->qty,
+                ];
+            }
+        }
+
+        // Attach `current_stock` and `batches` to each item
+        foreach ($records as $rec) {
+            $center = $rec->center_id;
+            foreach ($rec->items as $it) {
+                $pid = $it->product_id ?? ($it->product->id ?? null);
+                $key = ($center ? $center : '') . '|' . ($pid ? $pid : '');
+                $it->current_stock = isset($stockMap[$key]) ? (int)$stockMap[$key] : 0;
+                $it->batches = $batchMap[$key] ?? [];
+            }
+        }
+
         return response()->json([
             'data' => $records,
         ], 200);
@@ -855,6 +967,99 @@ class InventoryController extends Controller
 
         $records = $query->orderByDesc('id')->get();
 
+        // We'll collect all center_ids and product_ids used and query stocks in a single query
+        $centerIds = $records->pluck('center_id')->filter()->unique()->values()->all();
+        // collect product ids per record
+        $productIds = [];
+        foreach ($records as $rec) {
+            foreach ($rec->items as $it) {
+                $pid = $it->product_id ?? ($it->product->id ?? null);
+                if ($pid) $productIds[] = (int)$pid;
+            }
+        }
+        $productIds = array_values(array_unique($productIds));
+
+        $stockMap = [];
+        $batchMap = [];
+        if (!empty($centerIds) && !empty($productIds)) {
+            $stockRows = inventory_stock::selectRaw('product_id, center_id, SUM(quantity) as qty')
+                ->whereIn('center_id', $centerIds)
+                ->whereIn('product_id', $productIds)
+                ->groupBy('product_id', 'center_id')
+                ->get();
+
+            foreach ($stockRows as $row) {
+                $key = $row->center_id . '|' . $row->product_id;
+                $stockMap[$key] = (int)$row->qty;
+            }
+
+            // Fetch batch-level rows for each product/center
+            $batchRows = inventory_stock::selectRaw('product_id, center_id, batch_number, SUM(quantity) as qty')
+                ->whereIn('center_id', $centerIds)
+                ->whereIn('product_id', $productIds)
+                ->groupBy('product_id', 'center_id', 'batch_number')
+                ->get();
+
+            foreach ($batchRows as $row) {
+                $key = $row->center_id . '|' . $row->product_id;
+                if (!isset($batchMap[$key])) $batchMap[$key] = [];
+                $batchMap[$key][] = [
+                    'batch_number' => $row->batch_number,
+                    'quantity' => (int)$row->qty,
+                ];
+            }
+        }
+
+        // Attach `current_stock` and `batches` to each item (0 if not found)
+        foreach ($records as $rec) {
+            $center = $rec->center_id;
+            foreach ($rec->items as $it) {
+                $pid = $it->product_id ?? ($it->product->id ?? null);
+                $key = ($center ? $center : '') . '|' . ($pid ? $pid : '');
+                $it->current_stock = isset($stockMap[$key]) ? (int)$stockMap[$key] : 0;
+                $it->batches = $batchMap[$key] ?? [];
+            }
+        }
+
+        return response()->json([
+            'data' => $records,
+        ], 200);
+    }
+
+    /**
+     * GET /api/inventory-pending
+     * Return all inventory records with status 'pending' and related data
+     */
+    public function getPending(Request $request)
+    {
+        $query = Inventory::with([
+            'creator:id,name',
+            'approver:id,name',
+            'customer:id,name',
+            'items.product',
+            'latestPayment',
+        ])->where('status', 'pending');
+
+        if ($request->filled('center_id')) {
+            $query->where('center_id', (int)$request->input('center_id'));
+        }
+
+        if ($request->filled('type')) {
+            // optional type filter: 'invoice', 'grn', 'sales_order', 'sales_return'
+            $type = strtolower($request->input('type'));
+            if ($type === 'invoice') {
+                $query->where('voucherNumber', 'like', 'INV-%');
+            } elseif ($type === 'sales_order') {
+                $query->where('voucherNumber', 'like', 'SO-%');
+            } elseif ($type === 'sales_return') {
+                $query->where('voucherNumber', 'like', 'SRET-%');
+            } elseif ($type === 'grn') {
+                $query->where('voucherNumber', 'like', 'GRN-%');
+            }
+        }
+
+        $records = $query->orderByDesc('id')->get();
+
         return response()->json([
             'data' => $records,
         ], 200);
@@ -876,6 +1081,61 @@ class InventoryController extends Controller
 
         if (!$request->has('voucherNumber') && !$request->has('voucher_number')) {
             $orderNumber = $request->input('orderNumber');
+            if ($orderNumber) {
+                $normalizations['voucherNumber'] = $orderNumber;
+            }
+        }
+
+        if (!$request->has('center_id') && $request->has('centerId')) {
+            $normalizations['center_id'] = $request->input('centerId');
+        }
+
+        if (!$request->has('customer_id') && $request->has('customerId')) {
+            $normalizations['customer_id'] = $request->input('customerId');
+        }
+
+        if (!$request->has('referNumber') && $request->has('refNumber')) {
+            $normalizations['referNumber'] = $request->input('refNumber');
+        }
+
+        if (!$request->has('discountValue') && $request->has('discountTotal')) {
+            $normalizations['discountValue'] = $request->input('discountTotal');
+        }
+
+        if (!$request->has('amount') && $request->has('totalAmount')) {
+            $normalizations['amount'] = $request->input('totalAmount');
+        }
+
+        if (!$request->has('paid_value') && $request->has('paidValue')) {
+            $normalizations['paid_value'] = $request->input('paidValue');
+        }
+
+        if (!$request->has('created_by') && ($request->has('created_by_id') || $request->has('createdById'))) {
+            $normalizations['created_by'] = $request->input('created_by_id', $request->input('createdById'));
+        }
+
+        if (!empty($normalizations)) {
+            $request->merge($normalizations);
+        }
+
+        return $this->store($request);
+    }
+
+
+    // STORE SALES RETURN - ROUTE NORMALIZER
+    /**
+     * POST /api/salesreturn
+     * Normalize incoming sales-return payload and delegate to store()
+     */
+    public function storeSalesReturn(Request $request)
+    {
+        $normalizations = [
+            'type' => 'sales_return',
+        ];
+
+        // Accept orderNumber as voucherNumber if provided
+        if (!$request->has('voucherNumber') && !$request->has('voucher_number')) {
+            $orderNumber = $request->input('orderNumber') ?? $request->input('order_number');
             if ($orderNumber) {
                 $normalizations['voucherNumber'] = $orderNumber;
             }
