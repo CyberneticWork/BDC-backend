@@ -11,8 +11,13 @@ class OvertimeCalculator
 {
     /**
      * Calculate overtime hour buckets and monetary amounts for a single shift pairing.
+     * @param employee $employee
+     * @param shifts $shift
+     * @param Carbon $clockIn
+     * @param Carbon $clockOut
+     * @param bool $isHoliday  // NEW: whether attendance date is a holiday
      */
-    public function calculate(employee $employee, shifts $shift, Carbon $clockIn, Carbon $clockOut): array
+    public function calculate(employee $employee, shifts $shift, Carbon $clockIn, Carbon $clockOut, bool $isHoliday = false): array
     {
         $workStart = $clockIn->copy();
         $workEnd = $clockOut->copy();
@@ -53,76 +58,77 @@ class OvertimeCalculator
         }
 
         // --- IGNORE THRESHOLD LOGIC (chunked multiples) ---
-        // Fetch shift overtime rate (if exists)
-        $rate = ShiftOvertimeRate::where('shift_id', $shift->id)->whereNull('deleted_at')->first();
-        if ($rate && !empty($rate->ignore_hours_threshold)) {
-            $thresholdConfig = $rate->ignore_hours_threshold; // cast to array
+        $rateModel = ShiftOvertimeRate::where('shift_id', $shift->id)->whereNull('deleted_at')->first();
+        if ($rateModel && !empty($rateModel->ignore_hours_threshold)) {
+            $thresholdConfig = $rateModel->ignore_hours_threshold;
             $thHours = (float)($thresholdConfig['hours'] ?? 0);
             $thMinutes = (float)($thresholdConfig['minutes'] ?? 0);
-
-            // Convert threshold to whole minutes to avoid floating errors
             $thresholdMinutes = (int) round(($thHours * 60.0) + $thMinutes);
 
             if ($thresholdMinutes > 0) {
-                // Helper: apply floor(total/threshold)*threshold minutes, distribute proportionally
                 $applyChunkedThreshold = function (float $regular, float $special) use ($thresholdMinutes): array {
                     $totalHours = $regular + $special;
                     if ($totalHours <= 0) {
                         return [0.0, 0.0];
                     }
-
                     $totalMinutes = (int) round($totalHours * 60.0);
                     $chunks = intdiv($totalMinutes, $thresholdMinutes);
                     $allowedMinutes = $chunks * $thresholdMinutes;
-
                     if ($allowedMinutes <= 0) {
                         return [0.0, 0.0];
                     }
-
-                    // Proportional distribution with minute-level rounding
                     $regMinutesRaw = ($regular * 60.0);
                     $specMinutesRaw = ($special * 60.0);
-                    $sumRaw = max(1.0, $regMinutesRaw + $specMinutesRaw); // guard
-
+                    $sumRaw = max(1.0, $regMinutesRaw + $specMinutesRaw);
                     $regMinutes = (int) round(($regMinutesRaw / $sumRaw) * $allowedMinutes);
-                    $specMinutes = $allowedMinutes - $regMinutes; // ensure sum consistency
-
+                    $specMinutes = $allowedMinutes - $regMinutes;
                     return [round($regMinutes / 60.0, 2), round($specMinutes / 60.0, 2)];
                 };
 
-                // Morning combined (regular + special)
                 [$hours['morning_regular'], $hours['morning_special']] =
                     $applyChunkedThreshold($hours['morning_regular'], $hours['morning_special']);
 
-                // Evening combined (regular + special)
                 [$hours['evening_regular'], $hours['evening_special']] =
                     $applyChunkedThreshold($hours['evening_regular'], $hours['evening_special']);
             }
         }
         // --- END IGNORE THRESHOLD LOGIC ---
 
-        // Final rounding & total recompute after threshold adjustments
         $hours = array_map(fn ($v) => round((float)$v, 2), $hours);
         $hours['total'] = round(array_sum($hours), 2);
 
-        $rates = [
-            'morning_regular' => (float) ($compensation?->ot_morning_rate ?? 0),
-            'morning_special' => (float) ($compensation?->ot_morning_rate_special ?? $compensation?->ot_morning_rate ?? 0),
-            'evening_regular' => (float) ($compensation?->ot_night_rate ?? 0),
-            'evening_special' => (float) ($compensation?->ot_night_rate_special ?? $compensation?->ot_night_rate ?? 0),
-        ];
+        // NEW RATE CALCULATION (replacing compensation-based individual rates)
+        $basicSalary = (float) ($compensation?->basic_salary ?? 0);
+        $shiftHoursPerDay = (float) ($rateModel?->shift_hours_per_day ?? 0);
+        $workingDaysPerMonth = (float) ($rateModel?->working_days_per_month ?? 0);
+        $totalMonthlyHours = $shiftHoursPerDay * $workingDaysPerMonth;
+        $baseHourlyRate = $totalMonthlyHours > 0 ? round($basicSalary / $totalMonthlyHours, 6) : 0.0;
 
+        $otMultiplier = (float) ($rateModel?->ot_multiplier ?? 1.5);
+        $holidayMultiplier = (float) ($rateModel?->holiday_multiplier ?? 2.0);
+        $effectiveMultiplier = $isHoliday ? $holidayMultiplier : $otMultiplier;
+        $effectiveOtHourlyRate = round($baseHourlyRate * $effectiveMultiplier, 6);
+
+        // Uniform rate across all buckets
         $amounts = [
-            'morning_regular' => round($hours['morning_regular'] * $rates['morning_regular'], 2),
-            'morning_special' => round($hours['morning_special'] * $rates['morning_special'], 2),
-            'evening_regular' => round($hours['evening_regular'] * $rates['evening_regular'], 2),
-            'evening_special' => round($hours['evening_special'] * $rates['evening_special'], 2),
+            'morning_regular' => round($hours['morning_regular'] * $effectiveOtHourlyRate, 2),
+            'morning_special' => round($hours['morning_special'] * $effectiveOtHourlyRate, 2),
+            'evening_regular' => round($hours['evening_regular'] * $effectiveOtHourlyRate, 2),
+            'evening_special' => round($hours['evening_special'] * $effectiveOtHourlyRate, 2),
         ];
         $amounts['total'] = round(array_sum($amounts), 2);
 
         return [
             'hours' => $hours,
             'amounts' => $amounts,
+            'meta' => [
+                'is_holiday' => $isHoliday,
+                'base_hourly_rate' => $baseHourlyRate,
+                'effective_ot_hourly_rate' => $effectiveOtHourlyRate,
+                'ot_multiplier' => $otMultiplier,
+                'holiday_multiplier' => $holidayMultiplier,
+                'total_monthly_hours' => $totalMonthlyHours,
+            ],
         ];
     }
 

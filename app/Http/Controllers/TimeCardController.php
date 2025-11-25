@@ -822,17 +822,17 @@ class TimeCardController extends Controller
         $clockIn = Carbon::parse($inCard->date . ' ' . $inCard->time);
         $clockOut = Carbon::parse($outCard->date . ' ' . $outCard->time);
 
-        $breakdown = $this->overtimeCalculator->calculate($employee, $resolvedShift, $clockIn, $clockOut);
-        $totalHours = $breakdown['hours']['total'] ?? 0;
+        // NEW: determine holiday (company or department) for target date
+        $isHoliday = $this->isHoliday($employee, $targetDate);
 
+        $breakdown = $this->overtimeCalculator->calculate($employee, $resolvedShift, $clockIn, $clockOut, $isHoliday);
+        $totalHours = $breakdown['hours']['total'] ?? 0;
         if ($totalHours <= 0) {
             return;
         }
 
-        // Enforce compensation OT activation rules BEFORE saving
         $comp = $employee->compensation;
         if (!$comp || !$comp->ot_active) {
-            // Employee OT is not active at all -> do not create any OT record
             return;
         }
 
@@ -841,7 +841,6 @@ class TimeCardController extends Controller
         $allowMorningSpecial = (bool) ($comp->ot_morning_special ?? false);
         $allowEveningSpecial = (bool) ($comp->ot_evening_special ?? false);
 
-        // Start from calculator result and zero-out any disabled buckets
         $hours = $breakdown['hours'];
         if (!$allowMorning) {
             $hours['morning_regular'] = 0.0;
@@ -861,27 +860,20 @@ class TimeCardController extends Controller
             2
         );
 
-        // If nothing remains payable under current activation flags, skip saving
         if ($hours['total'] <= 0) {
             return;
         }
 
-        // Recompute amounts for filtered hours (use employee compensation rates)
-        $rates = [
-            'morning_regular' => (float) ($comp->ot_morning_rate ?? 0),
-            'morning_special' => (float) ($comp->ot_morning_rate_special ?? $comp->ot_morning_rate ?? 0),
-            'evening_regular' => (float) ($comp->ot_night_rate ?? 0),
-            'evening_special' => (float) ($comp->ot_night_rate_special ?? $comp->ot_night_rate ?? 0),
-        ];
+        // Recompute amounts using effective OT hourly rate from meta
+        $effectiveRate = (float) ($breakdown['meta']['effective_ot_hourly_rate'] ?? 0);
         $amounts = [
-            'morning_regular' => round($hours['morning_regular'] * $rates['morning_regular'], 2),
-            'morning_special' => round($hours['morning_special'] * $rates['morning_special'], 2),
-            'evening_regular' => round($hours['evening_regular'] * $rates['evening_regular'], 2),
-            'evening_special' => round($hours['evening_special'] * $rates['evening_special'], 2),
+            'morning_regular' => round($hours['morning_regular'] * $effectiveRate, 2),
+            'morning_special' => round($hours['morning_special'] * $effectiveRate, 2),
+            'evening_regular' => round($hours['evening_regular'] * $effectiveRate, 2),
+            'evening_special' => round($hours['evening_special'] * $effectiveRate, 2),
         ];
         $amounts['total'] = round(array_sum($amounts), 2);
 
-        // Save only the allowed buckets
         over_time::create([
             'employee_id' => $employee->id,
             'shift_code' => $resolvedShift->id,
@@ -898,6 +890,48 @@ class TimeCardController extends Controller
             'total_ot_amount' => $amounts['total'],
             'status' => 'pending',
         ]);
+    }
+
+    // NEW helper to detect holiday similar to NopayController logic
+    private function isHoliday(employee $employee, string $date): bool
+    {
+        $org = $employee->organizationAssignment;
+        if (!$org) {
+            return false;
+        }
+
+        // Treat Saturdays and Sundays as holidays
+        $carbonDate = \Carbon\Carbon::parse($date);
+        if (in_array($carbonDate->dayOfWeek, [\Carbon\Carbon::SATURDAY, \Carbon\Carbon::SUNDAY])) {
+            return true;
+        }
+
+        // Company-level
+        $companyHoliday = \App\Models\leaveCalendar::where('company_id', $org->company_id)
+            ->whereDate('start_date', '<=', $date)
+            ->where(function ($q) use ($date) {
+                $q->whereNull('end_date')->orWhereDate('end_date', '>=', $date);
+            })
+            ->exists();
+
+        if ($companyHoliday) {
+            return true;
+        }
+
+        // Department-level
+        if ($org->department_id) {
+            $deptHoliday = \App\Models\leaveCalendar::where('department_id', $org->department_id)
+                ->whereDate('start_date', '<=', $date)
+                ->where(function ($q) use ($date) {
+                    $q->whereNull('end_date')->orWhereDate('end_date', '>=', $date);
+                })
+                ->exists();
+            if ($deptHoliday) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function importExcel(Request $request)
