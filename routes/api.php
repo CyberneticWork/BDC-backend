@@ -42,7 +42,7 @@ use App\Http\Controllers\ProductController;
 use App\Http\Controllers\CentersController;
 use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\InventoryProductController;
-use App\Http\Controllers\IncentoryStockController;
+use App\Http\Controllers\InventoryStockController;
 
 
 Route::get('/user', function (Request $request) {
@@ -394,8 +394,9 @@ Route::post('/salesreturn', [InventoryController::class, 'storeSalesReturn']);
 //for inventory Products
 Route::apiResource('inventory-products', InventoryProductController::class);
 
-// Incentory stock routes
-Route::apiResource('invntory-stocks', IncentoryStockController::class);
+// Inventory stocks: full list with related details
+Route::get('/inventory-stocks/all', [InventoryStockController::class, 'all']);
+
 
 // Product routes
 Route::get('products/inventory/details', [ProductController::class, 'inventoryDetails']);

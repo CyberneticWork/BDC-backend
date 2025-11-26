@@ -4,18 +4,35 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use App\Models\inventory_stock;
+use App\Services\InventoryStockService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Validation\Rule;
 
 class InventoryStockController extends Controller
 {
+    protected InventoryStockService $service;
+
+    public function __construct(InventoryStockService $service)
+    {
+        $this->service = $service;
+    }
     /**
      * Display a paginated listing of the inventory stocks.
      */
     public function index(Request $request): JsonResponse
     {
         $perPage = (int) $request->get('per_page', 15);
-        $stocks = inventory_stock::with(['product', 'center', 'creator', 'updater'])->paginate($perPage);
+        $stocks = $this->service->getAll($perPage);
+
+        return response()->json($stocks);
+    }
+
+    /**
+     * Return all inventory stocks with full related details (no pagination).
+     */
+    public function all(): JsonResponse
+    {
+        $stocks = $this->service->getAllDetails();
 
         return response()->json($stocks);
     }
@@ -50,7 +67,7 @@ class InventoryStockController extends Controller
      */
     public function show($id): JsonResponse
     {
-        $stock = inventory_stock::with(['product', 'center', 'creator', 'updater'])->findOrFail($id);
+        $stock = $this->service->find($id);
 
         return response()->json($stock);
     }
