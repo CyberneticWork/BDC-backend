@@ -349,8 +349,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/performance-appraisals/{id}/force', [App\Http\Controllers\PerformanceAppraisalController::class, 'forceDestroy']);
     Route::get('/performance-appraisals/stats/overview', [App\Http\Controllers\PerformanceAppraisalController::class, 'getStats']);
 
-    //Center routes
-    Route::apiResource('centers', CentersController::class);
+
 
 });
 
@@ -400,6 +399,8 @@ Route::apiResource('invntory-stocks', IncentoryStockController::class);
 
 // Product routes
 Route::get('products/inventory/details', [ProductController::class, 'inventoryDetails']);
+//Center routes
+Route::apiResource('centers', CentersController::class);
 
 
 
