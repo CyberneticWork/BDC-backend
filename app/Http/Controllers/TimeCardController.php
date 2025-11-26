@@ -825,6 +825,65 @@ class TimeCardController extends Controller
         // NEW: determine holiday (company or department) for target date
         $isHoliday = $this->isHoliday($employee, $targetDate);
 
+        // NEW: Holiday working hours logic
+        if ($isHoliday) {
+            $comp = $employee->compensation;
+            if (!$comp || !$comp->ot_active) {
+                return;
+            }
+
+            // Get total working hours from the OUT record
+            $totalWorkingHours = (float) ($outCard->working_hours ?? 0);
+            
+            if ($totalWorkingHours <= 0) {
+                return;
+            }
+
+            // Get shift overtime rate configuration
+            $rateModel = \App\Models\ShiftOvertimeRate::where('shift_id', $resolvedShift->id)->whereNull('deleted_at')->first();
+            if (!$rateModel) {
+                return;
+            }
+
+            // Calculate holiday rate: Basic Salary ÷ Total Monthly Hours × Holiday Multiplier
+            $basicSalary = (float) ($comp->basic_salary ?? 0);
+            $shiftHoursPerDay = (float) ($rateModel->shift_hours_per_day ?? 0);
+            $workingDaysPerMonth = (float) ($rateModel->working_days_per_month ?? 0);
+            $totalMonthlyHours = $shiftHoursPerDay * $workingDaysPerMonth;
+            
+            if ($totalMonthlyHours <= 0) {
+                return;
+            }
+
+            $baseHourlyRate = round($basicSalary / $totalMonthlyHours, 6);
+            $holidayMultiplier = (float) ($rateModel->holiday_multiplier ?? 2.0);
+            $holidayOtHourlyRate = round($baseHourlyRate * $holidayMultiplier, 6);
+            $totalOtAmount = round($totalWorkingHours * $holidayOtHourlyRate, 2);
+
+            // Create overtime record with all working hours as OT
+            over_time::create([
+                'employee_id' => $employee->id,
+                'shift_code' => $resolvedShift->id,
+                'time_cards_id' => $outCard->id,
+                'ot_hours' => $totalWorkingHours,
+                'morning_ot' => 0.0, // All hours treated as holiday OT, not categorized by time
+                'afternoon_ot' => 0.0,
+                'morning_ot_special' => 0.0,
+                'evening_ot_special' => 0.0,
+                'morning_ot_amount' => 0.0,
+                'morning_ot_special_amount' => 0.0,
+                'evening_ot_amount' => 0.0,
+                'evening_ot_special_amount' => 0.0,
+                'total_ot_amount' => $totalOtAmount,
+                'holiday_ot_hours' => $totalWorkingHours, // NEW: Track holiday OT separately
+                'holiday_ot_amount' => $totalOtAmount,   // NEW: Track holiday OT amount separately
+                'status' => 'pending',
+            ]);
+
+            return;
+        }
+
+        // Regular day OT calculation (existing logic)
         $breakdown = $this->overtimeCalculator->calculate($employee, $resolvedShift, $clockIn, $clockOut, $isHoliday);
         $totalHours = $breakdown['hours']['total'] ?? 0;
         if ($totalHours <= 0) {
@@ -888,6 +947,8 @@ class TimeCardController extends Controller
             'evening_ot_amount' => $amounts['evening_regular'],
             'evening_ot_special_amount' => $amounts['evening_special'],
             'total_ot_amount' => $amounts['total'],
+            'holiday_ot_hours' => 0.0,   // NEW: No holiday OT for regular days
+            'holiday_ot_amount' => 0.0,  // NEW: No holiday OT amount for regular days
             'status' => 'pending',
         ]);
     }
