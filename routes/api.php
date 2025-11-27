@@ -383,6 +383,7 @@ Route::get('/inventory-pending', [InventoryController::class, 'getPending']); //
 Route::post('/grn', [InventoryController::class, 'store']);
 Route::get('/grn/next', [InventoryController::class, 'nextGrn']);  //for next GRN number
 Route::get('/invoices/next', [InventoryController::class, 'nextInv']); //for next Invoice number
+Route::get('/stock-transfer/next', [InventoryController::class, 'nextStockTransfer']); // next Stock Transfer number
 Route::get('/salesOrder', [InventoryController::class, 'listSalesOrders']); //for get all salesOrder
 Route::get('/invoices', [InventoryController::class, 'listInvoices']); //for get all invoices
 Route::post('/salesOrder', [InventoryController::class, 'storeSalesOrder']);

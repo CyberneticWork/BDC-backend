@@ -56,6 +56,8 @@ class InventoryController extends Controller
             $documentType = 'invoice';
         } else if (str_contains($request->url(), 'grn')) {
             $documentType = 'grn';
+        } else if (str_contains($request->url(), 'transfer') || str_contains($request->url(), 'stockTransfer') || str_contains($request->url(), 'stock-transfer')) {
+            $documentType = 'stock_transfer';
         } else {
             // For apiResource inventories endpoint, check type parameter
             $documentType = strtolower($request->input('type', 'grn'));
@@ -826,6 +828,21 @@ class InventoryController extends Controller
 
 
     // ======================================================================
+    // NEXT STOCK TRANSFER - PREVIEW NEXT STOCK TRANSFER NUMBER
+    // ======================================================================
+    /**
+     * GET /api/stock-transfer/next
+     * Preview next Stock Transfer number without creating a record
+     */
+    public function nextStockTransfer()
+    {
+        return response()->json([
+            'data' => $this->buildNextVoucherResponse('stock_transfer')
+        ], 200);
+    }
+
+
+    // ======================================================================
     // LIST SALES ORDERS - GET ALL SALES ORDERS
     // ======================================================================
     /**
@@ -1202,6 +1219,7 @@ class InventoryController extends Controller
             'invoice' => "INV-{$year}-",
             'sales_order' => "SO-{$year}-",
             'sales_return' => "SRET-{$year}-",
+            'stock_transfer' => "ST-{$year}-",
             default => "GRN-{$year}-",
         };
     }
