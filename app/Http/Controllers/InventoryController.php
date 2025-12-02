@@ -1194,6 +1194,193 @@ class InventoryController extends Controller
     }
 
 
+    // ======================================================================
+    // STORE STOCK TRANSFER - HANDLE CENTER TO CENTER MOVEMENTS
+    // ======================================================================
+    /**
+     * POST /api/stock-transfer
+     * Persist a stock transfer, related inventory lines, and adjust inventory stock
+     */
+    public function storeStockTransfer(Request $request)
+    {
+        $payload = $request->input('payload');
+        if (!is_array($payload)) {
+            $payload = [];
+        }
+
+        $items = $payload['items'] ?? $request->input('items', []);
+        if (!is_array($items) || empty($items)) {
+            return response()->json([
+                'message' => 'At least one transfer line item is required.',
+            ], 422);
+        }
+
+        $creatorId = optional($request->user())->id
+            ?? $request->input('created_by')
+            ?? $request->input('createdBy')
+            ?? $payload['created_by'] ?? $payload['createdBy'] ?? null;
+
+        if (!$creatorId) {
+            return response()->json([
+                'message' => 'Unauthenticated: provide a valid token or createdBy user id.'
+            ], 401);
+        }
+
+        $fromCenterInput = $payload['from_center']
+            ?? $payload['fromCenter']
+            ?? $request->input('from_center')
+            ?? $request->input('fromCenter');
+
+        $toCenterInput = $payload['to_center']
+            ?? $payload['toCenter']
+            ?? $request->input('to_center')
+            ?? $request->input('toCenter');
+
+        $fromCenter = $fromCenterInput !== null ? (int)$fromCenterInput : null;
+        $toCenter = $toCenterInput !== null ? (int)$toCenterInput : null;
+
+        if (!$fromCenter || !$toCenter) {
+            return response()->json([
+                'message' => 'Both fromCenter and toCenter are required for stock transfers.'
+            ], 422);
+        }
+
+        if ($fromCenter === $toCenter) {
+            return response()->json([
+                'message' => 'fromCenter and toCenter must be different.'
+            ], 422);
+        }
+
+        $existingCenterIds = centers::whereIn('id', [$fromCenter, $toCenter])->pluck('id')->all();
+        $missingCenters = array_diff([$fromCenter, $toCenter], $existingCenterIds);
+        if (!empty($missingCenters)) {
+            return response()->json([
+                'message' => 'One or more centers referenced do not exist.',
+                'missing_center_ids' => array_values($missingCenters),
+            ], 422);
+        }
+
+        $allowedStatuses = ['pending', 'reject', 'completed'];
+        $statusInput = $payload['status'] ?? $request->input('status');
+        $status = 'pending';
+        if ($statusInput !== null) {
+            $normalizedStatus = strtolower(trim($statusInput));
+            if (!in_array($normalizedStatus, $allowedStatuses, true)) {
+                return response()->json([
+                    'message' => 'Invalid status value. Allowed: pending, reject, completed.'
+                ], 422);
+            }
+            $status = $normalizedStatus;
+        }
+
+        $linePayloads = [];
+        foreach ($items as $line) {
+            if (!is_array($line)) {
+                continue;
+            }
+
+            $productId = $line['product_id']
+                ?? $line['productId']
+                ?? $line['id']
+                ?? data_get($line, 'product.id');
+
+            $quantity = (int)($line['quantity'] ?? $line['qty'] ?? 0);
+
+            if (!$productId || $quantity <= 0) {
+                continue;
+            }
+
+            $unitPrice = (float)($line['unitPrice'] ?? $line['cost'] ?? 0);
+            $minPrice = (float)($line['min_price'] ?? $line['minPrice'] ?? 0);
+            $mrp = (float)($line['mrp'] ?? 0);
+            $lineAmount = 0;
+
+            $linePayloads[] = [
+                'product_id' => (int)$productId,
+                'quantity' => $quantity,
+                'cost' => $unitPrice,
+                'min_price' => $minPrice,
+                'mrp' => $mrp,
+                'amount' => 0,
+                'created_by' => (int)$creatorId,
+            ];
+        }
+
+        if (empty($linePayloads)) {
+            return response()->json([
+                'message' => 'No valid transfer lines were provided.',
+            ], 422);
+        }
+
+        $productIds = array_values(array_unique(array_column($linePayloads, 'product_id')));
+        $existingProductIds = product::whereIn('id', $productIds)->pluck('id')->all();
+        $missingProductIds = array_diff($productIds, $existingProductIds);
+        if (!empty($missingProductIds)) {
+            return response()->json([
+                'message' => 'One or more products referenced do not exist.',
+                'missing_product_ids' => array_values($missingProductIds),
+            ], 422);
+        }
+
+        $stockLines = $this->extractStockLines($items, $linePayloads);
+        $voucherNumberInput = $request->input('transferId')
+            ?? $request->input('voucherNumber')
+            ?? $payload['voucherNumber']
+            ?? $payload['id']
+            ?? null;
+
+        $record = DB::transaction(function () use (
+            $voucherNumberInput,
+            $status,
+            $creatorId,
+            $fromCenter,
+            $toCenter,
+            $linePayloads,
+            $stockLines
+        ) {
+            $voucherNumber = $voucherNumberInput;
+            if (!$voucherNumber) {
+                $voucherNumber = $this->buildNextVoucherResponse('stock_transfer', true)['next'];
+            }
+
+            $inventory = Inventory::create([
+                'voucherNumber' => $voucherNumber,
+                'amount' => 0,
+                'paid_value' => 0,
+                'discountValue' => 0,
+                'referNumber' => null,
+                'refervoucherNumber' => null,
+                'center_id' => $fromCenter,
+                'supplier_id' => null,
+                'customer_id' => null,
+                'from_center' => $fromCenter,
+                'to_center' => $toCenter,
+                'is_ref' => false,
+                'status' => $status,
+                'created_by' => $creatorId,
+                'approved_by' => null,
+            ]);
+
+            $inventory->items()->createMany($linePayloads);
+
+            if (!empty($stockLines)) {
+                // subtract from source, add to destination
+                $this->applyInventoryStockAdjustments($stockLines, $fromCenter, (int)$creatorId, 'subtract');
+                $this->applyInventoryStockAdjustments($stockLines, $toCenter, (int)$creatorId, 'add');
+            }
+
+            return $inventory;
+        });
+
+        $record->load(['creator:id,name', 'items.product']);
+
+        return response()->json([
+            'message' => 'Stock transfer saved successfully',
+            'data' => $record,
+            'document_type' => 'stock_transfer',
+        ], 201);
+    }
+
 
     // STORE INVOICE - LEGACY METHOD (NOW HANDLED BY STORE METHOD)
     /**
