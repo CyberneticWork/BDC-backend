@@ -843,6 +843,21 @@ class InventoryController extends Controller
 
 
     // ======================================================================
+    // NEXT PURCHASE ORDER - PREVIEW NEXT PURCHASE ORDER NUMBER
+    // ======================================================================
+    /**
+     * GET /api/purchase-order/next
+     * Preview next Purchase Order number without creating a record
+     */
+    public function nextPurchaseOrder()
+    {
+        return response()->json([
+            'data' => $this->buildNextVoucherResponse('purchase_order')
+        ], 200);
+    }
+
+
+    // ======================================================================
     // LIST SALES ORDERS - GET ALL SALES ORDERS
     // ======================================================================
     /**
@@ -1407,6 +1422,7 @@ class InventoryController extends Controller
             'sales_order' => "SO-{$year}-",
             'sales_return' => "SRET-{$year}-",
             'stock_transfer' => "ST-{$year}-",
+            'purchase_order' => "PO-{$year}-",
             default => "GRN-{$year}-",
         };
     }
