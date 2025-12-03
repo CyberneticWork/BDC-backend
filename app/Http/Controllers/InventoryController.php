@@ -1210,6 +1210,70 @@ class InventoryController extends Controller
 
 
     // ======================================================================
+    // STORE PURCHASE ORDER - ROUTE NORMALIZER
+    // ======================================================================
+    /**
+     * POST /api/purchaseOrder
+     * Normalize incoming purchase order payload and delegate to store()
+     */
+    public function storePurchaseOrder(Request $request)
+    {
+        $normalizations = [
+            'type' => 'purchase_order',
+        ];
+
+        // Accept orderNumber as voucherNumber if provided
+        if (!$request->has('voucherNumber') && !$request->has('voucher_number')) {
+            $orderNumber = $request->input('orderNumber') ?? $request->input('order_number');
+            if ($orderNumber) {
+                $normalizations['voucherNumber'] = $orderNumber;
+            }
+        }
+
+        if (!$request->has('center_id') && $request->has('center')) {
+            $normalizations['center_id'] = $request->input('center');
+        }
+
+        if (!$request->has('supplier_id') && $request->has('supplier')) {
+            $normalizations['supplier_id'] = $request->input('supplier');
+        }
+
+        if (!$request->has('referNumber') && $request->has('refNumber')) {
+            $normalizations['referNumber'] = $request->input('refNumber');
+        }
+
+        if (!$request->has('discountValue') && $request->has('discountTotal')) {
+            $normalizations['discountValue'] = $request->input('discountTotal');
+        }
+
+        if (!$request->has('amount') && $request->has('subtotal')) {
+            $normalizations['amount'] = $request->input('subtotal');
+        }
+
+        if (!$request->has('paid_value') && $request->has('paidValue')) {
+            $normalizations['paid_value'] = $request->input('paidValue');
+        }
+
+        // createdBy can be an object {id: X, name: ...} or an id directly
+        if (!$request->has('created_by') && $request->has('createdBy')) {
+            $createdBy = $request->input('createdBy');
+            if (is_array($createdBy)) {
+                $normalizations['created_by'] = $createdBy['id'] ?? null;
+            } else {
+                $normalizations['created_by'] = $createdBy;
+            }
+        }
+
+        // Merge normalizations (only keys present will be merged)
+        if (!empty($normalizations)) {
+            $request->merge($normalizations);
+        }
+
+        return $this->store($request);
+    }
+
+
+    // ======================================================================
     // STORE STOCK TRANSFER - HANDLE CENTER TO CENTER MOVEMENTS
     // ======================================================================
     /**
