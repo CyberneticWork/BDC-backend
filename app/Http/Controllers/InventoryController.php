@@ -47,7 +47,6 @@ class InventoryController extends Controller
         // as invoices/GRNs. Keep this block aligned with the frontend payload.
         // DETERMINE DOCUMENT TYPE BASED ON ROUTE
         $documentType = 'grn'; // Default for apiResource inventories
-
         if (str_contains($request->url(), 'salesOrder')) {
             $documentType = 'sales_order';
         } elseif (str_contains($request->url(), 'salesreturn') || str_contains($request->url(), 'salesReturn') || str_contains($request->url(), 'sales-return')) {
@@ -58,6 +57,8 @@ class InventoryController extends Controller
             $documentType = 'grn';
         } else if (str_contains($request->url(), 'transfer') || str_contains($request->url(), 'stockTransfer') || str_contains($request->url(), 'stock-transfer')) {
             $documentType = 'stock_transfer';
+        } else if (str_contains($request->url(), 'purchaseOrder') || str_contains($request->url(), 'purchase-order') || str_contains($request->url(), 'purchaseorder')) {
+            $documentType = 'purchase_order';
         } else {
             // For apiResource inventories endpoint, check type parameter
             $documentType = strtolower($request->input('type', 'grn'));
@@ -386,6 +387,25 @@ class InventoryController extends Controller
             $supplier_id = null;
             $from_center = null;
             $to_center = null;
+        } elseif ($documentType === 'purchase_order') {
+            // Purchase Order: require center and supplier, no customer linkage
+            $center_id = $request->input('center_id', $request->input('center'));
+            if (!$center_id) {
+                return response()->json([
+                    'message' => 'Center is required for purchase orders.'
+                ], 422);
+            }
+
+            $supplier_id = $request->input('supplier_id', $request->input('supplier'));
+            if (!$supplier_id) {
+                return response()->json([
+                    'message' => 'Supplier is required for purchase orders.'
+                ], 422);
+            }
+
+            $customer_id = null;
+            $from_center = null;
+            $to_center = null;
         } else {
             // GRN SPECIFIC: Handle supplier and center relationships
             $customer_id = $request->input('customer_id', $request->input('customerId'));
@@ -539,7 +559,7 @@ class InventoryController extends Controller
                 ]);
             }
 
-            // UPDATE INVENTORY STOCK BASED ON DOCUMENT TYPE -----------------------------*
+        // UPDATE INVENTORY STOCK BASED ON DOCUMENT TYPE -----------------------------*
             // Note: Sales Orders should not modify `inventory_stock` quantities.
             if (!empty($stockLines) && $stockCenterId) {
                 if ($documentType === 'grn' || $documentType === 'sales_return') {
@@ -1584,6 +1604,7 @@ class InventoryController extends Controller
         return $stockLines;
     }
 
+    
     /**
      * Merge incoming quantities into inventory_stocks per product/batch/center
      */
