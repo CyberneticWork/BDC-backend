@@ -34,7 +34,7 @@ class InventoryController extends Controller
     }
 
     // STORE - CREATE INVENTORY RECORD (USED BY BOTH GRN AND INVOICE ROUTES)
-   /**
+    /**
      * POST /api/inventories (from apiResource)
      * POST /api/grn (specific GRN route)
      * POST /api/invoices (specific Invoice route)
@@ -130,37 +130,37 @@ class InventoryController extends Controller
             // Calculate total quantity from line items if not provided at root
             if ($quantity === null) {
                 $quantity = collect($items)->sum(function ($it) {
-                    return (int)($it['quantity'] ?? $it['qty'] ?? data_get($it, 'pivot.quantity', 0));
+                    return (int) ($it['quantity'] ?? $it['qty'] ?? data_get($it, 'pivot.quantity', 0));
                 });
             }
 
             // Get unit price from first item if not provided at root
             if ($unitPrice === null) {
                 $firstItem = $items[0];
-                $unitPrice = (float)($firstItem['unitPrice'] ?? $firstItem['cost'] ?? data_get($firstItem, 'pivot.cost', 0));
+                $unitPrice = (float) ($firstItem['unitPrice'] ?? $firstItem['cost'] ?? data_get($firstItem, 'pivot.cost', 0));
             }
 
             // Calculate total amount from line items if not provided or invalid
-            if ($amount === null || (float)$amount <= 0) {
+            if ($amount === null || (float) $amount <= 0) {
                 $amount = collect($items)->sum(function ($it) {
-                    $q = (float)($it['quantity'] ?? $it['qty'] ?? data_get($it, 'pivot.quantity', 0));
-                    $u = (float)($it['unitPrice'] ?? $it['cost'] ?? data_get($it, 'pivot.cost', 0));
+                    $q = (float) ($it['quantity'] ?? $it['qty'] ?? data_get($it, 'pivot.quantity', 0));
+                    $u = (float) ($it['unitPrice'] ?? $it['cost'] ?? data_get($it, 'pivot.cost', 0));
                     $lineAmount = $it['amount'] ?? $it['total'] ?? data_get($it, 'pivot.amount');
 
-                    return $lineAmount !== null ? (float)$lineAmount : $q * $u;
+                    return $lineAmount !== null ? (float) $lineAmount : $q * $u;
                 });
             }
         }
 
         // FINAL DATA TYPE CASTING AND VALIDATION
-        $referNumber = $referNumber ? (string)$referNumber : null;
-        $discountValue = (float)$discountValue;
-        $quantity = (int)($quantity ?? 0);
-        $unitPrice = (float)($unitPrice ?? 0);
-        $amount = (float)($amount ?? 0);
-        $paid_value = (float)($paid_value ?? 0);
-        $referVoucherNumber = $referVoucherNumberInput ? (string)$referVoucherNumberInput : null;
-        $isRef = (bool)($isRefInput ?? false);
+        $referNumber = $referNumber ? (string) $referNumber : null;
+        $discountValue = (float) $discountValue;
+        $quantity = (int) ($quantity ?? 0);
+        $unitPrice = (float) ($unitPrice ?? 0);
+        $amount = (float) ($amount ?? 0);
+        $paid_value = (float) ($paid_value ?? 0);
+        $referVoucherNumber = $referVoucherNumberInput ? (string) $referVoucherNumberInput : null;
+        $isRef = (bool) ($isRefInput ?? false);
 
         // AUTHENTICATION CHECK - Ensure we have a valid creator
         $creatorId = optional($request->user())->id ?? $request->input('created_by');
@@ -184,7 +184,7 @@ class InventoryController extends Controller
                     ?? $line['id']
                     ?? data_get($line, 'product.id');
 
-                $lineQty = (int)($line['quantity'] ?? $line['qty'] ?? data_get($line, 'pivot.quantity', 0));
+                $lineQty = (int) ($line['quantity'] ?? $line['qty'] ?? data_get($line, 'pivot.quantity', 0));
                 if ($lineQty < 0) {
                     $lineQty = 0;
                 }
@@ -202,23 +202,23 @@ class InventoryController extends Controller
                 if ($lineAmount === null) {
                     if (in_array($documentType, ['invoice', 'sales_order'], true)) {
                         // For invoices: (unitPrice * quantity) - (discount * quantity)
-                        $lineDiscount = (float)($line['discount'] ?? 0);
+                        $lineDiscount = (float) ($line['discount'] ?? 0);
                         $lineAmount = ($lineCost * $lineQty) - ($lineDiscount * $lineQty);
                     } else {
                         // For GRN: simple quantity * cost
-                        $lineAmount = $lineQty * (float)$lineCost;
+                        $lineAmount = $lineQty * (float) $lineCost;
                     }
                 }
 
                 // Only add valid line items with product and quantity
                 if ($productId && $lineQty > 0) {
                     $linePayloads[] = [
-                        'product_id' => (int)$productId,
+                        'product_id' => (int) $productId,
                         'quantity' => $lineQty,
-                        'cost' => (float)$lineCost,
-                        'min_price' => (float)$lineMinPrice,
-                        'mrp' => (float)$lineMrp,
-                        'amount' => (float)$lineAmount,
+                        'cost' => (float) $lineCost,
+                        'min_price' => (float) $lineMinPrice,
+                        'mrp' => (float) $lineMrp,
+                        'amount' => (float) $lineAmount,
                         'batch_number' => $this->normalizeBatchNumber($lineBatchNumber),
                         'created_by' => $creatorId,
                     ];
@@ -237,12 +237,12 @@ class InventoryController extends Controller
                     ?? $request->input('batchNumber')
                     ?? $request->input('batch');
                 $linePayloads[] = [
-                    'product_id' => (int)$rootProductId,
+                    'product_id' => (int) $rootProductId,
                     'quantity' => $quantity,
                     'cost' => $unitPrice,
-                    'min_price' => (float)($request->input('min_price') ?? $request->input('minPrice') ?? 0),
-                    'mrp' => (float)($request->input('mrp') ?? 0),
-                    'amount' => (float)($request->input('lineAmount') ?? ($quantity * $unitPrice)),
+                    'min_price' => (float) ($request->input('min_price') ?? $request->input('minPrice') ?? 0),
+                    'mrp' => (float) ($request->input('mrp') ?? 0),
+                    'amount' => (float) ($request->input('lineAmount') ?? ($quantity * $unitPrice)),
                     'batch_number' => $this->normalizeBatchNumber($rootBatchNumber),
                     'created_by' => $creatorId,
                 ];
@@ -463,7 +463,7 @@ class InventoryController extends Controller
 
         // PAYMENT DATA EXTRACTION - Support nested payment object and root level fields
         $paymentInput = $request->input('payment', []);
-        $paymentAmount = isset($paymentInput['amount']) ? (float)$paymentInput['amount'] : $paid_value;
+        $paymentAmount = isset($paymentInput['amount']) ? (float) $paymentInput['amount'] : $paid_value;
 
         // Payment mode and details with multiple key support
         $paymentMode = $paymentInput['mode'] ?? $request->input('mode') ?? null;
@@ -477,34 +477,7 @@ class InventoryController extends Controller
         $transferDate = $paymentInput['transferDate'] ?? $paymentInput['transfer_date'] ?? null;
 
         // DATABASE TRANSACTION - Atomic persistence of inventory, items, and payment
-        $result = DB::transaction(function () use (
-            $documentType,
-            $request,
-            $discountValue,
-            $amount,
-            $paid_value,
-            $referNumber,
-            $referVoucherNumber,
-            $center_id,
-            $supplier_id,
-            $customer_id,
-            $from_center,
-            $to_center,
-            $status,
-            $creatorId,
-            $linePayloads,
-            $stockLines,
-            $stockCenterId,
-            $paymentAmount,
-            $paymentMode,
-            $paymentNote,
-            $bankName,
-            $chequeNo,
-            $chequeDate,
-            $referenceNo,
-            $transferDate,
-            $isRef
-        ) {
+        $result = DB::transaction(function () use ($documentType, $request, $discountValue, $amount, $paid_value, $referNumber, $referVoucherNumber, $center_id, $supplier_id, $customer_id, $from_center, $to_center, $status, $creatorId, $linePayloads, $stockLines, $stockCenterId, $paymentAmount, $paymentMode, $paymentNote, $bankName, $chequeNo, $chequeDate, $referenceNo, $transferDate, $isRef) {
             // VOUCHER NUMBER GENERATION BASED ON DOCUMENT TYPE
             $voucherNumber = $request->input('voucherNumber')
                 ?? $request->input('voucher_number')
@@ -522,13 +495,13 @@ class InventoryController extends Controller
                 'paid_value' => $paid_value,
                 'discountValue' => $discountValue,
                 'referNumber' => $referNumber,
-                    'refervoucherNumber' => $referVoucherNumber,
+                'refervoucherNumber' => $referVoucherNumber,
                 'center_id' => $center_id,
                 'supplier_id' => $supplier_id,
                 'customer_id' => $customer_id,
                 'from_center' => $from_center,
                 'to_center' => $to_center,
-                    'is_ref' => $isRef,
+                'is_ref' => $isRef,
                 'status' => $status,
                 'created_by' => $creatorId,
                 'approved_by' => null,
@@ -544,21 +517,24 @@ class InventoryController extends Controller
 
             // CREATE PAYMENT RECORD IF PAYMENT AMOUNT > 0
             $payment = null;
-            if ($paymentAmount && (float)$paymentAmount > 0) {
+            if ($paymentAmount && (float) $paymentAmount > 0) {
                 // Build comprehensive payment note for invoices
                 $finalNote = $paymentNote;
                 if ($documentType === 'invoice') {
                     $noteDetails = [];
-                    if ($paymentNote) $noteDetails[] = $paymentNote;
-                    if ($referenceNo) $noteDetails[] = "Ref: {$referenceNo}";
-                    if ($transferDate) $noteDetails[] = "Date: {$transferDate}";
+                    if ($paymentNote)
+                        $noteDetails[] = $paymentNote;
+                    if ($referenceNo)
+                        $noteDetails[] = "Ref: {$referenceNo}";
+                    if ($transferDate)
+                        $noteDetails[] = "Date: {$transferDate}";
 
                     $finalNote = !empty($noteDetails) ? implode(' | ', $noteDetails) : $paymentNote;
                 }
 
                 $payment = Payment::create([
                     'inventory_id' => $record->id,
-                    'amount' => (float)$paymentAmount,
+                    'amount' => (float) $paymentAmount,
                     'mode' => $paymentMode,
                     'note' => $finalNote,
                     'bank_name' => $bankName,
@@ -568,15 +544,15 @@ class InventoryController extends Controller
                 ]);
             }
 
-        // UPDATE INVENTORY STOCK BASED ON DOCUMENT TYPE -----------------------------*
+            // UPDATE INVENTORY STOCK BASED ON DOCUMENT TYPE -----------------------------*
             // Note: Sales Orders should not modify `inventory_stock` quantities.
             if (!empty($stockLines) && $stockCenterId) {
                 if ($documentType === 'grn' || $documentType === 'sales_return') {
                     // GRN and Sales Return both add to stock
-                    $this->applyInventoryStockAdjustments($stockLines, (int)$stockCenterId, (int)$creatorId, 'add');
+                    $this->applyInventoryStockAdjustments($stockLines, (int) $stockCenterId, (int) $creatorId, 'add');
                 } elseif ($documentType === 'invoice') {
                     // Only invoices subtract from stock; sales orders do not affect stock levels
-                    $this->applyInventoryStockAdjustments($stockLines, (int)$stockCenterId, (int)$creatorId, 'subtract');
+                    $this->applyInventoryStockAdjustments($stockLines, (int) $stockCenterId, (int) $creatorId, 'subtract');
                 }
             }
 
@@ -713,10 +689,10 @@ class InventoryController extends Controller
 
         $items = $request->input('items', []);
         if (is_array($items) && count($items) > 0) {
-            if ($amount === null || (float)$amount <= 0) {
+            if ($amount === null || (float) $amount <= 0) {
                 $amount = collect($items)->sum(function ($it) {
-                    $q = (float)($it['quantity'] ?? 0);
-                    $u = (float)($it['unitPrice'] ?? 0);
+                    $q = (float) ($it['quantity'] ?? 0);
+                    $u = (float) ($it['unitPrice'] ?? 0);
                     return $q * $u;
                 });
             }
@@ -732,29 +708,41 @@ class InventoryController extends Controller
         }
 
         // FOREIGN KEY FIELDS
-        $center_id   = $request->input('center_id');
+        $center_id = $request->input('center_id');
         $supplier_id = $request->input('supplier_id');
         $customer_id = $request->input('customer_id');
         $from_center = $request->input('from_center');
-        $to_center   = $request->input('to_center');
+        $to_center = $request->input('to_center');
 
         // BUILD UPDATE PAYLOAD - Only include provided fields
         $payload = [];
-        if ($voucherNumber !== null) $payload['voucherNumber'] = (string)$voucherNumber;
-        if ($amount !== null)        $payload['amount'] = (float)$amount;
-        if ($paid_value !== null)    $payload['paid_value'] = (float)$paid_value;
-        if ($discountValue !== null) $payload['discountValue'] = (float)$discountValue;
-        if ($referNumber !== null)   $payload['referNumber'] = $referNumber ? (string)$referNumber : null;
+        if ($voucherNumber !== null)
+            $payload['voucherNumber'] = (string) $voucherNumber;
+        if ($amount !== null)
+            $payload['amount'] = (float) $amount;
+        if ($paid_value !== null)
+            $payload['paid_value'] = (float) $paid_value;
+        if ($discountValue !== null)
+            $payload['discountValue'] = (float) $discountValue;
+        if ($referNumber !== null)
+            $payload['referNumber'] = $referNumber ? (string) $referNumber : null;
         if ($refVoucherNumberProvided) {
-            $payload['refervoucherNumber'] = $refVoucherNumber ? (string)$refVoucherNumber : null;
+            $payload['refervoucherNumber'] = $refVoucherNumber ? (string) $refVoucherNumber : null;
         }
-        if ($status !== null)        $payload['status'] = $status;
-        if ($isRefProvided)          $payload['is_ref'] = (bool)($isRefValue ?? false);
-        if ($request->exists('center_id'))     $payload['center_id'] = $center_id;
-        if ($request->exists('supplier_id'))   $payload['supplier_id'] = $supplier_id;
-        if ($request->exists('customer_id'))   $payload['customer_id'] = $customer_id;
-        if ($request->exists('from_center'))   $payload['from_center'] = $from_center;
-        if ($request->exists('to_center'))     $payload['to_center'] = $to_center;
+        if ($status !== null)
+            $payload['status'] = $status;
+        if ($isRefProvided)
+            $payload['is_ref'] = (bool) ($isRefValue ?? false);
+        if ($request->exists('center_id'))
+            $payload['center_id'] = $center_id;
+        if ($request->exists('supplier_id'))
+            $payload['supplier_id'] = $supplier_id;
+        if ($request->exists('customer_id'))
+            $payload['customer_id'] = $customer_id;
+        if ($request->exists('from_center'))
+            $payload['from_center'] = $from_center;
+        if ($request->exists('to_center'))
+            $payload['to_center'] = $to_center;
 
         // VALIDATION: Ensure at least one field is being updated
         if (empty($payload)) {
@@ -827,7 +815,7 @@ class InventoryController extends Controller
     }
 
 
-       // ======================================================================
+    // ======================================================================
     // NEXT SALES ORDER - PREVIEW NEXT SALES ORDER NUMBER
     // ======================================================================
     /**
@@ -918,15 +906,15 @@ class InventoryController extends Controller
         }
 
         if ($request->filled('center_id')) {
-            $query->where('center_id', (int)$request->input('center_id'));
+            $query->where('center_id', (int) $request->input('center_id'));
         }
 
         if ($request->filled('supplier_id')) {
-            $query->where('supplier_id', (int)$request->input('supplier_id'));
+            $query->where('supplier_id', (int) $request->input('supplier_id'));
         }
 
         if ($request->filled('created_by')) {
-            $query->where('created_by', (int)$request->input('created_by'));
+            $query->where('created_by', (int) $request->input('created_by'));
         }
 
         if ($request->filled('voucher_number')) {
@@ -984,11 +972,11 @@ class InventoryController extends Controller
         }
 
         if ($request->filled('center_id')) {
-            $query->where('center_id', (int)$request->input('center_id'));
+            $query->where('center_id', (int) $request->input('center_id'));
         }
 
         if ($request->filled('customer_id')) {
-            $query->where('customer_id', (int)$request->input('customer_id'));
+            $query->where('customer_id', (int) $request->input('customer_id'));
         }
 
         $records = $query->orderByDesc('id')->get();
@@ -1001,7 +989,8 @@ class InventoryController extends Controller
         foreach ($records as $rec) {
             foreach ($rec->items as $it) {
                 $pid = $it->product_id ?? ($it->product->id ?? null);
-                if ($pid) $productIds[] = (int)$pid;
+                if ($pid)
+                    $productIds[] = (int) $pid;
             }
         }
         $productIds = array_values(array_unique($productIds));
@@ -1018,7 +1007,7 @@ class InventoryController extends Controller
 
             foreach ($stockRows as $row) {
                 $key = $row->center_id . '|' . $row->product_id;
-                $stockMap[$key] = (int)$row->qty;
+                $stockMap[$key] = (int) $row->qty;
             }
 
             // Fetch batch-level rows for each product/center
@@ -1030,10 +1019,11 @@ class InventoryController extends Controller
 
             foreach ($batchRows as $row) {
                 $key = $row->center_id . '|' . $row->product_id;
-                if (!isset($batchMap[$key])) $batchMap[$key] = [];
+                if (!isset($batchMap[$key]))
+                    $batchMap[$key] = [];
                 $batchMap[$key][] = [
                     'batch_number' => $row->batch_number,
-                    'quantity' => (int)$row->qty,
+                    'quantity' => (int) $row->qty,
                 ];
             }
         }
@@ -1044,7 +1034,7 @@ class InventoryController extends Controller
             foreach ($rec->items as $it) {
                 $pid = $it->product_id ?? ($it->product->id ?? null);
                 $key = ($center ? $center : '') . '|' . ($pid ? $pid : '');
-                $it->current_stock = isset($stockMap[$key]) ? (int)$stockMap[$key] : 0;
+                $it->current_stock = isset($stockMap[$key]) ? (int) $stockMap[$key] : 0;
                 $it->batches = $batchMap[$key] ?? [];
             }
         }
@@ -1086,11 +1076,11 @@ class InventoryController extends Controller
         }
 
         if ($request->filled('center_id')) {
-            $query->where('center_id', (int)$request->input('center_id'));
+            $query->where('center_id', (int) $request->input('center_id'));
         }
 
         if ($request->filled('customer_id')) {
-            $query->where('customer_id', (int)$request->input('customer_id'));
+            $query->where('customer_id', (int) $request->input('customer_id'));
         }
 
         $records = $query->orderByDesc('id')->get();
@@ -1102,7 +1092,8 @@ class InventoryController extends Controller
         foreach ($records as $rec) {
             foreach ($rec->items as $it) {
                 $pid = $it->product_id ?? ($it->product->id ?? null);
-                if ($pid) $productIds[] = (int)$pid;
+                if ($pid)
+                    $productIds[] = (int) $pid;
             }
         }
         $productIds = array_values(array_unique($productIds));
@@ -1118,7 +1109,7 @@ class InventoryController extends Controller
 
             foreach ($stockRows as $row) {
                 $key = $row->center_id . '|' . $row->product_id;
-                $stockMap[$key] = (int)$row->qty;
+                $stockMap[$key] = (int) $row->qty;
             }
 
             // Fetch batch-level rows for each product/center
@@ -1130,10 +1121,11 @@ class InventoryController extends Controller
 
             foreach ($batchRows as $row) {
                 $key = $row->center_id . '|' . $row->product_id;
-                if (!isset($batchMap[$key])) $batchMap[$key] = [];
+                if (!isset($batchMap[$key]))
+                    $batchMap[$key] = [];
                 $batchMap[$key][] = [
                     'batch_number' => $row->batch_number,
-                    'quantity' => (int)$row->qty,
+                    'quantity' => (int) $row->qty,
                 ];
             }
         }
@@ -1144,7 +1136,7 @@ class InventoryController extends Controller
             foreach ($rec->items as $it) {
                 $pid = $it->product_id ?? ($it->product->id ?? null);
                 $key = ($center ? $center : '') . '|' . ($pid ? $pid : '');
-                $it->current_stock = isset($stockMap[$key]) ? (int)$stockMap[$key] : 0;
+                $it->current_stock = isset($stockMap[$key]) ? (int) $stockMap[$key] : 0;
                 $it->batches = $batchMap[$key] ?? [];
             }
         }
@@ -1169,7 +1161,7 @@ class InventoryController extends Controller
         ])->where('status', 'pending');
 
         if ($request->filled('center_id')) {
-            $query->where('center_id', (int)$request->input('center_id'));
+            $query->where('center_id', (int) $request->input('center_id'));
         }
 
         if ($request->filled('type')) {
@@ -1411,8 +1403,8 @@ class InventoryController extends Controller
             ?? $request->input('to_center')
             ?? $request->input('toCenter');
 
-        $fromCenter = $fromCenterInput !== null ? (int)$fromCenterInput : null;
-        $toCenter = $toCenterInput !== null ? (int)$toCenterInput : null;
+        $fromCenter = $fromCenterInput !== null ? (int) $fromCenterInput : null;
+        $toCenter = $toCenterInput !== null ? (int) $toCenterInput : null;
 
         if (!$fromCenter || !$toCenter) {
             return response()->json([
@@ -1459,25 +1451,25 @@ class InventoryController extends Controller
                 ?? $line['id']
                 ?? data_get($line, 'product.id');
 
-            $quantity = (int)($line['quantity'] ?? $line['qty'] ?? 0);
+            $quantity = (int) ($line['quantity'] ?? $line['qty'] ?? 0);
 
             if (!$productId || $quantity <= 0) {
                 continue;
             }
 
-            $unitPrice = (float)($line['unitPrice'] ?? $line['cost'] ?? 0);
-            $minPrice = (float)($line['min_price'] ?? $line['minPrice'] ?? 0);
-            $mrp = (float)($line['mrp'] ?? 0);
+            $unitPrice = (float) ($line['unitPrice'] ?? $line['cost'] ?? 0);
+            $minPrice = (float) ($line['min_price'] ?? $line['minPrice'] ?? 0);
+            $mrp = (float) ($line['mrp'] ?? 0);
             $lineAmount = 0;
 
             $linePayloads[] = [
-                'product_id' => (int)$productId,
+                'product_id' => (int) $productId,
                 'quantity' => $quantity,
                 'cost' => $unitPrice,
                 'min_price' => $minPrice,
                 'mrp' => $mrp,
                 'amount' => 0,
-                'created_by' => (int)$creatorId,
+                'created_by' => (int) $creatorId,
             ];
         }
 
@@ -1504,15 +1496,7 @@ class InventoryController extends Controller
             ?? $payload['id']
             ?? null;
 
-        $record = DB::transaction(function () use (
-            $voucherNumberInput,
-            $status,
-            $creatorId,
-            $fromCenter,
-            $toCenter,
-            $linePayloads,
-            $stockLines
-        ) {
+        $record = DB::transaction(function () use ($voucherNumberInput, $status, $creatorId, $fromCenter, $toCenter, $linePayloads, $stockLines) {
             $voucherNumber = $voucherNumberInput;
             if (!$voucherNumber) {
                 $voucherNumber = $this->buildNextVoucherResponse('stock_transfer', true)['next'];
@@ -1540,8 +1524,8 @@ class InventoryController extends Controller
 
             if (!empty($stockLines)) {
                 // subtract from source, add to destination
-                $this->applyInventoryStockAdjustments($stockLines, $fromCenter, (int)$creatorId, 'subtract');
-                $this->applyInventoryStockAdjustments($stockLines, $toCenter, (int)$creatorId, 'add');
+                $this->applyInventoryStockAdjustments($stockLines, $fromCenter, (int) $creatorId, 'subtract');
+                $this->applyInventoryStockAdjustments($stockLines, $toCenter, (int) $creatorId, 'add');
             }
 
             return $inventory;
@@ -1598,7 +1582,7 @@ class InventoryController extends Controller
         }
 
         $latest = $query->orderBy('voucherNumber', 'desc')->value('voucherNumber');
-        $maxNum = $latest ? (int)substr($latest, strlen($prefix)) : 0;
+        $maxNum = $latest ? (int) substr($latest, strlen($prefix)) : 0;
         $nextNum = $maxNum + 1;
 
         return [
@@ -1630,7 +1614,7 @@ class InventoryController extends Controller
                 $batchCollections = $line['batches'] ?? $line['batchEntries'] ?? null;
                 if (is_array($batchCollections) && !empty($batchCollections)) {
                     foreach ($batchCollections as $batchLine) {
-                        $qty = (int)($batchLine['quantity'] ?? $batchLine['qty'] ?? 0);
+                        $qty = (int) ($batchLine['quantity'] ?? $batchLine['qty'] ?? 0);
                         if ($qty <= 0) {
                             continue;
                         }
@@ -1639,7 +1623,7 @@ class InventoryController extends Controller
                             ?? $batchLine['batch']
                             ?? null;
                         $stockLines[] = [
-                            'product_id' => (int)$productId,
+                            'product_id' => (int) $productId,
                             'quantity' => $qty,
                             'batch_number' => $this->normalizeBatchNumber($batchNumber),
                         ];
@@ -1648,7 +1632,7 @@ class InventoryController extends Controller
                 }
 
                 // Handle simple line items
-                $qty = (int)($line['quantity'] ?? $line['qty'] ?? data_get($line, 'pivot.quantity', 0));
+                $qty = (int) ($line['quantity'] ?? $line['qty'] ?? data_get($line, 'pivot.quantity', 0));
                 if ($qty <= 0) {
                     continue;
                 }
@@ -1659,7 +1643,7 @@ class InventoryController extends Controller
                     ?? null;
 
                 $stockLines[] = [
-                    'product_id' => (int)$productId,
+                    'product_id' => (int) $productId,
                     'quantity' => $qty,
                     'batch_number' => $this->normalizeBatchNumber($batchNumber),
                 ];
@@ -1670,8 +1654,8 @@ class InventoryController extends Controller
         if (empty($stockLines) && !empty($linePayloads)) {
             foreach ($linePayloads as $line) {
                 $stockLines[] = [
-                    'product_id' => (int)$line['product_id'],
-                    'quantity' => (int)$line['quantity'],
+                    'product_id' => (int) $line['product_id'],
+                    'quantity' => (int) $line['quantity'],
                     'batch_number' => array_key_exists('batch_number', $line) ? $this->normalizeBatchNumber($line['batch_number']) : null,
                 ];
             }
@@ -1694,8 +1678,8 @@ class InventoryController extends Controller
 
         $aggregated = [];
         foreach ($stockLines as $line) {
-            $productId = (int)($line['product_id'] ?? 0);
-            $qty = (int)($line['quantity'] ?? 0);
+            $productId = (int) ($line['product_id'] ?? 0);
+            $qty = (int) ($line['quantity'] ?? 0);
             $batchNumber = array_key_exists('batch_number', $line)
                 ? $this->normalizeBatchNumber($line['batch_number'])
                 : null;
@@ -1777,7 +1761,7 @@ class InventoryController extends Controller
             return null;
         }
 
-        $trimmed = trim((string)$batchNumber);
+        $trimmed = trim((string) $batchNumber);
         return $trimmed === '' ? null : $trimmed;
     }
 
