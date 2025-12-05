@@ -193,6 +193,10 @@ class InventoryController extends Controller
                 $lineMinPrice = $line['min_price'] ?? $line['minPrice'] ?? data_get($line, 'pivot.min_price', 0);
                 $lineMrp = $line['mrp'] ?? data_get($line, 'pivot.mrp', 0);
                 $lineAmount = $line['amount'] ?? $line['total'] ?? data_get($line, 'pivot.amount');
+                $lineBatchNumber = $line['batch_number']
+                    ?? $line['batchNumber']
+                    ?? $line['batch']
+                    ?? null;
 
                 // CALCULATE LINE AMOUNT BASED ON DOCUMENT TYPE
                 if ($lineAmount === null) {
@@ -215,6 +219,7 @@ class InventoryController extends Controller
                         'min_price' => (float)$lineMinPrice,
                         'mrp' => (float)$lineMrp,
                         'amount' => (float)$lineAmount,
+                        'batch_number' => $this->normalizeBatchNumber($lineBatchNumber),
                         'created_by' => $creatorId,
                     ];
                 }
@@ -228,6 +233,9 @@ class InventoryController extends Controller
         if (empty($linePayloads)) {
             $rootProductId = $request->input('product_id') ?? $request->input('productId') ?? $request->input('product');
             if ($rootProductId && $quantity > 0) {
+                $rootBatchNumber = $request->input('batch_number')
+                    ?? $request->input('batchNumber')
+                    ?? $request->input('batch');
                 $linePayloads[] = [
                     'product_id' => (int)$rootProductId,
                     'quantity' => $quantity,
@@ -235,6 +243,7 @@ class InventoryController extends Controller
                     'min_price' => (float)($request->input('min_price') ?? $request->input('minPrice') ?? 0),
                     'mrp' => (float)($request->input('mrp') ?? 0),
                     'amount' => (float)($request->input('lineAmount') ?? ($quantity * $unitPrice)),
+                    'batch_number' => $this->normalizeBatchNumber($rootBatchNumber),
                     'created_by' => $creatorId,
                 ];
             }
@@ -595,6 +604,7 @@ class InventoryController extends Controller
             'invoice' => 'Invoice saved successfully',
             'sales_order' => 'Sales order saved successfully',
             'sales_return' => 'Sales return saved successfully',
+            'purchase_order' => 'Purchase order saved successfully',
         ];
         $message = $messageMap[$documentType] ?? 'Inventory saved successfully';
 
@@ -873,6 +883,66 @@ class InventoryController extends Controller
     {
         return response()->json([
             'data' => $this->buildNextVoucherResponse('purchase_order')
+        ], 200);
+    }
+
+
+    // ======================================================================
+    // LIST PURCHASE ORDERS - GET ALL PURCHASE ORDERS
+    // ======================================================================
+    /**
+     * GET /api/purchaseOrder
+     * Return all purchase order inventory records with related line items
+     */
+    public function listPurchaseOrders(Request $request)
+    {
+        $allowedStatuses = ['pending', 'reject', 'completed'];
+
+        $query = Inventory::with([
+            'creator:id,name',
+            'approver:id,name',
+            'supplier',
+            'center:id,name',
+            'items.product',
+        ])->where('voucherNumber', 'like', 'PO-%');
+
+        $statusFilter = $request->input('status');
+        if ($statusFilter !== null) {
+            $normalizedStatus = strtolower(trim($statusFilter));
+            if (!in_array($normalizedStatus, $allowedStatuses, true)) {
+                return response()->json([
+                    'message' => 'Invalid status filter. Allowed: ' . implode(', ', $allowedStatuses) . '.',
+                ], 422);
+            }
+            $query->where('status', $normalizedStatus);
+        }
+
+        if ($request->filled('center_id')) {
+            $query->where('center_id', (int)$request->input('center_id'));
+        }
+
+        if ($request->filled('supplier_id')) {
+            $query->where('supplier_id', (int)$request->input('supplier_id'));
+        }
+
+        if ($request->filled('created_by')) {
+            $query->where('created_by', (int)$request->input('created_by'));
+        }
+
+        if ($request->filled('voucher_number')) {
+            $voucherNumber = $request->input('voucher_number');
+            $query->where('voucherNumber', 'like', '%' . $voucherNumber . '%');
+        }
+
+        if ($request->filled('refer_number')) {
+            $referNumber = $request->input('refer_number');
+            $query->where('referNumber', 'like', '%' . $referNumber . '%');
+        }
+
+        $records = $query->orderByDesc('id')->get();
+
+        return response()->json([
+            'data' => $records,
         ], 200);
     }
 
@@ -1596,7 +1666,7 @@ class InventoryController extends Controller
                 $stockLines[] = [
                     'product_id' => (int)$line['product_id'],
                     'quantity' => (int)$line['quantity'],
-                    'batch_number' => null,
+                    'batch_number' => array_key_exists('batch_number', $line) ? $this->normalizeBatchNumber($line['batch_number']) : null,
                 ];
             }
         }
@@ -1604,7 +1674,7 @@ class InventoryController extends Controller
         return $stockLines;
     }
 
-    
+
     /**
      * Merge incoming quantities into inventory_stocks per product/batch/center
      */

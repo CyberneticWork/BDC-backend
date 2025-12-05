@@ -394,6 +394,7 @@ Route::post('/salesreturn', [InventoryController::class, 'storeSalesReturn']);
 Route::post('/stock-transfer', [InventoryController::class, 'storeStockTransfer']);
 Route::get('/purchaseOrder/next', [InventoryController::class, 'nextPurchaseOrder']); //for next Purchase Order number
 Route::post('/purchaseOrder', [InventoryController::class, 'storePurchaseOrder']);
+Route::get('/purchaseOrder', [InventoryController::class, 'listPurchaseOrders']);//for get all purchase orders
 
 //for inventory Products
 Route::apiResource('inventory-products', InventoryProductController::class);

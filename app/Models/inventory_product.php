@@ -26,6 +26,7 @@ class inventory_product extends Model
         'amount',
         'product_id',
         'inventory_id',
+        'batch_number',
         'created_by',
     ];
 
@@ -42,6 +43,7 @@ class inventory_product extends Model
         'quantity' => 'integer',
         'product_id' => 'integer',
         'inventory_id' => 'integer',
+        'batch_number' => 'string',
         'created_by' => 'integer',
         'deleted_at' => 'datetime',
     ];
