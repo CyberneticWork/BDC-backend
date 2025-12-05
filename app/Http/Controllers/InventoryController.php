@@ -941,6 +941,12 @@ class InventoryController extends Controller
 
         $records = $query->orderByDesc('id')->get();
 
+        foreach ($records as $record) {
+            foreach ($record->items as $item) {
+                $item->setAttribute('batchNumber', $item->batch_number);
+            }
+        }
+
         return response()->json([
             'data' => $records,
         ], 200);
