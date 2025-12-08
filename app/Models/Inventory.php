@@ -27,6 +27,7 @@ class Inventory extends Model
         'referNumber',
         'refervoucherNumber',
         'is_ref',
+        'is_confirmed',
         'status',
         'center_id',
         'supplier_id',

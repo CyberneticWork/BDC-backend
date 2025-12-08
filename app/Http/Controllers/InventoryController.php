@@ -509,6 +509,32 @@ class InventoryController extends Controller
 
             $record = Inventory::create($recordData);
 
+
+            // mark that referenced voucher's `is_ref` as true so the system for refered
+            // knows it has been referenced.
+            if ($documentType === 'invoice') {
+                if ($referNumber) {
+                    Inventory::where('voucherNumber', $referNumber)->update(['is_ref' => true]);
+                }
+                if ($referVoucherNumber) {
+                    Inventory::where('voucherNumber', $referVoucherNumber)->update(['is_ref' => true]);
+                }
+            } else if ($documentType === 'sales_return') {
+                if ($referNumber) {
+                    Inventory::where('voucherNumber', $referNumber)->update(['is_ref' => true]);
+                }
+                if ($referVoucherNumber) {
+                    Inventory::where('voucherNumber', $referVoucherNumber)->update(['is_ref' => true]);
+                }
+            } else if ($documentType === 'grn') {
+                if ($referNumber) {
+                    Inventory::where('voucherNumber', $referNumber)->update(['is_ref' => true]);
+                }
+                if ($referVoucherNumber) {
+                    Inventory::where('voucherNumber', $referVoucherNumber)->update(['is_ref' => true]);
+                }
+            }
+
             // CREATE LINE ITEMS
             $createdItems = [];
             if (!empty($linePayloads)) {
@@ -892,7 +918,11 @@ class InventoryController extends Controller
             'supplier',
             'center:id,name',
             'items.product',
-        ])->where('voucherNumber', 'like', 'PO-%');
+        ])->where('voucherNumber', 'like', 'PO-%')
+            ->where(function ($q) {
+                // Exclude reference/linked records
+                $q->whereNull('is_ref')->orWhere('is_ref', false);
+            });
 
         $statusFilter = $request->input('status');
         if ($statusFilter !== null) {
