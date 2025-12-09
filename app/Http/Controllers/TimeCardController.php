@@ -166,7 +166,7 @@ class TimeCardController extends Controller
 
                     if ($outTime->lt($shiftEnd)) {
                         $entryType = 0;
-                        $status = 'Leave';
+                        $status = 'Early OUT';
                         $pairedInCard = null;
                     } else {
                         $entryType = 2;
@@ -304,14 +304,14 @@ class TimeCardController extends Controller
             $currentDate = Carbon::parse($request->date);
 
             if ($lastInDate->eq($currentDate)) {
-                // Same day: normal OUT/Leave logic
+                // Same day: normal OUT/Early OUT logic
                 $inTime = Carbon::parse($lastCard->time);
                 $outTime = $inputTime;
                 $working_hours = round($inTime->floatDiffInHours($outTime), 2);
 
                 if ($outTime->lt($shiftEnd)) {
-                    $entryType = 0; // Leave
-                    $status = 'Leave';
+                    $entryType = 0; // Early OUT
+                    $status = 'Early OUT';
                     $pairedInCard = null;
                 } else {
                     $entryType = 2; // OUT
@@ -533,7 +533,7 @@ class TimeCardController extends Controller
             'date' => 'required|date',
             'time' => 'required',
             'entry' => 'required|in:0,1,2',
-            'status' => 'required|in:IN,OUT,Absent,Leave',
+            'status' => 'required|in:IN,OUT,Absent,Early OUT',
         ]);
 
         $timeCard = time_card::findOrFail($id);
@@ -648,8 +648,8 @@ class TimeCardController extends Controller
                     $working_hours = round($inTime->floatDiffInHours($outTime), 2);
 
                     if ($outTime->lt($shiftEnd)) {
-                        $entryType = 0; // Leave
-                        $status = 'Leave';
+                        $entryType = 0; // Early OUT
+                        $status = 'Early OUT';
                         $pairedInCard = null;
                     } else {
                         $entryType = 2; // OUT
@@ -1103,7 +1103,7 @@ class TimeCardController extends Controller
                 }
 
                 // Attendance logic
-                if (in_array(strtoupper($status), ['IN', 'OUT', 'LEAVE'])) {
+                if (in_array(strtoupper($status), ['IN', 'OUT', 'EARLY OUT'])) {
                     // Use store logic for attendance
                     $entryType = (int)$entry;
                     $working_hours = null;
@@ -1182,8 +1182,8 @@ class TimeCardController extends Controller
                                 $working_hours = round($inTime->floatDiffInHours($outTime), 2);
 
                                 if ($outTime->lt(Carbon::parse($shift->end_time))) {
-                                    $entryType = 0; // Leave
-                                    $statusUpper = 'Leave';
+                                    $entryType = 0; // Early OUT
+                                    $statusUpper = 'Early OUT';
                                 } else {
                                     $entryType = 2; // OUT
                                     $statusUpper = 'OUT';

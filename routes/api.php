@@ -41,6 +41,7 @@ use App\Http\Controllers\DiscountLevelController;
 use App\Http\Controllers\ProductTypeController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\CentersController;
+use App\Http\Controllers\SingleEntryReportController;
 
 
 Route::get('/user', function (Request $request) {
@@ -387,3 +388,6 @@ Route::post('/shift-overtime-rates/{shiftId}/calculate', [ShiftOvertimeRateContr
 
 // Then the standard resource routes
 Route::apiResource('shift-overtime-rates', ShiftOvertimeRateController::class);
+
+// Reports: Single Entry (Time Cards)
+Route::get('/reports/time-cards/single-entry', [SingleEntryReportController::class, 'index']);
