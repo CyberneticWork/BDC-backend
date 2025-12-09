@@ -902,6 +902,21 @@ class InventoryController extends Controller
 
 
     // ======================================================================
+    // NEXT PURCHASE RETURN - PREVIEW NEXT PURCHASE RETURN NUMBER
+    // ======================================================================
+    /**
+     * GET /api/purchaseReturn/next
+     * Preview next Purchase Return number without creating a record
+     */
+    public function nextPurchaseReturn()
+    {
+        return response()->json([
+            'data' => $this->buildNextVoucherResponse('purchase_return')
+        ], 200);
+    }
+
+
+    // ======================================================================
     // LIST PURCHASE ORDERS - GET ALL PURCHASE ORDERS
     // ======================================================================
     /**
@@ -1238,6 +1253,111 @@ class InventoryController extends Controller
             'data' => $records,
         ], 200);
     }
+
+
+     // ======================================================================
+    // LIST GRN - GET ALL GRNs
+    // ======================================================================
+    /**
+     * GET /api/grns
+     * Return all GRN inventory records with related data
+     */
+
+    public function listGrns(Request $request)
+    {
+        $allowedStatuses = ['pending', 'reject', 'completed'];
+
+        $query = Inventory::with([
+            'creator:id,name',
+            'approver:id,name',
+            'supplier:id,supplier_name',
+            'items.product',
+            'latestPayment',
+        ])->where('voucherNumber', 'like', 'GRN-%');
+
+        $statusFilter = $request->input('status');
+        if ($statusFilter !== null) {
+            $normalizedStatus = strtolower(trim($statusFilter));
+            if (!in_array($normalizedStatus, $allowedStatuses, true)) {
+                return response()->json([
+                    'message' => 'Invalid status filter. Allowed: ' . implode(', ', $allowedStatuses) . '.',
+                ], 422);
+            }
+            $query->where('status', $normalizedStatus);
+        }
+
+        if ($request->filled('center_id')) {
+            $query->where('center_id', (int) $request->input('center_id'));
+        }
+
+        if ($request->filled('supplier_id')) {
+            $query->where('supplier_id', (int) $request->input('supplier_id'));
+        }
+
+        $records = $query->orderByDesc('id')->get();
+
+        // Mirror invoice response: attach current stock and batch breakdown per item
+        $centerIds = $records->pluck('center_id')->filter()->unique()->values()->all();
+
+        $productIds = [];
+        foreach ($records as $rec) {
+            foreach ($rec->items as $it) {
+                $pid = $it->product_id ?? ($it->product->id ?? null);
+                if ($pid) {
+                    $productIds[] = (int) $pid;
+                }
+            }
+        }
+        $productIds = array_values(array_unique($productIds));
+
+        $stockMap = [];
+        $batchMap = [];
+        if (!empty($centerIds) && !empty($productIds)) {
+            $stockRows = inventory_stock::selectRaw('product_id, center_id, SUM(quantity) as qty')
+                ->whereIn('center_id', $centerIds)
+                ->whereIn('product_id', $productIds)
+                ->groupBy('product_id', 'center_id')
+                ->get();
+
+            foreach ($stockRows as $row) {
+                $key = $row->center_id . '|' . $row->product_id;
+                $stockMap[$key] = (int) $row->qty;
+            }
+
+            $batchRows = inventory_stock::selectRaw('product_id, center_id, batch_number, SUM(quantity) as qty')
+                ->whereIn('center_id', $centerIds)
+                ->whereIn('product_id', $productIds)
+                ->groupBy('product_id', 'center_id', 'batch_number')
+                ->get();
+
+            foreach ($batchRows as $row) {
+                $key = $row->center_id . '|' . $row->product_id;
+                if (!isset($batchMap[$key])) {
+                    $batchMap[$key] = [];
+                }
+                $batchMap[$key][] = [
+                    'batch_number' => $row->batch_number,
+                    'quantity' => (int) $row->qty,
+                ];
+            }
+        }
+
+        foreach ($records as $rec) {
+            $center = $rec->center_id;
+            foreach ($rec->items as $it) {
+                $pid = $it->product_id ?? ($it->product->id ?? null);
+                $key = ($center ? $center : '') . '|' . ($pid ? $pid : '');
+                $it->current_stock = isset($stockMap[$key]) ? (int) $stockMap[$key] : 0;
+                $it->batches = $batchMap[$key] ?? [];
+            }
+        }
+
+        return response()->json([
+            'data' => $records,
+        ], 200);
+    }
+
+
 
     /**
      * GET /api/inventory-pending
@@ -1660,6 +1780,7 @@ class InventoryController extends Controller
             'sales_return' => "SRET-{$year}-",
             'stock_transfer' => "ST-{$year}-",
             'purchase_order' => "PO-{$year}-",
+            'purchase_return' => "PRT-{$year}-",
             default => "GRN-{$year}-",
         };
     }

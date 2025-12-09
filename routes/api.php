@@ -382,6 +382,7 @@ Route::apiResource('inventories', InventoryController::class);
 Route::get('/inventory-pending', [InventoryController::class, 'getPending']); // return all inventory records with status 'pending'
 Route::post('/grn', [InventoryController::class, 'store']);
 Route::get('/grn/next', [InventoryController::class, 'nextGrn']);  //for next GRN number
+Route::get('/grn', [InventoryController::class, 'listGrns']); //for get all GRNs
 Route::get('/invoices/next', [InventoryController::class, 'nextInv']); //for next Invoice number
 Route::get('/stock-transfer/next', [InventoryController::class, 'nextStockTransfer']); // next Stock Transfer number
 Route::get('/salesOrder', [InventoryController::class, 'listSalesOrders']); //for get all salesOrder
@@ -396,6 +397,7 @@ Route::post('/stock-transfer', [InventoryController::class, 'storeStockTransfer'
 Route::get('/purchaseOrder/next', [InventoryController::class, 'nextPurchaseOrder']); //for next Purchase Order number
 Route::post('/purchaseOrder', [InventoryController::class, 'storePurchaseOrder']);
 Route::get('/purchaseOrder', [InventoryController::class, 'listPurchaseOrders']);//for get all purchase orders
+Route::get('/purchaseReturn/next', [InventoryController::class, 'nextPurchaseReturn']); //for next Purchase Return number
 
 //for inventory Products
 Route::apiResource('inventory-products', InventoryProductController::class);
