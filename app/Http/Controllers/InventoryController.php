@@ -7,6 +7,7 @@ use App\Models\Payment;
 use App\Models\inventory_stock;
 use App\Models\product;
 use App\Models\Customer;
+use App\Models\Supplier;
 use App\Models\centers;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -51,6 +52,8 @@ class InventoryController extends Controller
             $documentType = 'sales_order';
         } elseif (str_contains($request->url(), 'salesreturn') || str_contains($request->url(), 'salesReturn') || str_contains($request->url(), 'sales-return')) {
             $documentType = 'sales_return';
+        } elseif (str_contains($request->url(), 'purchaseReturn') || str_contains($request->url(), 'purchase-return') || str_contains($request->url(), 'purchasereturn')) {
+            $documentType = 'purchase_return';
         } else if (str_contains($request->url(), 'invoices')) {
             $documentType = 'invoice';
         } else if (str_contains($request->url(), 'grn')) {
@@ -415,6 +418,49 @@ class InventoryController extends Controller
             $customer_id = null;
             $from_center = null;
             $to_center = null;
+        } elseif ($documentType === 'purchase_return') {
+            // Purchase Return: require supplier + center (accept id or name)
+            $center_id = $request->input('center_id', $request->input('centerId'));
+            if (!$center_id && $request->filled('center')) {
+                $centerName = $request->input('center');
+                $centerModel = centers::where('name', $centerName)->first();
+                if ($centerModel) {
+                    $center_id = $centerModel->id;
+                } else {
+                    return response()->json([
+                        'message' => "Center '{$centerName}' not found."
+                    ], 422);
+                }
+            }
+
+            $supplier_id = $request->input('supplier_id', $request->input('supplierId'));
+            if (!$supplier_id && $request->filled('supplier')) {
+                $supplierName = $request->input('supplier');
+                $supplier = Supplier::where('supplier_name', $supplierName)->first();
+                if ($supplier) {
+                    $supplier_id = $supplier->id;
+                } else {
+                    return response()->json([
+                        'message' => "Supplier '{$supplierName}' not found."
+                    ], 422);
+                }
+            }
+
+            if (!$center_id) {
+                return response()->json([
+                    'message' => 'Center is required for purchase returns.'
+                ], 422);
+            }
+
+            if (!$supplier_id) {
+                return response()->json([
+                    'message' => 'Supplier is required for purchase returns.'
+                ], 422);
+            }
+
+            $customer_id = null;
+            $from_center = null;
+            $to_center = null;
         } else {
             // GRN SPECIFIC: Handle supplier and center relationships
             $customer_id = $request->input('customer_id', $request->input('customerId'));
@@ -526,6 +572,13 @@ class InventoryController extends Controller
                 if ($referVoucherNumber) {
                     Inventory::where('voucherNumber', $referVoucherNumber)->update(['is_ref' => true]);
                 }
+            } else if ($documentType === 'purchase_return') {
+                if ($referNumber) {
+                    Inventory::where('voucherNumber', $referNumber)->update(['is_ref' => true]);
+                }
+                if ($referVoucherNumber) {
+                    Inventory::where('voucherNumber', $referVoucherNumber)->update(['is_ref' => true]);
+                }
             } else if ($documentType === 'grn') {
                 if ($referNumber) {
                     Inventory::where('voucherNumber', $referNumber)->update(['is_ref' => true]);
@@ -576,8 +629,8 @@ class InventoryController extends Controller
                 if ($documentType === 'grn' || $documentType === 'sales_return') {
                     // GRN and Sales Return both add to stock
                     $this->applyInventoryStockAdjustments($stockLines, (int) $stockCenterId, (int) $creatorId, 'add');
-                } elseif ($documentType === 'invoice') {
-                    // Only invoices subtract from stock; sales orders do not affect stock levels
+                } elseif ($documentType === 'invoice' || $documentType === 'purchase_return') {
+                    // Invoices and Purchase Returns subtract from stock; sales orders do not affect stock levels
                     $this->applyInventoryStockAdjustments($stockLines, (int) $stockCenterId, (int) $creatorId, 'subtract');
                 }
             }
@@ -599,6 +652,10 @@ class InventoryController extends Controller
         if (in_array($documentType, ['invoice', 'sales_order'], true)) {
             $relationships[] = 'customer';
         }
+        if (in_array($documentType, ['purchase_order', 'purchase_return', 'grn'], true)) {
+            $relationships[] = 'supplier';
+            $relationships[] = 'center:id,name';
+        }
 
         // SUCCESS RESPONSE
         $messageMap = [
@@ -607,6 +664,7 @@ class InventoryController extends Controller
             'sales_order' => 'Sales order saved successfully',
             'sales_return' => 'Sales return saved successfully',
             'purchase_order' => 'Purchase order saved successfully',
+            'purchase_return' => 'Purchase return saved successfully',
         ];
         $message = $messageMap[$documentType] ?? 'Inventory saved successfully';
 
@@ -1505,6 +1563,183 @@ class InventoryController extends Controller
         if (!empty($normalizations)) {
             $request->merge($normalizations);
         }
+
+        return $this->store($request);
+    }
+
+
+    // ======================================================================
+    // STORE PURCHASE RETURN - NORMALIZER + NAME RESOLUTION
+    // ======================================================================
+    /**
+     * POST /api/purchaseReturn
+     * Normalize purchase return payload (from GRN reference) and delegate to store()
+     */
+    public function storePurchaseReturn(Request $request)
+    {
+        $normalizations = [
+            'type' => 'purchase_return',
+        ];
+
+        // Accept id/purchase return code as voucherNumber
+        if (!$request->has('voucherNumber') && !$request->has('voucher_number')) {
+            $voucher = $request->input('id') ?? $request->input('purchaseReturnId');
+            if ($voucher) {
+                $normalizations['voucherNumber'] = $voucher;
+            }
+        }
+
+        // Normalize reference number
+        if (!$request->has('referNumber') && $request->has('refNumber')) {
+            $normalizations['referNumber'] = $request->input('refNumber');
+        }
+
+        if (!$request->has('created_by') && $request->has('createdBy')) {
+            $normalizations['created_by'] = $request->input('createdBy');
+        }
+
+        // Build single-line payload when frontend sends flattened fields
+        $rawItems = $request->input('items');
+        if (!is_array($rawItems)) {
+            $rawItems = [];
+        }
+
+        if (empty($rawItems) && ($request->filled('productName') || $request->filled('product_id') || $request->filled('productId'))) {
+            $rawItems = [[
+                'productName' => $request->input('productName'),
+                'product_id' => $request->input('product_id', $request->input('productId')),
+                'quantity' => $request->input('quantity', $request->input('qty')),
+                'unitPrice' => $request->input('unitPrice', $request->input('cost')),
+                'mrp' => $request->input('mrp', 0),
+                'min_price' => $request->input('min_price', $request->input('minPrice', 0)),
+                'amount' => $request->input('amount'),
+                'batch_number' => $request->input('batch_number', $request->input('batchNumber', $request->input('batch'))),
+            ]];
+        }
+
+        if (!empty($normalizations)) {
+            $request->merge($normalizations);
+        }
+
+        $referNumber = $request->input('referNumber', $request->input('refNumber'));
+        if (!$referNumber) {
+            return response()->json([
+                'message' => 'Refer GRN number (referNumber/refNumber) is required for purchase returns.',
+            ], 422);
+        }
+
+        $referRecord = Inventory::where('voucherNumber', $referNumber)->first();
+        if (!$referRecord) {
+            return response()->json([
+                'message' => "Referenced GRN '{$referNumber}' not found.",
+            ], 422);
+        }
+
+        // Resolve center (prefer payload, then by name, then referenced GRN)
+        $centerId = $request->input('center_id', $request->input('centerId'));
+        if (!$centerId && $request->filled('center')) {
+            $centerName = $request->input('center');
+            $centerModel = centers::where('name', $centerName)->first();
+            if ($centerModel) {
+                $centerId = $centerModel->id;
+            } else {
+                return response()->json([
+                    'message' => "Center '{$centerName}' not found.",
+                ], 422);
+            }
+        }
+        if (!$centerId) {
+            $centerId = $referRecord->center_id;
+        }
+
+        // Resolve supplier (prefer payload, then by name, then referenced GRN)
+        $supplierId = $request->input('supplier_id', $request->input('supplierId'));
+        if (!$supplierId && $request->filled('supplier')) {
+            $supplierName = $request->input('supplier');
+            $supplier = Supplier::where('supplier_name', $supplierName)->first();
+            if ($supplier) {
+                $supplierId = $supplier->id;
+            } else {
+                return response()->json([
+                    'message' => "Supplier '{$supplierName}' not found.",
+                ], 422);
+            }
+        }
+        if (!$supplierId) {
+            $supplierId = $referRecord->supplier_id;
+        }
+
+        if (!$centerId) {
+            return response()->json([
+                'message' => 'Center is required for purchase returns.',
+            ], 422);
+        }
+
+        if (!$supplierId) {
+            return response()->json([
+                'message' => 'Supplier is required for purchase returns.',
+            ], 422);
+        }
+
+        // Resolve products by name when needed
+        $resolvedItems = [];
+        $missingProducts = [];
+        foreach ($rawItems as $line) {
+            if (!is_array($line)) {
+                continue;
+            }
+
+            $productId = $line['product_id']
+                ?? $line['productId']
+                ?? data_get($line, 'product.id');
+
+            $productName = $line['productName'] ?? $line['name'] ?? null;
+            if (!$productId && $productName) {
+                $productId = product::where('name', $productName)->value('id');
+            }
+
+            if (!$productId) {
+                $missingProducts[] = $productName ?? 'unknown';
+                continue;
+            }
+
+            $qty = (int) ($line['quantity'] ?? $line['qty'] ?? 0);
+            $unitPrice = (float) ($line['unitPrice'] ?? $line['cost'] ?? 0);
+            $minPrice = (float) ($line['min_price'] ?? $line['minPrice'] ?? 0);
+            $mrp = (float) ($line['mrp'] ?? 0);
+            $amount = $line['amount'] ?? $line['total'] ?? ($qty * $unitPrice);
+
+            $resolvedItems[] = [
+                'product_id' => (int) $productId,
+                'quantity' => $qty,
+                'unitPrice' => $unitPrice,
+                'cost' => $unitPrice,
+                'min_price' => $minPrice,
+                'mrp' => $mrp,
+                'amount' => (float) $amount,
+                'batch_number' => $line['batch_number'] ?? $line['batchNumber'] ?? $line['batch'] ?? null,
+            ];
+        }
+
+        if (!empty($missingProducts)) {
+            return response()->json([
+                'message' => 'One or more products were not found for purchase return.',
+                'missing_products' => array_values($missingProducts),
+            ], 422);
+        }
+
+        if (empty($resolvedItems)) {
+            return response()->json([
+                'message' => 'No valid items provided for purchase return.',
+            ], 422);
+        }
+
+        $request->merge([
+            'items' => $resolvedItems,
+            'center_id' => $centerId,
+            'supplier_id' => $supplierId,
+            'referNumber' => $referNumber,
+        ]);
 
         return $this->store($request);
     }
