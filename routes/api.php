@@ -380,6 +380,7 @@ Route::middleware('auth:sanctum')->group(function () {
 // Inventory routes
 Route::apiResource('inventories', InventoryController::class);
 Route::get('/inventory-pending', [InventoryController::class, 'getPending']); // return all inventory records with status 'pending'
+Route::post('/inventory-approved', [InventoryController::class, 'getApproved']); // return all inventory records with status 'approved'
 Route::post('/grn', [InventoryController::class, 'store']);
 Route::get('/grn/next', [InventoryController::class, 'nextGrn']);  //for next GRN number
 Route::get('/grn', [InventoryController::class, 'listGrns']); //for get all GRNs

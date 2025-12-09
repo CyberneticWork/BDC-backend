@@ -9,6 +9,7 @@ use App\Models\product;
 use App\Models\Customer;
 use App\Models\Supplier;
 use App\Models\centers;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -507,6 +508,18 @@ class InventoryController extends Controller
             $status = $normalizedStatus;
         }
 
+        $confirmedInput = null;
+        if ($request->exists('is_confirmed')) {
+            $confirmedInput = filter_var($request->input('is_confirmed'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+        } elseif ($request->exists('isConfirmed')) {
+            $confirmedInput = filter_var($request->input('isConfirmed'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+        }
+        $isConfirmed = (bool) ($confirmedInput ?? false);
+
+        $shouldApplySalesReturnStockImmediately = $documentType === 'sales_return'
+            && $status === 'completed'
+            && $isConfirmed;
+
         // PAYMENT DATA EXTRACTION - Support nested payment object and root level fields
         $paymentInput = $request->input('payment', []);
         $paymentAmount = isset($paymentInput['amount']) ? (float) $paymentInput['amount'] : $paid_value;
@@ -523,7 +536,7 @@ class InventoryController extends Controller
         $transferDate = $paymentInput['transferDate'] ?? $paymentInput['transfer_date'] ?? null;
 
         // DATABASE TRANSACTION - Atomic persistence of inventory, items, and payment
-        $result = DB::transaction(function () use ($documentType, $request, $discountValue, $amount, $paid_value, $referNumber, $referVoucherNumber, $center_id, $supplier_id, $customer_id, $from_center, $to_center, $status, $creatorId, $linePayloads, $stockLines, $stockCenterId, $paymentAmount, $paymentMode, $paymentNote, $bankName, $chequeNo, $chequeDate, $referenceNo, $transferDate, $isRef) {
+        $result = DB::transaction(function () use ($documentType, $request, $discountValue, $amount, $paid_value, $referNumber, $referVoucherNumber, $center_id, $supplier_id, $customer_id, $from_center, $to_center, $status, $creatorId, $linePayloads, $stockLines, $stockCenterId, $paymentAmount, $paymentMode, $paymentNote, $bankName, $chequeNo, $chequeDate, $referenceNo, $transferDate, $isRef, $isConfirmed, $shouldApplySalesReturnStockImmediately) {
             // VOUCHER NUMBER GENERATION BASED ON DOCUMENT TYPE
             $voucherNumber = $request->input('voucherNumber')
                 ?? $request->input('voucher_number')
@@ -548,6 +561,7 @@ class InventoryController extends Controller
                 'from_center' => $from_center,
                 'to_center' => $to_center,
                 'is_ref' => $isRef,
+                'is_confirmed' => $isConfirmed,
                 'status' => $status,
                 'created_by' => $creatorId,
                 'approved_by' => null,
@@ -626,7 +640,7 @@ class InventoryController extends Controller
             // UPDATE INVENTORY STOCK BASED ON DOCUMENT TYPE -----------------------------*
             // Note: Sales Orders should not modify `inventory_stock` quantities.
             if (!empty($stockLines) && $stockCenterId) {
-                if ($documentType === 'grn' || $documentType === 'sales_return') {
+                if ($documentType === 'grn' || ($documentType === 'sales_return' && $shouldApplySalesReturnStockImmediately)) {
                     // GRN and Sales Return both add to stock
                     $this->applyInventoryStockAdjustments($stockLines, (int) $stockCenterId, (int) $creatorId, 'add');
                 } elseif ($documentType === 'invoice' || $documentType === 'purchase_return') {
@@ -721,6 +735,9 @@ class InventoryController extends Controller
             ], 404);
         }
 
+        $oldStatus = $record->status;
+        $oldIsConfirmed = (bool) $record->is_confirmed;
+
 
         $voucherNumber = $request->input('voucherNumber')
             ?? $request->input('grnNumber')
@@ -751,6 +768,16 @@ class InventoryController extends Controller
             if ($request->exists($key)) {
                 $isRefProvided = true;
                 $isRefValue = filter_var($request->input($key), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+                break;
+            }
+        }
+
+        $isConfirmedProvided = false;
+        $isConfirmedValue = null;
+        foreach (['is_confirmed', 'isConfirmed'] as $key) {
+            if ($request->exists($key)) {
+                $isConfirmedProvided = true;
+                $isConfirmedValue = filter_var($request->input($key), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
                 break;
             }
         }
@@ -817,6 +844,8 @@ class InventoryController extends Controller
             $payload['status'] = $status;
         if ($isRefProvided)
             $payload['is_ref'] = (bool) ($isRefValue ?? false);
+        if ($isConfirmedProvided)
+            $payload['is_confirmed'] = (bool) ($isConfirmedValue ?? false);
         if ($request->exists('center_id'))
             $payload['center_id'] = $center_id;
         if ($request->exists('supplier_id'))
@@ -828,6 +857,19 @@ class InventoryController extends Controller
         if ($request->exists('to_center'))
             $payload['to_center'] = $to_center;
 
+        $finalStatus = $status ?? $oldStatus;
+        $finalIsConfirmed = $isConfirmedProvided ? (bool) ($isConfirmedValue ?? false) : $oldIsConfirmed;
+
+        $existingVoucherNumber = $record->voucherNumber ?? '';
+        $isSalesReturnRecord = $existingVoucherNumber !== '' && str_starts_with($existingVoucherNumber, 'SRET-');
+        $shouldAdjustSalesReturnStockOnUpdate = $isSalesReturnRecord
+            && $finalStatus === 'completed'
+            && $finalIsConfirmed
+            && !($oldStatus === 'completed' && $oldIsConfirmed);
+
+        $targetCenterId = $request->exists('center_id') ? $center_id : $record->center_id;
+        $stockAdjustmentUserId = optional($request->user())->id ?? $record->created_by ?? 0;
+
         // VALIDATION: Ensure at least one field is being updated
         if (empty($payload)) {
             return response()->json([
@@ -835,15 +877,37 @@ class InventoryController extends Controller
             ], 422);
         }
 
-        // PERFORM UPDATE
-        $record->update($payload);
+        $updatedRecord = DB::transaction(function () use ($record, $payload, $shouldAdjustSalesReturnStockOnUpdate, $targetCenterId, $stockAdjustmentUserId) {
+            $record->update($payload);
 
-        // LOAD FRESH DATA WITH RELATIONSHIPS
-        $record->load(['creator:id,name', 'approver:id,name']);
+            if ($shouldAdjustSalesReturnStockOnUpdate && $targetCenterId) {
+                $record->load('items');
+                $stockLinesForAdjustment = $record->items->map(function ($item) {
+                    return [
+                        'product_id' => (int) $item->product_id,
+                        'quantity' => (int) $item->quantity,
+                        'batch_number' => $item->batch_number,
+                    ];
+                })->filter(function ($line) {
+                    return $line['quantity'] > 0;
+                })->values()->all();
+
+                if (!empty($stockLinesForAdjustment)) {
+                    $this->applyInventoryStockAdjustments(
+                        $stockLinesForAdjustment,
+                        (int) $targetCenterId,
+                        (int) $stockAdjustmentUserId,
+                        'add'
+                    );
+                }
+            }
+
+            return $record->fresh(['creator:id,name', 'approver:id,name']);
+        });
 
         return response()->json([
             'message' => 'Inventory updated successfully',
-            'data' => $record,
+            'data' => $updatedRecord,
         ], 200);
     }
 
@@ -1459,6 +1523,169 @@ class InventoryController extends Controller
 
         return response()->json([
             'data' => $records,
+        ], 200);
+    }
+
+    /**
+     * POST /api/inventory-approved
+     * Mark a single inventory record as approved or list approved records
+     */
+    public function getApproved(Request $request)
+    {
+        $inventoryId = $this->resolveInventoryId($request);
+        if ($inventoryId) {
+            return $this->approveInventoryRecord($request, $inventoryId);
+        }
+
+        $allowedStatuses = ['pending', 'reject', 'completed'];
+        $statusFilter = strtolower(trim($request->input('status', 'completed')));
+        if (!in_array($statusFilter, $allowedStatuses, true)) {
+            return response()->json([
+                'message' => 'Invalid status filter. Allowed: ' . implode(', ', $allowedStatuses) . '.',
+            ], 422);
+        }
+
+        $query = Inventory::with([
+            'creator:id,name',
+            'approver:id,name',
+            'customer:id,name',
+            'supplier:id,name',
+            'items.product',
+            'center:id,name',
+        ])->where('status', $statusFilter);
+
+        if ($statusFilter === 'completed') {
+            $query->where('is_confirmed', true);
+        }
+
+        if ($request->filled('center_id')) {
+            $query->where('center_id', (int) $request->input('center_id'));
+        }
+
+        if ($request->filled('supplier_id')) {
+            $query->where('supplier_id', (int) $request->input('supplier_id'));
+        }
+
+        if ($request->filled('customer_id')) {
+            $query->where('customer_id', (int) $request->input('customer_id'));
+        }
+
+        if ($request->filled('voucher_number')) {
+            $query->where('voucherNumber', 'like', '%' . $request->input('voucher_number') . '%');
+        }
+
+        if ($request->filled('type')) {
+            $type = strtolower(trim($request->input('type')));
+            if ($type === 'invoice') {
+                $query->where('voucherNumber', 'like', 'INV-%');
+            } elseif ($type === 'sales_return') {
+                $query->where('voucherNumber', 'like', 'SRET-%');
+            } elseif ($type === 'sales_order') {
+                $query->where('voucherNumber', 'like', 'SO-%');
+            } elseif ($type === 'grn') {
+                $query->where('voucherNumber', 'like', 'GRN-%');
+            }
+        }
+
+        $records = $query->orderByDesc('id')->get();
+        $records->each(function (Inventory $inventory) {
+            $inventory->center_name = optional($inventory->center)->name;
+        });
+
+        return response()->json([
+            'data' => $records,
+        ], 200);
+    }
+
+    private function approveInventoryRecord(Request $request, int $inventoryId)
+    {
+        $record = Inventory::find($inventoryId);
+        if (!$record) {
+            return response()->json([
+                'message' => 'Inventory record not found.',
+            ], 404);
+        }
+
+        $oldStatus = $record->status;
+        $oldIsConfirmed = (bool) $record->is_confirmed;
+
+        $allowedStatuses = ['pending', 'reject', 'completed'];
+        $statusInput = $request->input('status');
+        $status = $statusInput !== null ? strtolower(trim($statusInput)) : 'completed';
+        if (!in_array($status, $allowedStatuses, true)) {
+            return response()->json([
+                'message' => 'Invalid status value. Allowed: ' . implode(', ', $allowedStatuses) . '.',
+            ], 422);
+        }
+
+        $isConfirmedRaw = $request->input('is_confirmed') ?? $request->input('isConfirmed');
+        if ($isConfirmedRaw !== null) {
+            $confirmed = filter_var($isConfirmedRaw, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+            if ($confirmed === null) {
+                return response()->json([
+                    'message' => 'Invalid is_confirmed value.',
+                ], 422);
+            }
+            $isConfirmed = $confirmed;
+        } else {
+            $isConfirmed = true;
+        }
+
+        $approverId = $this->resolveApproverIdFromRequest($request);
+
+        $payload = [
+            'status' => $status,
+            'is_confirmed' => $isConfirmed,
+        ];
+        if ($approverId !== null) {
+            $payload['approved_by'] = $approverId;
+        }
+
+        $shouldAdjustStock = $this->shouldAdjustSalesReturnStockOnApproval(
+            $record,
+            $status,
+            $isConfirmed,
+            $oldStatus,
+            $oldIsConfirmed
+        );
+
+        $targetCenterId = $record->center_id ?? $record->from_center;
+        $stockAdjustmentUserId = $approverId
+            ?? optional($request->user())->id
+            ?? $record->created_by;
+        $stockAdjustmentUserId = (int) ($stockAdjustmentUserId ?: 1);
+
+        $updatedRecord = DB::transaction(function () use ($record, $payload, $shouldAdjustStock, $targetCenterId, $stockAdjustmentUserId) {
+            $record->update($payload);
+
+            if ($shouldAdjustStock && $targetCenterId) {
+                $record->load('items');
+                $stockLines = $record->items->map(function ($item) {
+                    return [
+                        'product_id' => (int) $item->product_id,
+                        'quantity' => (int) $item->quantity,
+                        'batch_number' => $item->batch_number,
+                    ];
+                })->filter(function ($line) {
+                    return $line['quantity'] > 0;
+                })->values()->all();
+
+                if (!empty($stockLines)) {
+                    $this->applyInventoryStockAdjustments(
+                        $stockLines,
+                        (int) $targetCenterId,
+                        $stockAdjustmentUserId,
+                        'add'
+                    );
+                }
+            }
+
+            return $record->fresh(['creator:id,name', 'approver:id,name', 'items.product']);
+        });
+
+        return response()->json([
+            'message' => 'Inventory approved successfully',
+            'data' => $updatedRecord,
         ], 200);
     }
 
@@ -2255,5 +2482,67 @@ class InventoryController extends Controller
             'created_by' => $userId,
             'updated_by' => $userId,
         ]);
+    }
+
+    private function resolveInventoryId(Request $request): ?int
+    {
+        $candidate = $request->input('id')
+            ?? $request->input('inventory_id')
+            ?? data_get($request->input('inventory'), 'id')
+            ?? data_get($request->input('inventory'), 'inventory_id');
+
+        if ($candidate === null) {
+            return null;
+        }
+
+        if (is_numeric($candidate)) {
+            return (int) $candidate;
+        }
+
+        return null;
+    }
+
+    private function resolveApproverIdFromRequest(Request $request): ?int
+    {
+        $fields = ['approved_by', 'approver_id', 'approverId', 'approvedBy', 'approver'];
+        foreach ($fields as $field) {
+            if (!$request->exists($field)) {
+                continue;
+            }
+            $value = $request->input($field);
+            if (is_array($value)) {
+                $value = $value['id'] ?? $value['user_id'] ?? $value['approver_id'] ?? null;
+            }
+            if ($value === null) {
+                continue;
+            }
+            if (is_numeric($value)) {
+                return (int) $value;
+            }
+            if (is_string($value)) {
+                $user = User::where('name', $value)
+                    ->orWhere('email', $value)
+                    ->first();
+                if ($user) {
+                    return $user->id;
+                }
+            }
+        }
+
+        return optional($request->user())->id;
+    }
+
+    private function shouldAdjustSalesReturnStockOnApproval(Inventory $record, string $newStatus, bool $newConfirmed, string $oldStatus, bool $oldConfirmed): bool
+    {
+        return $this->isSalesReturnRecord($record)
+            && $newStatus === 'completed'
+            && $newConfirmed
+            && !($oldStatus === 'completed' && $oldConfirmed);
+    }
+
+    private function isSalesReturnRecord(Inventory $record): bool
+    {
+        $voucher = $record->voucherNumber ?? '';
+        return str_starts_with($voucher, 'SRET-');
     }
 }
