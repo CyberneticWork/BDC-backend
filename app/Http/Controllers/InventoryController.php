@@ -1429,6 +1429,7 @@ class InventoryController extends Controller
             'customer:id,name',
             'items.product',
             'latestPayment',
+            'center:id,name',
         ])->where('status', 'pending');
 
         if ($request->filled('center_id')) {
@@ -1450,6 +1451,11 @@ class InventoryController extends Controller
         }
 
         $records = $query->orderByDesc('id')->get();
+
+        // expose the center name alongside center_id for easier client usage
+        $records->each(function (Inventory $inventory) {
+            $inventory->center_name = optional($inventory->center)->name;
+        });
 
         return response()->json([
             'data' => $records,
