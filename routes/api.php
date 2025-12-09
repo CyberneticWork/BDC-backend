@@ -42,7 +42,7 @@ use App\Http\Controllers\ProductTypeController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\CentersController;
 use App\Http\Controllers\SingleEntryReportController;
-
+use App\Http\Controllers\AttendanceReportController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -391,3 +391,4 @@ Route::apiResource('shift-overtime-rates', ShiftOvertimeRateController::class);
 
 // Reports: Single Entry (Time Cards)
 Route::get('/reports/time-cards/single-entry', [SingleEntryReportController::class, 'index']);
+Route::get('/reports/time-cards/attendance', [AttendanceReportController::class, 'index']);
