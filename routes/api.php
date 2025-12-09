@@ -391,6 +391,7 @@ Route::get('/salesOrder/next', [InventoryController::class, 'nextSalesOrder']); 
 Route::get('/salesreturn/next', [InventoryController::class, 'nextSalesReturn']); //for next Sales Return number
 Route::post('/invoices', [InventoryController::class, 'storeInvoice']);
 Route::post('/salesreturn', [InventoryController::class, 'storeSalesReturn']);
+Route::get('/salesreturn', [InventoryController::class, 'listSalesReturns']); //for get pending salesReturn
 Route::post('/stock-transfer', [InventoryController::class, 'storeStockTransfer']);
 Route::get('/purchaseOrder/next', [InventoryController::class, 'nextPurchaseOrder']); //for next Purchase Order number
 Route::post('/purchaseOrder', [InventoryController::class, 'storePurchaseOrder']);

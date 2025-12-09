@@ -1074,6 +1074,69 @@ class InventoryController extends Controller
         ], 200);
     }
 
+    // ======================================================================
+    // LIST SALES RETURNS - GET ALL SALES RETURNS
+    // ======================================================================
+    /**
+     * GET /api/salesreturns
+     * Return sales return records (default pending) with related data
+     */
+    public function listSalesReturns(Request $request)
+    {
+        $allowedStatuses = ['pending', 'reject', 'completed'];
+
+        $query = Inventory::with([
+            'creator:id,name',
+            'approver:id,name',
+            'customer:id,name',
+            'items.product',
+            'latestPayment',
+        ])->where('voucherNumber', 'like', 'SRET-%');
+
+        $statusFilter = $request->input('status');
+        if ($statusFilter === null) {
+            $query->where('status', 'pending');
+        } else {
+            $normalizedStatus = strtolower(trim($statusFilter));
+            if (!in_array($normalizedStatus, $allowedStatuses, true)) {
+                return response()->json([
+                    'message' => 'Invalid status filter. Allowed: ' . implode(', ', $allowedStatuses) . '.',
+                ], 422);
+            }
+            $query->where('status', $normalizedStatus);
+        }
+
+        if ($request->filled('center_id')) {
+            $query->where('center_id', (int) $request->input('center_id'));
+        }
+
+        if ($request->filled('customer_id')) {
+            $query->where('customer_id', (int) $request->input('customer_id'));
+        }
+
+        if ($request->filled('voucher_number')) {
+            $voucherNumber = $request->input('voucher_number');
+            $query->where('voucherNumber', 'like', '%' . $voucherNumber . '%');
+        }
+
+        if ($request->filled('refer_number')) {
+            $referNumber = $request->input('refer_number');
+            $query->where('referNumber', 'like', '%' . $referNumber . '%');
+        }
+
+        $records = $query->orderByDesc('id')->get();
+
+        foreach ($records as $record) {
+            foreach ($record->items as $item) {
+                $item->setAttribute('batchNumber', $item->batch_number);
+            }
+        }
+
+        return response()->json([
+            'data' => $records,
+        ], 200);
+    }
+
 
     // ======================================================================
     // LIST INVOICES - GET ALL INVOICES
