@@ -86,11 +86,18 @@ class InventoryController extends Controller
             $isRefInput = filter_var($request->input('isRef'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
         }
 
-        // Discount value handling
+        // Discount value handling - accept multiple field names used by frontend
         $discountValue = $request->input('discountValue');
         if ($discountValue === null) {
-            $discountValue = $request->input('discount', 0);
+            $discountValue = $request->input('discount');
         }
+        if ($discountValue === null) {
+            $discountValue = $request->input('discountTotal');
+        }
+        if ($discountValue === null) {
+            $discountValue = $request->input('discount_total');
+        }
+        // don't default to 0 here yet - later we cast and set a default
 
         // Total amount handling
         $amount = $request->input('amount');
@@ -1054,6 +1061,21 @@ class InventoryController extends Controller
     {
         return response()->json([
             'data' => $this->buildNextVoucherResponse('purchase_return')
+        ], 200);
+    }
+
+
+    // ======================================================================
+    // NEXT STOCK VERIFICATION - PREVIEW NEXT STOCK VERIFICATION NUMBER
+    // ======================================================================
+    /**
+     * GET /api/stockVerification/next
+     * Preview next Stock Verification number without creating a record
+     */
+    public function nextStockVerification()
+    {
+        return response()->json([
+            'data' => $this->buildNextVoucherResponse('stock_verification')
         ], 200);
     }
 
@@ -2265,6 +2287,7 @@ class InventoryController extends Controller
         return match ($documentType) {
             'invoice' => "INV-{$year}-",
             'sales_order' => "SO-{$year}-",
+            'stock_verification' => "STV-{$year}-",
             'sales_return' => "SRET-{$year}-",
             'stock_transfer' => "ST-{$year}-",
             'purchase_order' => "PO-{$year}-",

@@ -400,6 +400,7 @@ Route::post('/purchaseOrder', [InventoryController::class, 'storePurchaseOrder']
 Route::get('/purchaseOrder', [InventoryController::class, 'listPurchaseOrders']);//for get all purchase orders
 Route::get('/purchaseReturn/next', [InventoryController::class, 'nextPurchaseReturn']); //for next Purchase Return number
 Route::post('/purchaseReturn', [InventoryController::class, 'storePurchaseReturn']);
+Route::get('/stockVerification/next', [InventoryController::class, 'nextStockVerification']); // next Stock Verification number
 
 //for inventory Products
 Route::apiResource('inventory-products', InventoryProductController::class);
