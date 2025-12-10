@@ -260,6 +260,26 @@ class InventoryController extends Controller
             ], 422);
         }
 
+        // Ensure sales order line amounts match the inventory total when discounts are applied
+        if ($documentType === 'sales_order' && $amount > 0) {
+            $totalLineAmount = array_sum(array_column($linePayloads, 'amount'));
+            if ($totalLineAmount > 0) {
+                $factor = $amount / $totalLineAmount;
+                $lineCount = count($linePayloads);
+                $running = 0;
+                for ($i = 0; $i < $lineCount; $i++) {
+                    $linePayloads[$i]['amount'] = round($linePayloads[$i]['amount'] * $factor, 2);
+                    $running += $linePayloads[$i]['amount'];
+                    if ($i === $lineCount - 1) {
+                        $difference = round($amount - $running, 2);
+                        if (abs($difference) >= 0.01) {
+                            $linePayloads[$i]['amount'] += $difference;
+                        }
+                    }
+                }
+            }
+        }
+
         // VALIDATION: Check if all products exist
         $productIds = array_unique(array_column($linePayloads, 'product_id'));
         if (!empty($productIds)) {
