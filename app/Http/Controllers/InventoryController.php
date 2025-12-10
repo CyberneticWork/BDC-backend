@@ -2263,6 +2263,125 @@ class InventoryController extends Controller
         ], 201);
     }
 
+    /**
+     * POST /api/stockVerification
+     * Persist a stock verification record and update inventory_stock to the verified quantities.
+     */
+    public function storeStockVerification(Request $request)
+    {
+        $payload = $request->all();
+
+        $verificationNumber = $request->input('verificationNumber')
+            ?? $request->input('verification_number')
+            ?? $request->input('id')
+            ?? null;
+
+        $centerId = $request->input('centerId') ?? $request->input('center_id');
+
+        $creatorId = optional($request->user())->id
+            ?? $request->input('created_by')
+            ?? $request->input('createdBy');
+
+        $status = $request->input('status', 'pending');
+
+        $items = $request->input('items', []);
+        if (!is_array($items) || empty($items)) {
+            return response()->json(['message' => 'At least one item is required.'], 422);
+        }
+
+        if (!$centerId) {
+            return response()->json(['message' => 'centerId is required.'], 422);
+        }
+
+        DB::beginTransaction();
+        try {
+            $inventory = Inventory::create([
+                'voucherNumber' => $verificationNumber,
+                'center_id' => (int) $centerId,
+                'status' => $status,
+                'created_by' => $creatorId,
+                'amount' => $request->input('amount', 0),
+            ]);
+
+            foreach ($items as $item) {
+                // Resolve product by common keys (product_id, id, name)
+                $productModel = null;
+                if (!empty($item['product_id'])) {
+                    $productModel = product::find($item['product_id']);
+                }
+                if (!$productModel && !empty($item['id'])) {
+                    $productModel = product::find($item['id']);
+                }
+                if (!$productModel && !empty($item['name'])) {
+                    $productModel = product::where('name', $item['name'])->first();
+                }
+
+                $productId = $productModel ? $productModel->id : null;
+
+                $batch = $this->normalizeBatchNumber($item['batchNumber'] ?? $item['batch_number'] ?? null);
+
+                // Quantity to set in stock. Prefer explicit 'quantity', fallback to 'currentStock'.
+                $lineQty = (int) ($item['quantity'] ?? $item['qty'] ?? $item['currentStock'] ?? 0);
+
+                $cost = $item['unitPrice'] ?? $item['cost'] ?? $item['minPrice'] ?? 0;
+                $amount = isset($item['amount']) ? $item['amount'] : ($cost * $lineQty);
+
+                // create inventory_product line
+                \App\Models\inventory_product::create([
+                    'cost' => $cost,
+                    'quantity' => $lineQty,
+                    'min_price' => $item['minPrice'] ?? $item['min_price'] ?? null,
+                    'mrp' => $item['mrp'] ?? null,
+                    'amount' => $amount,
+                    'product_id' => $productId,
+                    'inventory_id' => $inventory->id,
+                    'batch_number' => $batch,
+                    'created_by' => $creatorId,
+                ]);
+
+                // Update or create inventory_stock row to the verified quantity
+                $query = inventory_stock::where('center_id', $inventory->center_id)
+                    ->where('product_id', $productId);
+                if ($batch === null) {
+                    $query->whereNull('batch_number');
+                } else {
+                    $query->where('batch_number', $batch);
+                }
+
+                $stock = $query->lockForUpdate()->first();
+                if ($stock) {
+                    $stock->quantity = $lineQty;
+                    $stock->updated_by = $creatorId;
+                    $stock->save();
+                } else {
+                    inventory_stock::create([
+                        'product_id' => $productId,
+                        'center_id' => $inventory->center_id,
+                        'batch_number' => $batch,
+                        'quantity' => $lineQty,
+                        'created_by' => $creatorId,
+                        'updated_by' => $creatorId,
+                    ]);
+                }
+            }
+
+            DB::commit();
+
+            $inventory->load(['creator:id,name', 'items.product']);
+
+            return response()->json([
+                'message' => 'Stock verification saved successfully',
+                'data' => $inventory,
+            ], 201);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'message' => 'Failed to save stock verification',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
 
     // STORE INVOICE - LEGACY METHOD (NOW HANDLED BY STORE METHOD)
     /**

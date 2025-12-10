@@ -401,7 +401,7 @@ Route::get('/purchaseOrder', [InventoryController::class, 'listPurchaseOrders'])
 Route::get('/purchaseReturn/next', [InventoryController::class, 'nextPurchaseReturn']); //for next Purchase Return number
 Route::post('/purchaseReturn', [InventoryController::class, 'storePurchaseReturn']);
 Route::get('/stockVerification/next', [InventoryController::class, 'nextStockVerification']); // next Stock Verification number
-
+Route::post('/stockVerification', [InventoryController::class, 'storeStockVerification']);
 //for inventory Products
 Route::apiResource('inventory-products', InventoryProductController::class);
 
