@@ -1538,7 +1538,7 @@ class InventoryController extends Controller
         }
 
         $allowedStatuses = ['pending', 'reject', 'completed'];
-        $statusFilter = strtolower(trim($request->input('status', 'completed')));
+        $statusFilter = $this->normalizeStatusValue($request->input('status', 'completed')) ?? 'completed';
         if (!in_array($statusFilter, $allowedStatuses, true)) {
             return response()->json([
                 'message' => 'Invalid status filter. Allowed: ' . implode(', ', $allowedStatuses) . '.',
@@ -1611,7 +1611,7 @@ class InventoryController extends Controller
 
         $allowedStatuses = ['pending', 'reject', 'completed'];
         $statusInput = $request->input('status');
-        $status = $statusInput !== null ? strtolower(trim($statusInput)) : 'completed';
+        $status = $statusInput !== null ? ($this->normalizeStatusValue($statusInput) ?? 'completed') : 'completed';
         if (!in_array($status, $allowedStatuses, true)) {
             return response()->json([
                 'message' => 'Invalid status value. Allowed: ' . implode(', ', $allowedStatuses) . '.',
@@ -2544,5 +2544,19 @@ class InventoryController extends Controller
     {
         $voucher = $record->voucherNumber ?? '';
         return str_starts_with($voucher, 'SRET-');
+    }
+
+    private function normalizeStatusValue(?string $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $normalized = strtolower(trim($value));
+        if ($normalized === 'rejected') {
+            return 'reject';
+        }
+
+        return $normalized;
     }
 }
