@@ -2185,6 +2185,10 @@ class InventoryController extends Controller
             $mrp = (float) ($line['mrp'] ?? 0);
             $lineAmount = 0;
 
+            $batchNumber = $this->normalizeBatchNumber(
+                $line['batchNumber'] ?? $line['batch_number'] ?? null
+            );
+
             $linePayloads[] = [
                 'product_id' => (int) $productId,
                 'quantity' => $quantity,
@@ -2192,6 +2196,7 @@ class InventoryController extends Controller
                 'min_price' => $minPrice,
                 'mrp' => $mrp,
                 'amount' => 0,
+                'batch_number' => $batchNumber,
                 'created_by' => (int) $creatorId,
             ];
         }
