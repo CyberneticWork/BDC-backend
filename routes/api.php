@@ -42,7 +42,7 @@ use App\Http\Controllers\ProductController;
 use App\Http\Controllers\CentersController;
 use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\InventoryProductController;
-use App\Http\Controllers\IncentoryStockController;
+use App\Http\Controllers\InventoryStockController;
 
 
 Route::get('/user', function (Request $request) {
@@ -349,10 +349,15 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/performance-appraisals/{id}/force', [App\Http\Controllers\PerformanceAppraisalController::class, 'forceDestroy']);
     Route::get('/performance-appraisals/stats/overview', [App\Http\Controllers\PerformanceAppraisalController::class, 'getStats']);
 
-    //Center routes
-    Route::apiResource('centers', CentersController::class);
+
 
 });
+Route::middleware('auth:sanctum')->group(function () {
+    Route::post('/pms/kpi-task-assignments/check-weights', [PmsController::class, 'checkAssigneeWeights']);
+
+
+// Product routes
+Route::get('products/inventory/details', [ProductController::class, 'inventoryDetails']);
 
 //  Customer routes
 Route::get('/customer/email/{email}', [CustomerController::class, 'getByEmail']);
@@ -368,28 +373,36 @@ Route::get('product-types/trashed/list', [ProductTypeController::class, 'getTras
 Route::get('product-types/stats/overview', [ProductTypeController::class, 'getStats']);
 Route::delete('product-types/{id}/force', [ProductTypeController::class, 'forceDestroy']);
 
-// Product routes
-Route::middleware('auth:sanctum')->group(function () {
-    // Add this new route
-    Route::post('/pms/kpi-task-assignments/check-weights', [PmsController::class, 'checkAssigneeWeights']);
-    Route::apiResource('products', ProductController::class);
-
-});
-
-
 // Inventory routes
-
+Route::apiResource('products', ProductController::class);
 Route::apiResource('inventories', InventoryController::class);
+Route::get('/inventory-pending', [InventoryController::class, 'getPending']); // return all inventory records with status 'pending'
+Route::post('/inventory-approved', [InventoryController::class, 'getApproved']); // return all inventory records with status 'approved'
 Route::post('/grn', [InventoryController::class, 'store']);
 Route::get('/grn/next', [InventoryController::class, 'nextGrn']);  //for next GRN number
+Route::get('/grn', [InventoryController::class, 'listGrns']); //for get all GRNs
 Route::get('/invoices/next', [InventoryController::class, 'nextInv']); //for next Invoice number
+Route::get('/stock-transfer/next', [InventoryController::class, 'nextStockTransfer']); // next Stock Transfer number
+Route::get('/salesOrder', [InventoryController::class, 'listSalesOrders']); //for get all salesOrder
+Route::get('/invoices', [InventoryController::class, 'listInvoices']); //for get all invoices
+Route::post('/salesOrder', [InventoryController::class, 'storeSalesOrder']);
+Route::get('/salesOrder/next', [InventoryController::class, 'nextSalesOrder']); //for next Sales Order number
+Route::get('/salesreturn/next', [InventoryController::class, 'nextSalesReturn']); //for next Sales Return number
 Route::post('/invoices', [InventoryController::class, 'storeInvoice']);
-
-//for inventory Products
+Route::post('/salesreturn', [InventoryController::class, 'storeSalesReturn']);
+Route::get('/salesreturn', [InventoryController::class, 'listSalesReturns']); //for get pending salesReturn
+Route::post('/stock-transfer', [InventoryController::class, 'storeStockTransfer']);
+Route::get('/purchaseOrder/next', [InventoryController::class, 'nextPurchaseOrder']); //for next Purchase Order number
+Route::post('/purchaseOrder', [InventoryController::class, 'storePurchaseOrder']);
+Route::get('/purchaseOrder', [InventoryController::class, 'listPurchaseOrders']);//for get all purchase orders
+Route::get('/purchaseReturn/next', [InventoryController::class, 'nextPurchaseReturn']); //for next Purchase Return number
+Route::post('/purchaseReturn', [InventoryController::class, 'storePurchaseReturn']);
+Route::get('/stockVerification/next', [InventoryController::class, 'nextStockVerification']); // next Stock Verification number
+Route::post('/stockVerification', [InventoryController::class, 'storeStockVerification']);
 Route::apiResource('inventory-products', InventoryProductController::class);
+Route::get('/inventory-stocks/all', [InventoryStockController::class, 'all']);
+Route::get('products/inventory/details', [ProductController::class, 'inventoryDetails']);
+Route::apiResource('centers', CentersController::class);
 
-// Incentory stock routes
-Route::apiResource('invntory-stocks', IncentoryStockController::class);
-
-
+});
 

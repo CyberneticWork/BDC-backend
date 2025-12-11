@@ -14,6 +14,9 @@ return new class extends Migration {
             $table->float('paid_value')->default(0);
             $table->float('discountValue')->default(0);
             $table->string('referNumber')->nullable();
+            $table->string('refervoucherNumber')->nullable();
+            $table->boolean('is_ref')->default(false);
+            $table->boolean('is_confirmed')->default(false);
             $table->enum('status', ['pending', 'reject', 'completed'])->default('pending');
             $table->foreignId('center_id')->nullable()->constrained('centers')->nullOnDelete();
             $table->foreignId('supplier_id')->nullable()->constrained('suppliers')->nullOnDelete();

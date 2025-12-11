@@ -13,6 +13,7 @@ return new class extends Migration
     {
         Schema::create('inventory_products', function (Blueprint $table) {
             $table->id();
+            $table->string('batch_number')->nullable();
             $table->decimal('cost', 10, 2);
             $table->integer('quantity')->default(0);
             $table->decimal('min_price', 10, 2);

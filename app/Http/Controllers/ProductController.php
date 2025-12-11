@@ -18,6 +18,55 @@ class ProductController extends Controller
     }
 
     /**
+     * Return product details with center-wise inventory info.
+     */
+    public function inventoryDetails(Request $request)
+    {
+        $products = product::with([
+            'discountLevel:id,name',
+            'productType:id,type',
+            'inventoryStocks.center:id,name',
+        ])->get();
+
+        $payload = $products->map(function (product $product) {
+            return [
+                'id' => $product->id,
+                'barcode' => $product->barcode,
+                'code' => $product->code,
+                'name' => $product->name,
+                'description' => $product->description,
+                'oem_numbers' => $product->oem_numbers,
+                'cost' => $product->cost,
+                'min_price' => $product->min_price,
+                'mrp' => $product->mrp,
+                'is_active' => $product->is_active,
+                'discount_level' => $product->discountLevel ? [
+                    'id' => $product->discountLevel->id,
+                    'name' => $product->discountLevel->name,
+                ] : null,
+                'product_type' => $product->productType ? [
+                    'id' => $product->productType->id,
+                    'name' => $product->productType->type,
+                ] : null,
+                'total_available_quantity' => $product->inventoryStocks->sum('quantity'),
+                'inventory' => $product->inventoryStocks->map(function ($stock) {
+                    return [
+                        'inventory_stock_id' => $stock->id,
+                        'batch_number' => $stock->batch_number,
+                        'center' => $stock->center ? [
+                            'id' => $stock->center->id,
+                            'name' => $stock->center->name,
+                        ] : null,
+                        'available_quantity' => $stock->quantity,
+                    ];
+                })->values(),
+            ];
+        });
+
+        return response()->json($payload);
+    }
+
+    /**
      * Store a newly created resource in storage.
      */
     public function store(Request $request)

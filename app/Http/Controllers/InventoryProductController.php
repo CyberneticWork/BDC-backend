@@ -33,6 +33,7 @@ class InventoryProductController extends Controller
             'amount' => ['required', 'numeric', 'min:0'],
             'product_id' => ['required', 'exists:products,id'],
             'inventory_id' => ['required', 'exists:inventories,id'],
+            'batch_number' => ['nullable', 'string', 'max:255'],
             'created_by' => ['nullable', 'exists:users,id'],
         ]);
 
@@ -42,6 +43,11 @@ class InventoryProductController extends Controller
             return response()->json(['message' => 'created_by is required when not authenticated'], 422);
         }
         $data['created_by'] = $creatorId;
+
+        if (array_key_exists('batch_number', $data)) {
+            $batch = trim((string)($data['batch_number'] ?? ''));
+            $data['batch_number'] = $batch === '' ? null : $batch;
+        }
 
         // defaults
         $data['quantity'] = $data['quantity'] ?? 0;
@@ -72,9 +78,16 @@ class InventoryProductController extends Controller
             'amount' => ['sometimes', 'required', 'numeric', 'min:0'],
             'product_id' => ['sometimes', 'required', 'exists:products,id'],
             'inventory_id' => ['sometimes', 'required', 'exists:inventories,id'],
+            'batch_number' => ['sometimes', 'nullable', 'string', 'max:255'],
         ]);
 
-        $inventoryProduct->update($validated);
+        $data = $validated;
+        if (array_key_exists('batch_number', $data)) {
+            $batch = trim((string)($data['batch_number'] ?? ''));
+            $data['batch_number'] = $batch === '' ? null : $batch;
+        }
+
+        $inventoryProduct->update($data);
         return response()->json($inventoryProduct);
     }
 

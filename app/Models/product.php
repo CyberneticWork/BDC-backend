@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use App\Models\User;
+use App\Models\inventory_stock;
 
 class product extends Model
 {
@@ -47,5 +48,10 @@ class product extends Model
     public function creator()
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function inventoryStocks()
+    {
+        return $this->hasMany(inventory_stock::class, 'product_id');
     }
 }
