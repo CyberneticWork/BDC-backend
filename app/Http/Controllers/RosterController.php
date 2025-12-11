@@ -14,8 +14,9 @@ class RosterController extends Controller
     public function index()
     {
         // Eager load to avoid N+1
-        $rosters = roster::with(['company', 'department', 'subDepartment', 'employee'])->get();
-
+        $rosters = roster::with(['company', 'department', 'subDepartment', 'employee'])
+            ->orderBy('created_at', 'desc')
+            ->get();
         $data = $rosters->map(function ($r) {
             return [
                 'id' => $r->id,
@@ -33,6 +34,7 @@ class RosterController extends Controller
                     ?? null,
                 'date_from' => $r->date_from,
                 'date_to' => $r->date_to,
+                'created_at' => $r->created_at,
             ];
         });
 
@@ -69,6 +71,7 @@ class RosterController extends Controller
             'notes' => 'nullable|string',
             'date_from' => 'nullable|date',
             'date_to' => 'nullable|date',
+            'custom_created_at' => 'nullable|date',
         ]);
 
         if ($validator->fails()) {
@@ -76,6 +79,12 @@ class RosterController extends Controller
         }
 
         $data = $validator->validated();
+
+        // Set custom created_at if provided, otherwise use current timestamp
+        if (isset($data['custom_created_at'])) {
+            $data['created_at'] = $data['custom_created_at'];
+            unset($data['custom_created_at']); // Remove from data array
+        }
 
         // Build group signature
         $signature = [
@@ -192,6 +201,13 @@ class RosterController extends Controller
             return response()->json(['errors' => $errors], 422);
         }
 
+        $now = now();
+        $validatedEntries = array_map(function ($entry) use ($now) {
+            $entry['created_at'] = $now;
+            $entry['updated_at'] = $now;
+            return $entry;
+        }, $validatedEntries);
+
         // Prevent creating a new roster group if another one already exists with a different roster_id
         $existingRosterId = $this->findExistingRosterGroupId($commonSignature);
 
@@ -253,14 +269,69 @@ class RosterController extends Controller
 
     public function destroy($id)
     {
-        $roster = roster::find($id);
-        if (!$roster) {
-            return response()->json(['message' => 'Roster not found'], 404);
+        try {
+            $roster = roster::findOrFail($id);
+            
+            // Perform soft delete
+            $roster->delete();
+            
+            return response()->json([
+                'message' => 'Roster deleted successfully',
+                'success' => true
+            ], 200);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'message' => 'Roster not found',
+                'success' => false
+            ], 404);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Failed to delete roster',
+                'error' => $e->getMessage(),
+                'success' => false
+            ], 500);
         }
+    }
 
-        $roster->delete();
+    // Add this method to get trashed rosters if needed
+    public function getTrashed()
+    {
+        try {
+            $trashedRosters = roster::onlyTrashed()
+                ->with(['company', 'department', 'subDepartment', 'employee'])
+                ->get();
+            
+            return response()->json([
+                'success' => true,
+                'data' => $trashedRosters
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Failed to fetch trashed rosters',
+                'error' => $e->getMessage(),
+                'success' => false
+            ], 500);
+        }
+    }
 
-        return response()->json(['message' => 'Roster deleted successfully'], 200);
+    // Add this method to restore soft deleted rosters if needed
+    public function restore($id)
+    {
+        try {
+            $roster = roster::onlyTrashed()->findOrFail($id);
+            $roster->restore();
+            
+            return response()->json([
+                'message' => 'Roster restored successfully',
+                'success' => true
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Failed to restore roster',
+                'error' => $e->getMessage(),
+                'success' => false
+            ], 500);
+        }
     }
 
     public function search(Request $request)
@@ -272,13 +343,15 @@ class RosterController extends Controller
             'department_id' => 'nullable|exists:departments,id',
             'sub_department_id' => 'nullable|exists:sub_departments,id',
             'employee_id' => 'nullable|exists:employees,id',
+            'roster_id' => 'nullable|string', // Add this line
         ]);
 
         if ($validator->fails()) {
             return response()->json(['errors' => $validator->errors()], 422);
         }
 
-        $query = roster::with(['company', 'department', 'subDepartment', 'employee']);
+        $query = roster::with(['company', 'department', 'subDepartment', 'employee'])
+            ->orderBy('created_at', 'desc');
 
         if ($request->filled('date_from') || $request->filled('date_to')) {
             $query->where(function ($q) use ($request) {
@@ -312,6 +385,11 @@ class RosterController extends Controller
 
         if ($request->filled('employee_id')) {
             $query->where('employee_id', $request->employee_id);
+        }
+
+        // Add this new filter condition
+        if ($request->filled('roster_id')) {
+            $query->where('roster_id', 'LIKE', '%' . $request->roster_id . '%');
         }
 
         try {
@@ -387,5 +465,45 @@ class RosterController extends Controller
         $existing = $query->select('roster_id')->first();
 
         return $existing?->roster_id ? (int) $existing->roster_id : null;
+    }
+
+    public function bulkDestroy(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'ids' => 'required|array|min:1',
+            'ids.*' => 'integer|exists:rosters,id'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => 'Validation failed',
+                'errors' => $validator->errors(),
+                'success' => false
+            ], 422);
+        }
+
+        try {
+            $ids = $request->input('ids');
+            $deletedCount = roster::whereIn('id', $ids)->delete();
+            
+            if ($deletedCount === 0) {
+                return response()->json([
+                    'message' => 'No rosters were found to delete',
+                    'success' => false
+                ], 404);
+            }
+
+            return response()->json([
+                'message' => "Successfully deleted {$deletedCount} roster record(s)",
+                'deleted_count' => $deletedCount,
+                'success' => true
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Failed to delete rosters',
+                'error' => $e->getMessage(),
+                'success' => false
+            ], 500);
+        }
     }
 }

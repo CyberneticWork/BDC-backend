@@ -27,6 +27,7 @@ class PerformanceAppraisal extends Model
         'task_count',
         'supervisor_comments',
         'employee_comments',
+        'practical_feedback',
         'status'
     ];
 

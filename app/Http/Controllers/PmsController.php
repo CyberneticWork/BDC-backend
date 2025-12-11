@@ -1563,6 +1563,7 @@ class PmsController extends Controller
                     'grade' => $existingReview->grade,
                     'appraisal_rating' => $existingReview->appraisal_rating,
                     'supervisorComments' => $existingReview->supervisor_comments,
+                    'practicalFeedback' => $existingReview->practical_feedback,
                     'status' => $existingReview->status,
                     'performanceMetrics' => $existingReview->performance_metrics,
                     'createdAt' => $existingReview->created_at->toISOString(),
@@ -1653,6 +1654,7 @@ class PmsController extends Controller
                 'progress' => 'required|integer|min:0|max:100',
                 'grade' => 'nullable|string|max:5',
                 'supervisor_comments' => 'nullable|string',
+                'practical_feedback' => 'nullable|string|max:2000',
                 'status' => 'required|string|in:Draft,In Progress,Pending Manager,Pending Employee,Completed',
                 'performance_metrics' => 'required|array',
             ];
@@ -1702,6 +1704,7 @@ class PmsController extends Controller
                 'progress' => (int) $validated['progress'],
                 'grade' => $validated['grade'] ?? null,
                 'supervisor_comments' => $validated['supervisor_comments'] ?? null,
+                'practical_feedback' => $validated['practical_feedback'] ?? null,
                 'status' => $validated['status'],
                 'performance_metrics' => $cleanMetrics,
                 'review_type' => 'performance',

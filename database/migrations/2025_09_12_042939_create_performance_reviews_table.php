@@ -22,6 +22,7 @@ return new class extends Migration
             $table->string('grade')->nullable();
             $table->integer('appraisal_rating')->nullable()->comment('1-5 rating for performance appraisal tasks (1=Poor, 2=Below Average, 3=Average, 4=Above Average, 5=Excellent)');
             $table->text('supervisor_comments')->nullable();
+            $table->text('practical_feedback')->nullable();
             $table->string('status')->default('Draft'); // Completed, In Progress, Pending Manager, Pending Employee, Draft
             $table->string('review_type'); // performance, progress, quarterly, annual, probation
             $table->string('review_cycle'); // e.g., 2025 Q1, 2025 Annual

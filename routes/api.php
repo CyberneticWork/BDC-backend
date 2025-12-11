@@ -44,6 +44,7 @@ use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\InventoryProductController;
 use App\Http\Controllers\InventoryStockController;
 
+use App\Http\Controllers\ShiftOvertimeRateController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -406,3 +407,19 @@ Route::apiResource('centers', CentersController::class);
 
 });
 
+Route::middleware('auth:sanctum')->group(function () {
+    // Add this new route
+    Route::post('/pms/kpi-task-assignments/check-weights', [PmsController::class, 'checkAssigneeWeights']);
+});
+
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/rosters/trashed', [RosterController::class, 'getTrashed']);
+    Route::post('/rosters/{id}/restore', [RosterController::class, 'restore']);
+    Route::delete('/rosters/bulk-delete', [RosterController::class, 'bulkDestroy']);
+
+});
+
+// Shift Overtime Rates routes - MOVE THESE BEFORE apiResource
+Route::get('/shift-overtime-rates/shifts/dropdown', [ShiftOvertimeRateController::class, 'getShifts']);
+Route::get('/shift-overtime-rates/by-shift/{shiftId}', [ShiftOvertimeRateController::class, 'getByShiftId']);
+Route::apiResource('shift-overtime-rates', ShiftOvertimeRateController::class);
