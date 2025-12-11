@@ -352,6 +352,12 @@ Route::middleware('auth:sanctum')->group(function () {
 
 
 });
+Route::middleware('auth:sanctum')->group(function () {
+    Route::post('/pms/kpi-task-assignments/check-weights', [PmsController::class, 'checkAssigneeWeights']);
+
+
+// Product routes
+Route::get('products/inventory/details', [ProductController::class, 'inventoryDetails']);
 
 //  Customer routes
 Route::get('/customer/email/{email}', [CustomerController::class, 'getByEmail']);
@@ -367,17 +373,8 @@ Route::get('product-types/trashed/list', [ProductTypeController::class, 'getTras
 Route::get('product-types/stats/overview', [ProductTypeController::class, 'getStats']);
 Route::delete('product-types/{id}/force', [ProductTypeController::class, 'forceDestroy']);
 
-// Product routes
-Route::get('products/inventory/details', [ProductController::class, 'inventoryDetails']);
-
-Route::middleware('auth:sanctum')->group(function () {
-    Route::post('/pms/kpi-task-assignments/check-weights', [PmsController::class, 'checkAssigneeWeights']);
-    Route::apiResource('products', ProductController::class);
-
-});
-
-
 // Inventory routes
+Route::apiResource('products', ProductController::class);
 Route::apiResource('inventories', InventoryController::class);
 Route::get('/inventory-pending', [InventoryController::class, 'getPending']); // return all inventory records with status 'pending'
 Route::post('/inventory-approved', [InventoryController::class, 'getApproved']); // return all inventory records with status 'approved'
@@ -402,17 +399,10 @@ Route::get('/purchaseReturn/next', [InventoryController::class, 'nextPurchaseRet
 Route::post('/purchaseReturn', [InventoryController::class, 'storePurchaseReturn']);
 Route::get('/stockVerification/next', [InventoryController::class, 'nextStockVerification']); // next Stock Verification number
 Route::post('/stockVerification', [InventoryController::class, 'storeStockVerification']);
-//for inventory Products
 Route::apiResource('inventory-products', InventoryProductController::class);
-
-// Inventory stocks: full list with related details
 Route::get('/inventory-stocks/all', [InventoryStockController::class, 'all']);
-
-
-// Product routes
 Route::get('products/inventory/details', [ProductController::class, 'inventoryDetails']);
-//Center routes
 Route::apiResource('centers', CentersController::class);
 
-
+});
 
