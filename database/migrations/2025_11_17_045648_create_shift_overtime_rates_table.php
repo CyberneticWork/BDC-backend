@@ -18,7 +18,7 @@ return new class extends Migration
             $table->decimal('working_days_per_month', 4, 2)->default(30.00);
             $table->decimal('ot_multiplier', 4, 2)->default(1.50);
             $table->decimal('holiday_multiplier', 4, 2)->default(2.00);
-            $table->decimal('ignore_hours_threshold', 4, 2)->default(1.00); // Hours to ignore before calculating OT
+            $table->json('ignore_hours_threshold')->nullable()->comment('Ignore threshold as JSON. Example: {"minutes":60} or {"hours":1} or {"minutes":30,"hours":1}');
             $table->softDeletes();
             $table->timestamps();
             

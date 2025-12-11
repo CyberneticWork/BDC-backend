@@ -78,7 +78,9 @@ class ShiftOvertimeRateController extends Controller
             'working_days_per_month' => 'required|numeric|min:1|max:31',
             'ot_multiplier' => 'required|numeric|min:1|max:5',
             'holiday_multiplier' => 'required|numeric|min:1|max:5',
-            'ignore_hours_threshold' => 'required|numeric|min:0|max:99.99'
+            'ignore_hours_threshold' => 'nullable|array',
+            'ignore_hours_threshold.hours' => 'nullable|numeric|min:0|max:24',
+            'ignore_hours_threshold.minutes' => 'nullable|numeric|min:0|max:59'
         ]);
 
         if ($validator->fails()) {
@@ -196,7 +198,9 @@ class ShiftOvertimeRateController extends Controller
                 'working_days_per_month' => 'required|numeric|min:1|max:31',
                 'ot_multiplier' => 'required|numeric|min:1|max:5',
                 'holiday_multiplier' => 'required|numeric|min:1|max:5',
-                'ignore_hours_threshold' => 'required|numeric|min:0|max:99.99'
+                'ignore_hours_threshold' => 'nullable|array',
+                'ignore_hours_threshold.hours' => 'nullable|numeric|min:0|max:24',
+                'ignore_hours_threshold.minutes' => 'nullable|numeric|min:0|max:59'
             ]);
 
             if ($validator->fails()) {

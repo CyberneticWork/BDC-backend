@@ -35,6 +35,7 @@ use App\Http\Controllers\CustomerCategoryController;
 use App\Http\Controllers\CustomerTypeController;
 use App\Http\Controllers\PerformanceEvaluationController;
 use App\Http\Controllers\PerformanceAppraisalController;
+use App\Http\Controllers\ShiftOvertimeRateController;
 use App\Http\Controllers\JournalEntryController;
 use App\Http\Controllers\DiscountLevelController;
 use App\Http\Controllers\ProductTypeController;
@@ -44,7 +45,6 @@ use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\InventoryProductController;
 use App\Http\Controllers\InventoryStockController;
 
-use App\Http\Controllers\ShiftOvertimeRateController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -422,4 +422,7 @@ Route::middleware('auth:sanctum')->group(function () {
 // Shift Overtime Rates routes - MOVE THESE BEFORE apiResource
 Route::get('/shift-overtime-rates/shifts/dropdown', [ShiftOvertimeRateController::class, 'getShifts']);
 Route::get('/shift-overtime-rates/by-shift/{shiftId}', [ShiftOvertimeRateController::class, 'getByShiftId']);
+Route::post('/shift-overtime-rates/{shiftId}/calculate', [ShiftOvertimeRateController::class, 'calculateRates']);
+
+// Then the standard resource routes
 Route::apiResource('shift-overtime-rates', ShiftOvertimeRateController::class);

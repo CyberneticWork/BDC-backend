@@ -16,9 +16,15 @@ return new class extends Migration {
             $table->time('start_time')->nullable();
             $table->time('end_time')->nullable();
             $table->time('morning_ot_start')->nullable();
-          
+            $table->time('morning_ot_end')->nullable();
+
+
+            $table->time('night_ot_start')->nullable();
+            $table->time('night_ot_end')->nullable();
+
+
             $table->boolean('midnight_roster')->default(false);
-         
+
             $table->softDeletes();
             $table->timestamps();
 
@@ -27,7 +33,10 @@ return new class extends Migration {
             $table->index('start_time');
             $table->index('end_time');
             $table->index('morning_ot_start');
-          
+            $table->index('morning_ot_end');
+            $table->index('night_ot_start');
+            $table->index('night_ot_end');
+
 
         });
     }

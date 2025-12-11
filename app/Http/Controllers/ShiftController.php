@@ -28,6 +28,11 @@ class ShiftController extends Controller
             'start_time' => 'required|date_format:H:i',
             'end_time' => 'required|date_format:H:i',
             'midnight_roster' => 'boolean',
+            // New optional OT fields
+            'morning_ot_start' => 'nullable|date_format:H:i',
+            'morning_ot_end' => 'nullable|date_format:H:i',
+            'night_ot_start' => 'nullable|date_format:H:i',
+            'night_ot_end' => 'nullable|date_format:H:i',
         ]);
 
         if ($validator->fails()) {
@@ -43,6 +48,10 @@ class ShiftController extends Controller
             'start_time' => $request->start_time,
             'end_time' => $request->end_time,
             'midnight_roster' => $request->midnight_roster ?? false,
+            'morning_ot_start' => $request->morning_ot_start,
+            'morning_ot_end' => $request->morning_ot_end,
+            'night_ot_start' => $request->night_ot_start,
+            'night_ot_end' => $request->night_ot_end,
         ]);
 
         return response()->json([
@@ -74,11 +83,16 @@ class ShiftController extends Controller
         }
 
         $validator = Validator::make($request->all(), [
-            'shift_code' => 'required|string|max:50|alpha_dash|unique:shifts,shift_code,'.$id,
+            'shift_code' => 'required|string|max:50|alpha_dash|unique:shifts,shift_code,' . $id,
             'shift_description' => 'required|string|max:255',
             'start_time' => 'required|date_format:H:i',
             'end_time' => 'required|date_format:H:i',
             'midnight_roster' => 'required|boolean',
+            // New optional OT fields
+            'morning_ot_start' => 'nullable|date_format:H:i',
+            'morning_ot_end' => 'nullable|date_format:H:i',
+            'night_ot_start' => 'nullable|date_format:H:i',
+            'night_ot_end' => 'nullable|date_format:H:i',
         ]);
 
         if ($validator->fails()) {
@@ -94,6 +108,10 @@ class ShiftController extends Controller
             'start_time' => $request->start_time,
             'end_time' => $request->end_time,
             'midnight_roster' => $request->midnight_roster,
+            'morning_ot_start' => $request->morning_ot_start,
+            'morning_ot_end' => $request->morning_ot_end,
+            'night_ot_start' => $request->night_ot_start,
+            'night_ot_end' => $request->night_ot_end,
         ]);
 
         return response()->json([

@@ -23,7 +23,7 @@ class ShiftOvertimeRate extends Model
         'working_days_per_month' => 'decimal:2',
         'ot_multiplier' => 'decimal:2',
         'holiday_multiplier' => 'decimal:2',
-        'ignore_hours_threshold' => 'decimal:2'
+        'ignore_hours_threshold' => 'array'
     ];
 
     public function shift()
