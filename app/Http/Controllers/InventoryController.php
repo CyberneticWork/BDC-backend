@@ -87,6 +87,7 @@ class InventoryController extends Controller
         }
 
         // Discount value handling - accept multiple field names used by frontend
+        // Purchase Return UI may send `total_discount` or `totalDiscount`.
         $discountValue = $request->input('discountValue');
         if ($discountValue === null) {
             $discountValue = $request->input('discount');
@@ -96,6 +97,12 @@ class InventoryController extends Controller
         }
         if ($discountValue === null) {
             $discountValue = $request->input('discount_total');
+        }
+        if ($discountValue === null) {
+            $discountValue = $request->input('total_discount');
+        }
+        if ($discountValue === null) {
+            $discountValue = $request->input('totalDiscount');
         }
         // don't default to 0 here yet - later we cast and set a default
 
@@ -221,9 +228,12 @@ class InventoryController extends Controller
                     }
                 }
 
+                // Extract per-line product discount (frontend may send `product_discount`)
+                $lineDiscount = $line['product_discount'] ?? $line['productDiscount'] ?? $line['discount'] ?? $line['line_discount'] ?? 0;
+
                 // Only add valid line items with product and quantity
                 if ($productId && $lineQty > 0) {
-                    $linePayloads[] = [
+                    $payload = [
                         'product_id' => (int) $productId,
                         'quantity' => $lineQty,
                         'cost' => (float) $lineCost,
@@ -233,6 +243,14 @@ class InventoryController extends Controller
                         'batch_number' => $this->normalizeBatchNumber($lineBatchNumber),
                         'created_by' => $creatorId,
                     ];
+
+                    // For GRN / Purchase Order / Purchase Return, map frontend `product_discount`
+                    // into the inventory item's `discount` column so per-product discounts are preserved.
+                    if (in_array($documentType, ['grn', 'purchase_order', 'purchase_return'], true)) {
+                        $payload['discount'] = (float) $lineDiscount;
+                    }
+
+                    $linePayloads[] = $payload;
                 }
             }
         }
@@ -247,7 +265,9 @@ class InventoryController extends Controller
                 $rootBatchNumber = $request->input('batch_number')
                     ?? $request->input('batchNumber')
                     ?? $request->input('batch');
-                $linePayloads[] = [
+                $rootDiscount = $request->input('product_discount') ?? $request->input('productDiscount') ?? $request->input('discount') ?? 0;
+
+                $payload = [
                     'product_id' => (int) $rootProductId,
                     'quantity' => $quantity,
                     'cost' => $unitPrice,
@@ -257,6 +277,12 @@ class InventoryController extends Controller
                     'batch_number' => $this->normalizeBatchNumber($rootBatchNumber),
                     'created_by' => $creatorId,
                 ];
+
+                if (in_array($documentType, ['grn', 'purchase_order', 'purchase_return'], true)) {
+                    $payload['discount'] = (float) $rootDiscount;
+                }
+
+                $linePayloads[] = $payload;
             }
         }
 
@@ -633,6 +659,32 @@ class InventoryController extends Controller
             $createdItems = [];
             if (!empty($linePayloads)) {
                 $createdItems = $record->items()->createMany($linePayloads);
+
+                // Ensure `min_price` is set for GRN and Purchase Return items.
+                // Some clients may omit min_price when creating these documents.
+                // If missing or zero, fall back to the product's `min_price`
+                // (if available) or to the item's cost.
+                if (in_array($documentType, ['grn', 'purchase_return'], true)) {
+                    foreach ($createdItems as $createdItem) {
+                        // Use property names as stored on the model
+                        $currentMin = $createdItem->min_price ?? 0;
+                        if (empty($currentMin) || (float) $currentMin <= 0) {
+                            $productModel = product::find($createdItem->product_id);
+                            $fallback = null;
+                            if ($productModel && !empty($productModel->min_price) && (float)$productModel->min_price > 0) {
+                                $fallback = $productModel->min_price;
+                            } else {
+                                $fallback = $createdItem->cost;
+                            }
+
+                            // update only if we have a fallback value
+                            if ($fallback !== null) {
+                                $createdItem->min_price = (float) $fallback;
+                                $createdItem->save();
+                            }
+                        }
+                    }
+                }
             }
 
             // CREATE PAYMENT RECORD IF PAYMENT AMOUNT > 0

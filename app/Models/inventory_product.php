@@ -24,6 +24,7 @@ class inventory_product extends Model
         'min_price',
         'mrp',
         'amount',
+        'discount',
         'product_id',
         'inventory_id',
         'batch_number',
@@ -37,6 +38,7 @@ class inventory_product extends Model
      */
     protected $casts = [
         'cost' => 'decimal:2',
+        'discount' => 'decimal:2',
         'amount' => 'decimal:2',
         'min_price' => 'decimal:2',
         'mrp' => 'decimal:2',

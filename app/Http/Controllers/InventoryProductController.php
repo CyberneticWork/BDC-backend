@@ -31,6 +31,9 @@ class InventoryProductController extends Controller
             'min_price' => ['required', 'numeric', 'min:0'],
             'mrp' => ['required', 'numeric', 'min:0'],
             'amount' => ['required', 'numeric', 'min:0'],
+            'discount' => ['nullable', 'numeric', 'min:0'],
+            // frontend may send per-product discount as `product_discount` or `productDiscount`
+            'product_discount' => ['nullable', 'numeric', 'min:0'],
             'product_id' => ['required', 'exists:products,id'],
             'inventory_id' => ['required', 'exists:inventories,id'],
             'batch_number' => ['nullable', 'string', 'max:255'],
@@ -38,6 +41,10 @@ class InventoryProductController extends Controller
         ]);
 
         $data = $validated;
+        // map frontend `product_discount` into model `discount` column if provided
+        if (array_key_exists('product_discount', $validated)) {
+            $data['discount'] = $validated['product_discount'];
+        }
         $creatorId = Auth::id() ?: ($data['created_by'] ?? null);
         if (!$creatorId) {
             return response()->json(['message' => 'created_by is required when not authenticated'], 422);
@@ -79,12 +86,18 @@ class InventoryProductController extends Controller
             'product_id' => ['sometimes', 'required', 'exists:products,id'],
             'inventory_id' => ['sometimes', 'required', 'exists:inventories,id'],
             'batch_number' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'product_discount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
         ]);
 
         $data = $validated;
         if (array_key_exists('batch_number', $data)) {
             $batch = trim((string)($data['batch_number'] ?? ''));
             $data['batch_number'] = $batch === '' ? null : $batch;
+        }
+
+        // map product_discount to discount for updates
+        if (array_key_exists('product_discount', $data)) {
+            $data['discount'] = $data['product_discount'];
         }
 
         $inventoryProduct->update($data);
