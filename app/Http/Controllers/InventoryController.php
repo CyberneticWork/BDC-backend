@@ -248,7 +248,7 @@ class InventoryController extends Controller
 
                     // For GRN / Purchase Order / Purchase Return / Sales Order / Invoice, map frontend per-line discount
                     // into the inventory item's `discount` column so per-product discounts are preserved.
-                    if (in_array($documentType, ['grn', 'purchase_order', 'purchase_return', 'sales_order', 'invoice'], true)) {
+                    if (in_array($documentType, ['grn', 'purchase_order', 'purchase_return', 'sales_order', 'invoice', 'sales_return'], true)) {
                         $payload['discount'] = (float) $lineDiscount;
                     }
 
@@ -282,7 +282,7 @@ class InventoryController extends Controller
                     'created_by' => $creatorId,
                 ];
 
-                if (in_array($documentType, ['grn', 'purchase_order', 'purchase_return', 'sales_order', 'invoice'], true)) {
+                if (in_array($documentType, ['grn', 'purchase_order', 'purchase_return', 'sales_order', 'invoice', 'sales_return'], true)) {
                     $payload['discount'] = (float) $rootDiscount;
                 }
 
@@ -608,7 +608,7 @@ class InventoryController extends Controller
             $recordData = [
                 'voucherNumber' => $voucherNumber,
                 'amount' => $amount,
-                'paid_value' => $paid_value,
+                'paid_value' => $paymentAmount,
                 'discountValue' => $discountValue,
                 'referNumber' => $referNumber,
                 'refervoucherNumber' => $referVoucherNumber,
