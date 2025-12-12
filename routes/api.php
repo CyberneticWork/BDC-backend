@@ -384,7 +384,7 @@ Route::get('/grn', [InventoryController::class, 'listGrns']); //for get all GRNs
 Route::get('/invoices/next', [InventoryController::class, 'nextInv']); //for next Invoice number
 Route::get('/stock-transfer/next', [InventoryController::class, 'nextStockTransfer']); // next Stock Transfer number
 Route::get('/salesOrder', [InventoryController::class, 'listSalesOrders']); //for get all salesOrder
-Route::get('/invoices', [InventoryController::class, 'listInvoices']); //for get all invoices
+
 Route::post('/salesOrder', [InventoryController::class, 'storeSalesOrder']);
 Route::get('/salesOrder/next', [InventoryController::class, 'nextSalesOrder']); //for next Sales Order number
 Route::get('/salesreturn/next', [InventoryController::class, 'nextSalesReturn']); //for next Sales Return number
@@ -406,3 +406,6 @@ Route::apiResource('centers', CentersController::class);
 
 });
 
+
+
+Route::get('/invoices', [InventoryController::class, 'listInvoices']); //for get all invoices

@@ -210,7 +210,9 @@ class InventoryController extends Controller
                 $lineCost = $line['unitPrice'] ?? $line['cost'] ?? data_get($line, 'pivot.cost', 0);
                 $lineMinPrice = $line['min_price'] ?? $line['minPrice'] ?? data_get($line, 'pivot.min_price', 0);
                 $lineMrp = $line['mrp'] ?? data_get($line, 'pivot.mrp', 0);
-                $lineAmount = $line['amount'] ?? $line['total'] ?? data_get($line, 'pivot.amount');
+                // Accept explicit per-line totals from frontend: amount, total, line_net, line_total, lineTotal
+                // Prefer `line_net`/`lineNet` when frontend provides net line amount after discounts
+                $lineAmount = $line['amount'] ?? $line['total'] ?? $line['line_net'] ?? $line['lineNet'] ?? $line['line_total'] ?? $line['lineTotal'] ?? data_get($line, 'pivot.amount');
                 $lineBatchNumber = $line['batch_number']
                     ?? $line['batchNumber']
                     ?? $line['batch']
@@ -228,8 +230,8 @@ class InventoryController extends Controller
                     }
                 }
 
-                // Extract per-line product discount (frontend may send `product_discount`)
-                $lineDiscount = $line['product_discount'] ?? $line['productDiscount'] ?? $line['discount'] ?? $line['line_discount'] ?? 0;
+                // Extract per-line product discount (frontend may send `product_discount`, `lineDiscountInput`, or `discountPerUnit`)
+                $lineDiscount = $line['lineDiscountInput'] ?? $line['discountPerUnit'] ?? $line['discount_per_unit'] ?? $line['product_discount'] ?? $line['productDiscount'] ?? $line['discount'] ?? $line['line_discount'] ?? 0;
 
                 // Only add valid line items with product and quantity
                 if ($productId && $lineQty > 0) {
@@ -244,9 +246,9 @@ class InventoryController extends Controller
                         'created_by' => $creatorId,
                     ];
 
-                    // For GRN / Purchase Order / Purchase Return, map frontend `product_discount`
+                    // For GRN / Purchase Order / Purchase Return / Sales Order / Invoice, map frontend per-line discount
                     // into the inventory item's `discount` column so per-product discounts are preserved.
-                    if (in_array($documentType, ['grn', 'purchase_order', 'purchase_return'], true)) {
+                    if (in_array($documentType, ['grn', 'purchase_order', 'purchase_return', 'sales_order', 'invoice'], true)) {
                         $payload['discount'] = (float) $lineDiscount;
                     }
 
@@ -265,7 +267,8 @@ class InventoryController extends Controller
                 $rootBatchNumber = $request->input('batch_number')
                     ?? $request->input('batchNumber')
                     ?? $request->input('batch');
-                $rootDiscount = $request->input('product_discount') ?? $request->input('productDiscount') ?? $request->input('discount') ?? 0;
+                // Accept discountPerUnit or product_discount keys at root level as well
+                $rootDiscount = $request->input('discountPerUnit') ?? $request->input('discount_per_unit') ?? $request->input('product_discount') ?? $request->input('productDiscount') ?? $request->input('discount') ?? 0;
 
                 $payload = [
                     'product_id' => (int) $rootProductId,
@@ -273,12 +276,13 @@ class InventoryController extends Controller
                     'cost' => $unitPrice,
                     'min_price' => (float) ($request->input('min_price') ?? $request->input('minPrice') ?? 0),
                     'mrp' => (float) ($request->input('mrp') ?? 0),
-                    'amount' => (float) ($request->input('lineAmount') ?? ($quantity * $unitPrice)),
+                    // Prefer explicit per-line totals if provided by frontend: favor `line_net`/`lineNet`
+                    'amount' => (float) ($request->input('line_net') ?? $request->input('lineNet') ?? $request->input('line_total') ?? $request->input('lineTotal') ?? $request->input('lineAmount') ?? ($quantity * $unitPrice)),
                     'batch_number' => $this->normalizeBatchNumber($rootBatchNumber),
                     'created_by' => $creatorId,
                 ];
 
-                if (in_array($documentType, ['grn', 'purchase_order', 'purchase_return'], true)) {
+                if (in_array($documentType, ['grn', 'purchase_order', 'purchase_return', 'sales_order', 'invoice'], true)) {
                     $payload['discount'] = (float) $rootDiscount;
                 }
 
@@ -1289,7 +1293,7 @@ class InventoryController extends Controller
             }
         }
 
-        // Attach `current_stock` and `batches` to each item
+        // Attach `current_stock`, `batches` and ensure `min_price` to each item
         foreach ($records as $rec) {
             $center = $rec->center_id;
             foreach ($rec->items as $it) {
@@ -1297,6 +1301,20 @@ class InventoryController extends Controller
                 $key = ($center ? $center : '') . '|' . ($pid ? $pid : '');
                 $it->current_stock = isset($stockMap[$key]) ? (int) $stockMap[$key] : 0;
                 $it->batches = $batchMap[$key] ?? [];
+
+                // Ensure min_price is populated for client: prefer item's stored min_price,
+                // otherwise fallback to product.min_price or the item's cost.
+                $currentMin = $it->min_price ?? 0;
+                if (empty($currentMin) || (float)$currentMin <= 0) {
+                    $productModel = $it->product ?? product::find($it->product_id);
+                    $fallback = null;
+                    if ($productModel && !empty($productModel->min_price) && (float)$productModel->min_price > 0) {
+                        $fallback = $productModel->min_price;
+                    } else {
+                        $fallback = $it->cost ?? 0;
+                    }
+                    $it->min_price = (float) ($fallback ?? 0);
+                }
             }
         }
 
@@ -2045,6 +2063,7 @@ class InventoryController extends Controller
                 'mrp' => $mrp,
                 'amount' => (float) $amount,
                 'batch_number' => $line['batch_number'] ?? $line['batchNumber'] ?? $line['batch'] ?? null,
+                'product_discount' => $line['product_discount'] ?? $line['discount'] ?? $line['productDiscount'] ?? 0,
             ];
         }
 
@@ -2093,24 +2112,40 @@ class InventoryController extends Controller
             }
         }
 
-        if (!$request->has('center_id') && $request->has('center')) {
-            $normalizations['center_id'] = $request->input('center');
+        if (!$request->has('center_id')) {
+            if ($request->has('centerId')) {
+                $normalizations['center_id'] = $request->input('centerId');
+            } elseif ($request->has('center')) {
+                $normalizations['center_id'] = $request->input('center');
+            }
         }
 
-        if (!$request->has('supplier_id') && $request->has('supplier')) {
-            $normalizations['supplier_id'] = $request->input('supplier');
+        if (!$request->has('supplier_id')) {
+            if ($request->has('supplierId')) {
+                $normalizations['supplier_id'] = $request->input('supplierId');
+            } elseif ($request->has('supplier')) {
+                $normalizations['supplier_id'] = $request->input('supplier');
+            }
         }
 
-        if (!$request->has('referNumber') && $request->has('refNumber')) {
-            $normalizations['referNumber'] = $request->input('refNumber');
+        if (!$request->has('referNumber')) {
+            if ($request->has('refNumber')) {
+                $normalizations['referNumber'] = $request->input('refNumber');
+            } elseif ($request->has('referenceNumber')) {
+                $normalizations['referNumber'] = $request->input('referenceNumber');
+            }
         }
 
         if (!$request->has('discountValue') && $request->has('discountTotal')) {
             $normalizations['discountValue'] = $request->input('discountTotal');
         }
 
-        if (!$request->has('amount') && $request->has('subtotal')) {
-            $normalizations['amount'] = $request->input('subtotal');
+        if (!$request->has('amount')) {
+            if ($request->has('subtotal')) {
+                $normalizations['amount'] = $request->input('subtotal');
+            } elseif ($request->has('totalAmount')) {
+                $normalizations['amount'] = $request->input('totalAmount');
+            }
         }
 
         if (!$request->has('paid_value') && $request->has('paidValue')) {
