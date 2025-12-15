@@ -167,7 +167,7 @@ class TimeCardController extends Controller
                     if ($outTime->lt($shiftEnd)) {
                         $entryType = 0;
                         $status = 'Early OUT';
-                        $pairedInCard = null;
+                        // REMOVED: $pairedInCard = null;  <-- KEEP pairedInCard for OT calculation
                     } else {
                         $entryType = 2;
                         $status = 'OUT';
@@ -215,7 +215,8 @@ class TimeCardController extends Controller
             'actual_date' => $actual_date,
         ]);
 
-        if ($status === 'OUT' && $pairedInCard) {
+        // CHANGED: process OT for both OUT and Early OUT
+        if (in_array($status, ['OUT', 'Early OUT']) && $pairedInCard) {
             $referenceDate = $actual_date ?? $pairedInCard->date;
             $this->processOvertimeForOutPunch($employee, $timeCard, $pairedInCard, $shift, $referenceDate);
         }
@@ -312,7 +313,7 @@ class TimeCardController extends Controller
                 if ($outTime->lt($shiftEnd)) {
                     $entryType = 0; // Early OUT
                     $status = 'Early OUT';
-                    $pairedInCard = null;
+                    // REMOVED: $pairedInCard = null;  <-- KEEP pairedInCard for OT calculation
                 } else {
                     $entryType = 2; // OUT
                     $status = 'OUT';
@@ -325,7 +326,7 @@ class TimeCardController extends Controller
 
                 $entryType = 2; // OUT
                 $status = 'OUT';
-                $actual_date = $lastCard->date; // Save the last IN's date to actual_date
+                $actual_date = $lastCard->date;
             }
         } else {
             // No previous IN, or last was OUT/Leave: this is a new IN
@@ -361,7 +362,8 @@ class TimeCardController extends Controller
             'actual_date' => $actual_date, // will be null unless cross-day OUT
         ]);
 
-        if ($status === 'OUT' && $pairedInCard) {
+        // CHANGED: process OT for both OUT and Early OUT
+        if (in_array($status, ['OUT', 'Early OUT']) && $pairedInCard) {
             $referenceDate = $actual_date ?? $pairedInCard->date;
             $this->processOvertimeForOutPunch($employee, $timeCard, $pairedInCard, $shift, $referenceDate);
         }
@@ -650,7 +652,7 @@ class TimeCardController extends Controller
                     if ($outTime->lt($shiftEnd)) {
                         $entryType = 0; // Early OUT
                         $status = 'Early OUT';
-                        $pairedInCard = null;
+                        // REMOVED: $pairedInCard = null;  <-- KEEP pairedInCard for OT calculation
                     } else {
                         $entryType = 2; // OUT
                         $status = 'OUT';
@@ -701,7 +703,8 @@ class TimeCardController extends Controller
             'actual_date' => $actual_date,
         ]);
 
-        if ($status === 'OUT' && $pairedInCard) {
+        // CHANGED: process OT for both OUT and Early OUT
+        if (in_array($status, ['OUT', 'Early OUT']) && $pairedInCard) {
             $referenceDate = $actual_date ?? $pairedInCard->date;
             $this->processOvertimeForOutPunch($employee, $timeCard, $pairedInCard, $shift, $referenceDate);
         }
@@ -1226,7 +1229,7 @@ class TimeCardController extends Controller
                         ]);
                         $results['imported']++;
                         
-                        if ($statusUpper === 'OUT' && $lastInCard) {
+                        if (in_array($statusUpper, ['OUT', 'Early OUT']) && $lastInCard) {
                             $referenceDate = $actual_date ?? $lastInCard->date;
                             $this->processOvertimeForOutPunch($employee, $timeCard, $lastInCard, $shift, $referenceDate);
                         }
