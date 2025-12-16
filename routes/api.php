@@ -44,6 +44,7 @@ use App\Http\Controllers\CentersController;
 use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\InventoryProductController;
 use App\Http\Controllers\InventoryStockController;
+use App\Http\Controllers\LeaveSettingController;
 
 
 Route::get('/user', function (Request $request) {
@@ -404,7 +405,10 @@ Route::apiResource('inventory-products', InventoryProductController::class);
 Route::get('/inventory-stocks/all', [InventoryStockController::class, 'all']);
 Route::get('products/inventory/details', [ProductController::class, 'inventoryDetails']);
 Route::apiResource('centers', CentersController::class);
-
+// Leave Settings routes
+Route::apiResource('leave-settings', LeaveSettingController::class);
+Route::get('/leave-settings/type/{type}', [LeaveSettingController::class, 'getByType']);
+Route::get('/leave-settings/active/summary', [LeaveSettingController::class, 'getActiveSummary']);
 });
 
 Route::middleware('auth:sanctum')->group(function () {
