@@ -8,19 +8,18 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class LeaveSetting extends Model
 {
-     use SoftDeletes;
+    use HasFactory;
+    use SoftDeletes;
 
     protected $fillable = [
         'employee_type',
         'annual_leave_days',
         'number_of_quarters',
-        'quarters',
         'is_active',
         'description',
     ];
 
     protected $casts = [
-        'quarters' => 'array',
         'is_active' => 'boolean',
         'annual_leave_days' => 'integer',
         'number_of_quarters' => 'integer',
@@ -35,12 +34,11 @@ class LeaveSetting extends Model
             return $this->annual_leave_days ?? 0;
         }
 
-        // For permanent employees, sum up quarter leave days
-        if ($this->quarters) {
-            return collect($this->quarters)->sum('leave_days');
+        if ($this->relationLoaded('quarters')) {
+            return $this->quarters->sum('leave_days');
         }
 
-        return 0;
+        return (int) $this->quarters()->sum('leave_days');
     }
 
     /**
@@ -57,5 +55,10 @@ class LeaveSetting extends Model
     public function scopeByType($query, string $type)
     {
         return $query->where('employee_type', $type);
+    }
+
+    public function quarters()
+    {
+        return $this->hasMany(LeaveSettingQuarter::class)->orderBy('quarter_number');
     }
 }
