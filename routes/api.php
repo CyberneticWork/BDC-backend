@@ -362,7 +362,7 @@ Route::get('products/inventory/details', [ProductController::class, 'inventoryDe
 //  Customer routes
 Route::get('/customer/email/{email}', [CustomerController::class, 'getByEmail']);
 Route::get('/customer/type/{typeId}', [CustomerController::class, 'getByType']);
-Route::get('/customer/name/{name}', [CustomerController::class, 'getByName']);
+
 
 // Product Type routes
 Route::apiResource('product-types', ProductTypeController::class);
@@ -388,6 +388,7 @@ Route::get('/salesOrder', [InventoryController::class, 'listSalesOrders']); //fo
 Route::post('/salesOrder', [InventoryController::class, 'storeSalesOrder']);
 Route::get('/salesOrder/next', [InventoryController::class, 'nextSalesOrder']); //for next Sales Order number
 Route::get('/salesreturn/next', [InventoryController::class, 'nextSalesReturn']); //for next Sales Return number
+Route::get('/invoices', [InventoryController::class, 'listInvoices']); //for get all invoices
 Route::post('/invoices', [InventoryController::class, 'storeInvoice']);
 Route::post('/salesreturn', [InventoryController::class, 'storeSalesReturn']);
 Route::get('/salesreturn', [InventoryController::class, 'listSalesReturns']); //for get pending salesReturn
@@ -408,4 +409,5 @@ Route::apiResource('centers', CentersController::class);
 
 
 
-Route::get('/invoices', [InventoryController::class, 'listInvoices']); //for get all invoices
+
+Route::get('/customer/name/{name}', [CustomerController::class, 'getByName']);
