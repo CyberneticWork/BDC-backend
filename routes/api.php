@@ -77,6 +77,8 @@ Route::apiResource('allowances', AllowancesController::class);
 Route::get('/allowance/by-company-or-department', [AllowancesController::class, 'getAllowancesByCompanyOrDepartment']);
 Route::get('/deduction/by-company-or-department', [DeductionController::class, 'getDeductionsByCompanyOrDepartment']);
 Route::get('/leave-masters/{employeeId}/counts', [LeaveMasterController::class, 'getLeaveRecordCountsByEmployee']);
+// Leave eligibility endpoint - get eligible leave types and available balance for an employee
+Route::get('/leave-masters/eligibility', [LeaveMasterController::class, 'getLeaveEligibility']);
 Route::apiResource('deductions', DeductionController::class);
 Route::apiResource('leave-calendars', LeaveCalenderController::class);
 Route::apiResource('companies', CompanyController::class);
@@ -118,7 +120,6 @@ Route::get('/Leave-Master/{employeeId}/counts', [LeaveMasterController::class, '
 Route::get('/Leave-Master/status/pending', [LeaveMasterController::class, 'getPendingLeaveRecords']);
 Route::get('/Leave-Master/status/approved', [LeaveMasterController::class, 'getApprovedLeaveRecords']);
 Route::get('/Leave-Master/status/hr-approved', [LeaveMasterController::class, 'getHRApprovedLeaveRecords']);
-
 
 Route::get('/time-cards', [TimeCardController::class, 'index']);
 
