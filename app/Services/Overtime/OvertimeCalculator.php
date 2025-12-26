@@ -37,12 +37,26 @@ class OvertimeCalculator
         $eveningRegularWindow = $this->buildEveningRegularWindow($shift, $shiftStart, $shiftEnd);
         $eveningSpecialWindow = $this->buildEveningSpecialWindow($shift, $eveningRegularWindow, $compensation?->ot_evening_special);
 
+        // Get rate model for threshold calculations
+        $rateModel = ShiftOvertimeRate::where('shift_id', $shift->id)->whereNull('deleted_at')->first();
+
+        // NEW: Check if we should round up the work end time to OT window end
+        $workEndForCalculation = $this->checkAndApplyRoundUp(
+            $workEnd,
+            $morningRegularWindow,
+            $eveningRegularWindow,
+            $rateModel
+        );
+
         $hours = [
-            'morning_regular' => $this->overlapHours($workStart, $workEnd, $morningRegularWindow),
-            'morning_special' => $this->overlapHours($workStart, $workEnd, $morningSpecialWindow),
-            'evening_regular' => $this->overlapHours($workStart, $workEnd, $eveningRegularWindow),
-            'evening_special' => $this->overlapHours($workStart, $workEnd, $eveningSpecialWindow),
+            'morning_regular' => $this->overlapHours($workStart, $workEndForCalculation, $morningRegularWindow),
+            'morning_special' => $this->overlapHours($workStart, $workEndForCalculation, $morningSpecialWindow),
+            'evening_regular' => $this->overlapHours($workStart, $workEndForCalculation, $eveningRegularWindow),
+            'evening_special' => $this->overlapHours($workStart, $workEndForCalculation, $eveningSpecialWindow),
         ];
+
+        // Track if round-up was applied (for meta info)
+        $roundUpApplied = !$workEnd->eq($workEndForCalculation);
 
         if (!($compensation?->ot_morning)) {
             $hours['morning_regular'] = 0.0;
@@ -58,8 +72,8 @@ class OvertimeCalculator
         }
 
         // --- IGNORE THRESHOLD LOGIC (chunked multiples) ---
-        $rateModel = ShiftOvertimeRate::where('shift_id', $shift->id)->whereNull('deleted_at')->first();
-        if ($rateModel && !empty($rateModel->ignore_hours_threshold)) {
+        // Only apply threshold logic if round-up was NOT applied
+        if (!$roundUpApplied && $rateModel && !empty($rateModel->ignore_hours_threshold)) {
             $thresholdConfig = $rateModel->ignore_hours_threshold;
             $thHours = (float)($thresholdConfig['hours'] ?? 0);
             $thMinutes = (float)($thresholdConfig['minutes'] ?? 0);
@@ -128,8 +142,92 @@ class OvertimeCalculator
                 'ot_multiplier' => $otMultiplier,
                 'holiday_multiplier' => $holidayMultiplier,
                 'total_monthly_hours' => $totalMonthlyHours,
+                'round_up_applied' => $roundUpApplied, // NEW: Track if round-up was applied
             ],
         ];
+    }
+
+    /**
+     * NEW: Check if the employee's OUT time is within half of the ignore threshold
+     * from the OT window end time, and if so, round up to the OT end time.
+     * 
+     * Logic:
+     * - If (OT window end time - employee OUT time) <= (ignore threshold / 2)
+     * - Then round the OUT time to the OT window end time
+     * - Otherwise, keep the original OUT time
+     */
+    private function checkAndApplyRoundUp(
+        Carbon $workEnd,
+        ?array $morningWindow,
+        ?array $eveningWindow,
+        ?ShiftOvertimeRate $rateModel
+    ): Carbon {
+        // If no rate model or no threshold configured, return original
+        if (!$rateModel || empty($rateModel->ignore_hours_threshold)) {
+            return $workEnd->copy();
+        }
+
+        $thresholdConfig = $rateModel->ignore_hours_threshold;
+        $thHours = (float)($thresholdConfig['hours'] ?? 0);
+        $thMinutes = (float)($thresholdConfig['minutes'] ?? 0);
+        $thresholdMinutes = (int) round(($thHours * 60.0) + $thMinutes);
+
+        // If threshold is 0, no round-up logic applies
+        if ($thresholdMinutes <= 0) {
+            return $workEnd->copy();
+        }
+
+        // Half threshold in minutes for round-up check
+        $halfThresholdMinutes = $thresholdMinutes / 2.0;
+
+        // Check evening window first (most common case for end-of-day)
+        if ($eveningWindow) {
+            [, $eveningEnd] = $eveningWindow;
+            if ($eveningEnd) {
+                $roundUpResult = $this->shouldRoundUpToWindowEnd($workEnd, $eveningEnd, $halfThresholdMinutes);
+                if ($roundUpResult !== null) {
+                    return $roundUpResult;
+                }
+            }
+        }
+
+        // Check morning window
+        if ($morningWindow) {
+            [, $morningEnd] = $morningWindow;
+            if ($morningEnd) {
+                $roundUpResult = $this->shouldRoundUpToWindowEnd($workEnd, $morningEnd, $halfThresholdMinutes);
+                if ($roundUpResult !== null) {
+                    return $roundUpResult;
+                }
+            }
+        }
+
+        // No round-up applicable
+        return $workEnd->copy();
+    }
+
+    /**
+     * Check if workEnd should be rounded up to windowEnd.
+     * Returns the rounded Carbon time if applicable, or null if not.
+     * 
+     * Condition: workEnd < windowEnd AND (windowEnd - workEnd) <= halfThresholdMinutes
+     */
+    private function shouldRoundUpToWindowEnd(Carbon $workEnd, Carbon $windowEnd, float $halfThresholdMinutes): ?Carbon
+    {
+        // Only round up if work end is BEFORE window end (employee left early but close to end)
+        if ($workEnd->greaterThanOrEqualTo($windowEnd)) {
+            return null;
+        }
+
+        // Calculate the difference in minutes between window end and work end
+        $diffMinutes = $workEnd->diffInMinutes($windowEnd, false);
+
+        // If the difference is within half the threshold, round up
+        if ($diffMinutes > 0 && $diffMinutes <= $halfThresholdMinutes) {
+            return $windowEnd->copy();
+        }
+
+        return null;
     }
 
     private function combineDateTime(Carbon $reference, ?string $time): ?Carbon
