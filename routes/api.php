@@ -46,6 +46,9 @@ use App\Http\Controllers\InventoryProductController;
 use App\Http\Controllers\InventoryStockController;
 use App\Http\Controllers\LeaveSettingController;
 
+use App\Http\Controllers\SingleEntryReportController;
+use App\Http\Controllers\AttendanceReportController;
+use App\Http\Controllers\AbsentReportController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -431,3 +434,8 @@ Route::post('/shift-overtime-rates/{shiftId}/calculate', [ShiftOvertimeRateContr
 
 // Then the standard resource routes
 Route::apiResource('shift-overtime-rates', ShiftOvertimeRateController::class);
+
+// Reports: Single Entry (Time Cards)
+Route::get('/reports/time-cards/single-entry', [SingleEntryReportController::class, 'index']);
+Route::get('/reports/time-cards/attendance', [AttendanceReportController::class, 'index']);
+Route::get('/reports/time-cards/absent', [AbsentReportController::class, 'index']);
