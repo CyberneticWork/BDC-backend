@@ -104,6 +104,27 @@ class InventoryController extends Controller
         if ($discountValue === null) {
             $discountValue = $request->input('totalDiscount');
         }
+        $discountPayload = $request->input('discount', []);
+        $discountLevelPayload = $request->input('discountLevel', []);
+        $invoicePayload = $request->input('invoice', []);
+
+        // Extract discount level ID from various frontend payload shapes
+        $discountLevelId = $request->input('discountLevelId')
+            ?? $request->input('discount_level_id')
+            ?? $request->input('discountLevel_id')
+            ?? data_get($discountPayload, 'discountLevelId')
+            ?? data_get($discountPayload, 'discountLevel_id')
+            ?? data_get($discountPayload, 'discount_level_id')
+            ?? data_get($discountPayload, 'id')
+            ?? data_get($discountLevelPayload, 'id')
+            ?? data_get($discountLevelPayload, 'discountLevelId')
+            ?? data_get($discountLevelPayload, 'discountLevel_id')
+            ?? data_get($discountLevelPayload, 'discount_level_id')
+            ?? data_get($invoicePayload, 'discountLevelId')
+            ?? data_get($invoicePayload, 'discountLevel_id')
+            ?? data_get($invoicePayload, 'discount_level_id')
+            ?? data_get($invoicePayload, 'discountLevel.id')
+            ?? data_get($invoicePayload, 'discountLevel.discountLevel_id');
         // don't default to 0 here yet - later we cast and set a default
 
         // Total amount handling
@@ -179,6 +200,7 @@ class InventoryController extends Controller
         $paid_value = (float) ($paid_value ?? 0);
         $referVoucherNumber = $referVoucherNumberInput ? (string) $referVoucherNumberInput : null;
         $isRef = (bool) ($isRefInput ?? false);
+        $discountLevelId = $discountLevelId ? (int) $discountLevelId : null;
 
         // AUTHENTICATION CHECK - Ensure we have a valid creator
         $creatorId = optional($request->user())->id ?? $request->input('created_by');
@@ -593,7 +615,7 @@ class InventoryController extends Controller
         $transferDate = $paymentInput['transferDate'] ?? $paymentInput['transfer_date'] ?? null;
 
         // DATABASE TRANSACTION - Atomic persistence of inventory, items, and payment
-        $result = DB::transaction(function () use ($documentType, $request, $discountValue, $amount, $paid_value, $referNumber, $referVoucherNumber, $center_id, $supplier_id, $customer_id, $from_center, $to_center, $status, $creatorId, $linePayloads, $stockLines, $stockCenterId, $paymentAmount, $paymentMode, $paymentNote, $bankName, $chequeNo, $chequeDate, $referenceNo, $transferDate, $isRef, $isConfirmed, $shouldApplySalesReturnStockImmediately) {
+        $result = DB::transaction(function () use ($documentType, $request, $discountValue, $amount, $paid_value, $referNumber, $referVoucherNumber, $center_id, $supplier_id, $customer_id, $from_center, $to_center, $status, $creatorId, $linePayloads, $stockLines, $stockCenterId, $paymentAmount, $paymentMode, $paymentNote, $bankName, $chequeNo, $chequeDate, $referenceNo, $transferDate, $isRef, $isConfirmed, $shouldApplySalesReturnStockImmediately, $discountLevelId) {
             // VOUCHER NUMBER GENERATION BASED ON DOCUMENT TYPE
             $voucherNumber = $request->input('voucherNumber')
                 ?? $request->input('voucher_number')
@@ -610,6 +632,7 @@ class InventoryController extends Controller
                 'amount' => $amount,
                 'paid_value' => $paymentAmount,
                 'discountValue' => $discountValue,
+                'discountLevel_id' => $discountLevelId,
                 'referNumber' => $referNumber,
                 'refervoucherNumber' => $referVoucherNumber,
                 'center_id' => $center_id,

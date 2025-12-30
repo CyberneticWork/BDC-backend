@@ -97,7 +97,7 @@ Route::get('/salary/update/status', [SalaryProcessController::class, 'updateSlar
 Route::apiResource('customers', CustomerController::class);
 
 // Discount levels (index/show are public; create/update/delete require auth)
-Route::get('/discount-levels', [DiscountLevelController::class, 'index']);
+
 Route::get('/discount-levels/{id}', [DiscountLevelController::class, 'show']);
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/discount-levels', [DiscountLevelController::class, 'store']);
@@ -292,8 +292,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::delete('/pms/kpi-weights/{id}', [PmsController::class, 'deleteKpiWeight']);
 });
 
-// Supplier routes
-Route::apiResource('suppliers', SupplierController::class);
+
 
 
 // Employee Performance Evaluation endpoints (these can remain public if needed)
@@ -383,7 +382,7 @@ Route::get('/grn/next', [InventoryController::class, 'nextGrn']);  //for next GR
 Route::get('/grn', [InventoryController::class, 'listGrns']); //for get all GRNs
 Route::get('/invoices/next', [InventoryController::class, 'nextInv']); //for next Invoice number
 Route::get('/stock-transfer/next', [InventoryController::class, 'nextStockTransfer']); // next Stock Transfer number
-Route::get('/salesOrder', [InventoryController::class, 'listSalesOrders']); //for get all salesOrder
+
 
 Route::post('/salesOrder', [InventoryController::class, 'storeSalesOrder']);
 Route::get('/salesOrder/next', [InventoryController::class, 'nextSalesOrder']); //for next Sales Order number
@@ -411,3 +410,8 @@ Route::apiResource('centers', CentersController::class);
 
 
 Route::get('/customer/name/{name}', [CustomerController::class, 'getByName']);
+// Supplier routes
+Route::apiResource('suppliers', SupplierController::class);
+Route::get('/salesOrder', [InventoryController::class, 'listSalesOrders']); //for get all salesOrder
+Route::get('/discount-levels', [DiscountLevelController::class, 'index']);
+Route::get('/purchaseOrder', [InventoryController::class, 'listPurchaseOrders']);//for get all purchase orders
