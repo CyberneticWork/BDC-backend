@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use App\Models\leave_master;
 use App\Models\employee;
+use App\Models\LeaveSetting;
 use Illuminate\Support\Facades\Validator;
 use App\Mail\LeaveApprovedMail;
 use App\Mail\LeaveRejectedMail;
@@ -76,15 +77,15 @@ class LeaveMasterController extends Controller
         // Check if employee is in probationary period
         if ($orgAssignment && $orgAssignment->probationary_period) {
             // If in probation, process special leave rules
-            $requestDate = isset($request->leave_date) 
-                ? Carbon::parse($request->leave_date) 
+            $requestDate = isset($request->leave_date)
+                ? Carbon::parse($request->leave_date)
                 : (isset($request->leave_from) ? Carbon::parse($request->leave_from) : now());
-            
+
             $leaveBalance = $this->calculateProbationaryLeaveBalance($request->employee_id, $requestDate);
-            
+
             // Calculate requested half-days
             $requestedHalfDays = $request->is_half_day ? 1 : ($fullDuration * 2);
-            
+
             // If full day leave during probation, only allow if they have enough balance
             if (!$request->is_half_day) {
                 if (!$request->force_continue) {
@@ -94,19 +95,19 @@ class LeaveMasterController extends Controller
                         'continue_allowed' => true
                     ], 422);
                 }
-                
+
                 // Check if they have enough balance for at least half of the request
                 if ($leaveBalance['available_half_days'] < 1) {
                     // Not enough balance for even a half day
                     if (!$request->force_continue) {
                         return response()->json([
-                            'message' => 'You have used all your probationary leave allowance (' . 
+                            'message' => 'You have used all your probationary leave allowance (' .
                                          $leaveBalance['max_accrued'] . ' half-days for the year)',
                             'limit_exceeded' => true,
                             'continue_allowed' => true
                         ], 422);
                     }
-                    
+
                     // They're forcing through with no balance - all is over limit
                     $overLimitInfo = [
                         'reason' => 'probation_no_balance',
@@ -116,11 +117,11 @@ class LeaveMasterController extends Controller
                     // They have some balance - calculate how much is valid vs over limit
                     $validHalfDays = min($leaveBalance['available_half_days'], $requestedHalfDays);
                     $overLimitHalfDays = $requestedHalfDays - $validHalfDays;
-                    
+
                     // Convert back to days
                     $validDuration = $validHalfDays / 2;
                     $overLimitDuration = $overLimitHalfDays / 2;
-                    
+
                     if ($overLimitDuration > 0) {
                         $overLimitInfo = [
                             'reason' => 'probation_partial_balance',
@@ -133,13 +134,13 @@ class LeaveMasterController extends Controller
                 if ($leaveBalance['available_half_days'] < 1) {
                     if (!$request->force_continue) {
                         return response()->json([
-                            'message' => 'You have used all your probationary leave allowance (' . 
+                            'message' => 'You have used all your probationary leave allowance (' .
                                          $leaveBalance['max_accrued'] . ' half-days for the year)',
                             'limit_exceeded' => true,
                             'continue_allowed' => true
                         ], 422);
                     }
-                    
+
                     // They're forcing through with no balance
                     $overLimitInfo = [
                         'reason' => 'probation_no_balance',
@@ -231,7 +232,7 @@ class LeaveMasterController extends Controller
         }
 
         $leaveMaster = leave_master::findOrFail($id);
-        
+
         // Check for duplicate leave requests (excluding current record)
         $duplicateCheck = $this->checkForDuplicateLeave($request, $id);
         if ($duplicateCheck) {
@@ -249,15 +250,15 @@ class LeaveMasterController extends Controller
         // Check if employee is in probationary period
         if ($orgAssignment && $orgAssignment->probationary_period) {
             // If in probation, process special leave rules
-            $requestDate = isset($request->leave_date) 
-                ? Carbon::parse($request->leave_date) 
+            $requestDate = isset($request->leave_date)
+                ? Carbon::parse($request->leave_date)
                 : (isset($request->leave_from) ? Carbon::parse($request->leave_from) : now());
-            
+
             $leaveBalance = $this->calculateProbationaryLeaveBalance($request->employee_id, $requestDate);
-            
+
             // Calculate requested half-days
             $requestedHalfDays = $request->is_half_day ? 1 : ($fullDuration * 2);
-            
+
             // If full day leave during probation, only allow if they have enough balance
             if (!$request->is_half_day) {
                 if (!$request->force_continue) {
@@ -267,19 +268,19 @@ class LeaveMasterController extends Controller
                         'continue_allowed' => true
                     ], 422);
                 }
-                
+
                 // Check if they have enough balance for at least half of the request
                 if ($leaveBalance['available_half_days'] < 1) {
                     // Not enough balance for even a half day
                     if (!$request->force_continue) {
                         return response()->json([
-                            'message' => 'You have used all your probationary leave allowance (' . 
+                            'message' => 'You have used all your probationary leave allowance (' .
                                          $leaveBalance['max_accrued'] . ' half-days for the year)',
                             'limit_exceeded' => true,
                             'continue_allowed' => true
                         ], 422);
                     }
-                    
+
                     // They're forcing through with no balance - all is over limit
                     $overLimitInfo = [
                         'reason' => 'probation_no_balance',
@@ -289,11 +290,11 @@ class LeaveMasterController extends Controller
                     // They have some balance - calculate how much is valid vs over limit
                     $validHalfDays = min($leaveBalance['available_half_days'], $requestedHalfDays);
                     $overLimitHalfDays = $requestedHalfDays - $validHalfDays;
-                    
+
                     // Convert back to days
                     $validDuration = $validHalfDays / 2;
                     $overLimitDuration = $overLimitHalfDays / 2;
-                    
+
                     if ($overLimitDuration > 0) {
                         $overLimitInfo = [
                             'reason' => 'probation_partial_balance',
@@ -306,13 +307,13 @@ class LeaveMasterController extends Controller
                 if ($leaveBalance['available_half_days'] < 1) {
                     if (!$request->force_continue) {
                         return response()->json([
-                            'message' => 'You have used all your probationary leave allowance (' . 
+                            'message' => 'You have used all your probationary leave allowance (' .
                                          $leaveBalance['max_accrued'] . ' half-days for the year)',
                             'limit_exceeded' => true,
                             'continue_allowed' => true
                         ], 422);
                     }
-                    
+
                     // They're forcing through with no balance
                     $overLimitInfo = [
                         'reason' => 'probation_no_balance',
@@ -561,7 +562,7 @@ class LeaveMasterController extends Controller
     private function checkForDuplicateLeave($request, $excludeId = null)
     {
         $employeeId = $request->employee_id;
-        
+
         // Case 1: Single day leave (leave_date is set)
         if ($request->leave_date) {
             $query = leave_master::where('employee_id', $employeeId)
@@ -573,22 +574,22 @@ class LeaveMasterController extends Controller
                                 ->where('leave_to', '>=', $request->leave_date);
                           });
                 });
-            
+
             if ($excludeId) {
                 $query->where('id', '!=', $excludeId);
             }
-            
+
             $existing = $query->first();
 
             if ($existing) {
-                $existingDateStr = $existing->leave_date 
-                    ? $existing->leave_date 
+                $existingDateStr = $existing->leave_date
+                    ? $existing->leave_date
                     : "{$existing->leave_from} to {$existing->leave_to}";
-                
+
                 return "You already have a leave request for {$request->leave_date}. Existing leave: {$existingDateStr} ({$existing->status})";
             }
         }
-        
+
         // Case 2: Date range leave (leave_from and leave_to are set)
         if ($request->leave_from && $request->leave_to) {
             $query = leave_master::where('employee_id', $employeeId)
@@ -606,22 +607,304 @@ class LeaveMasterController extends Controller
                         });
                     });
                 });
-            
+
             if ($excludeId) {
                 $query->where('id', '!=', $excludeId);
             }
-            
+
             $existing = $query->first();
 
             if ($existing) {
-                $existingDateStr = $existing->leave_date 
-                    ? $existing->leave_date 
+                $existingDateStr = $existing->leave_date
+                    ? $existing->leave_date
                     : "{$existing->leave_from} to {$existing->leave_to}";
-                
+
                 return "Your requested leave period ({$request->leave_from} to {$request->leave_to}) overlaps with an existing leave: {$existingDateStr} ({$existing->status})";
             }
         }
-        
+
         return null; // No duplicates found
+    }
+
+    /**
+     * Get leave eligibility for an employee based on probation status and join date
+     *
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getLeaveEligibility(Request $request)
+    {
+        $empNumber = $request->query('emp_number');
+        $employeeId = $request->query('employee_id');
+
+        if (!$empNumber && !$employeeId) {
+            return response()->json([
+                'message' => 'Either emp_number or employee_id is required'
+            ], 422);
+        }
+
+        // Find employee by EMP number or ID
+        if ($empNumber) {
+            $employee = employee::with('organizationAssignment')
+                ->where('attendance_employee_no', $empNumber)
+                ->first();
+        } else {
+            $employee = employee::with('organizationAssignment')
+                ->find($employeeId);
+        }
+
+        if (!$employee) {
+            return response()->json([
+                'message' => 'Employee not found'
+            ], 404);
+        }
+
+        $orgAssignment = $employee->organizationAssignment;
+        $today = Carbon::now();
+        $currentYear = $today->year;
+
+        // Check if employee is on probation
+        $isProbation = $orgAssignment && $orgAssignment->probationary_period;
+
+        if ($isProbation) {
+            // Probation employee logic - use existing probationary leave balance
+            $leaveBalance = $this->calculateProbationaryLeaveBalance($employee->id);
+
+            // Get probation leave settings
+            $probationSettings = LeaveSetting::with(['quarters.leaveTypes'])
+                ->where('employee_type', 'probation')
+                ->where('is_active', true)
+                ->first();
+
+            $eligibleLeaves = [];
+
+            if ($probationSettings) {
+                // For probation, they typically only get Casual Leave
+                $eligibleLeaves[] = [
+                    'leave_type' => 'Casual Leave',
+                    'total_days' => $probationSettings->annual_leave_days ?? 7,
+                    'used_days' => $leaveBalance['used_half_days'] / 2, // Convert half-days to days
+                    'available_days' => $leaveBalance['available_half_days'] / 2,
+                    'is_half_day_only' => true,
+                    'note' => 'Probation employees can only take half-day leaves'
+                ];
+            }
+
+            return response()->json([
+                'employee_id' => $employee->id,
+                'emp_number' => $employee->attendance_employee_no,
+                'employee_name' => $employee->display_name ?? $employee->name_with_initials,
+                'is_probation' => true,
+                'join_date' => $orgAssignment->date_of_joining ?? null,
+                'eligible_leaves' => $eligibleLeaves,
+                'current_quarter' => null,
+                'full_year_access' => false
+            ]);
+        }
+
+        // Non-probation employee logic
+        $joinDate = $orgAssignment ? Carbon::parse($orgAssignment->date_of_joining) : null;
+        $joinYear = $joinDate ? $joinDate->year : null;
+
+        // Get permanent employee leave settings
+        $permanentSettings = LeaveSetting::with(['quarters.leaveTypes'])
+            ->where('employee_type', 'permanent')
+            ->where('is_active', true)
+            ->first();
+
+        if (!$permanentSettings) {
+            return response()->json([
+                'message' => 'No leave settings found for permanent employees'
+            ], 404);
+        }
+
+        $eligibleLeaves = [];
+        $currentQuarter = null;
+        $fullYearAccess = false;
+
+        // Check if join date year is different from current year
+        if ($joinYear && $joinYear < $currentYear) {
+            // Employee joined in a previous year - full year access to all leave types
+            $fullYearAccess = true;
+
+            // Aggregate all leave types from all quarters
+            $allLeaveTypes = [];
+            foreach ($permanentSettings->quarters as $quarter) {
+                foreach ($quarter->leaveTypes as $leaveType) {
+                    $typeName = $leaveType->name;
+                    if (!isset($allLeaveTypes[$typeName])) {
+                        $allLeaveTypes[$typeName] = 0;
+                    }
+                    $allLeaveTypes[$typeName] += $leaveType->days;
+                }
+            }
+
+            // Calculate used leaves for each type this year
+            foreach ($allLeaveTypes as $typeName => $totalDays) {
+                $usedDays = $this->getUsedLeaveDays($employee->id, $typeName, $currentYear);
+                $eligibleLeaves[] = [
+                    'leave_type' => $typeName,
+                    'total_days' => $totalDays,
+                    'used_days' => $usedDays,
+                    'available_days' => max(0, $totalDays - $usedDays),
+                    'is_half_day_only' => false,
+                    'note' => null
+                ];
+            }
+        } else {
+            // Employee joined this year - use quarter-based eligibility
+            $currentMonth = $today->month;
+
+            // Find the current quarter based on the current month
+            foreach ($permanentSettings->quarters as $quarter) {
+                if ($currentMonth >= $quarter->start_month && $currentMonth <= $quarter->end_month) {
+                    $currentQuarter = [
+                        'quarter_number' => $quarter->quarter_number,
+                        'name' => $quarter->name,
+                        'start_month' => $quarter->start_month,
+                        'end_month' => $quarter->end_month
+                    ];
+
+                    // Get leave types for this quarter
+                    foreach ($quarter->leaveTypes as $leaveType) {
+                        $typeName = $leaveType->name;
+                        $totalDays = $leaveType->days;
+                        $usedDays = $this->getUsedLeaveDaysInQuarter(
+                            $employee->id,
+                            $typeName,
+                            $currentYear,
+                            $quarter->start_month,
+                            $quarter->end_month
+                        );
+
+                        $eligibleLeaves[] = [
+                            'leave_type' => $typeName,
+                            'total_days' => $totalDays,
+                            'used_days' => $usedDays,
+                            'available_days' => max(0, $totalDays - $usedDays),
+                            'is_half_day_only' => false,
+                            'note' => "Quarter {$quarter->quarter_number}: {$quarter->name}"
+                        ];
+                    }
+                    break;
+                }
+            }
+
+            // Also add leaves from previous quarters (accumulated)
+            foreach ($permanentSettings->quarters as $quarter) {
+                if ($quarter->end_month < $currentMonth) {
+                    // This is a past quarter - add remaining leaves
+                    foreach ($quarter->leaveTypes as $leaveType) {
+                        $typeName = $leaveType->name;
+                        $totalDays = $leaveType->days;
+                        $usedDays = $this->getUsedLeaveDaysInQuarter(
+                            $employee->id,
+                            $typeName,
+                            $currentYear,
+                            $quarter->start_month,
+                            $quarter->end_month
+                        );
+                        $remainingDays = max(0, $totalDays - $usedDays);
+
+                        if ($remainingDays > 0) {
+                            // Find if this leave type already exists in eligibleLeaves
+                            $found = false;
+                            foreach ($eligibleLeaves as &$leave) {
+                                if ($leave['leave_type'] === $typeName) {
+                                    $leave['total_days'] += $totalDays;
+                                    $leave['used_days'] += $usedDays;
+                                    $leave['available_days'] = max(0, $leave['total_days'] - $leave['used_days']);
+                                    $leave['note'] = 'Includes carried over from previous quarters';
+                                    $found = true;
+                                    break;
+                                }
+                            }
+                            unset($leave);
+
+                            if (!$found) {
+                                $eligibleLeaves[] = [
+                                    'leave_type' => $typeName,
+                                    'total_days' => $totalDays,
+                                    'used_days' => $usedDays,
+                                    'available_days' => $remainingDays,
+                                    'is_half_day_only' => false,
+                                    'note' => "Carried over from Quarter {$quarter->quarter_number}"
+                                ];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return response()->json([
+            'employee_id' => $employee->id,
+            'emp_number' => $employee->attendance_employee_no,
+            'employee_name' => $employee->display_name ?? $employee->name_with_initials,
+            'is_probation' => false,
+            'join_date' => $orgAssignment->date_of_joining ?? null,
+            'join_year' => $joinYear,
+            'current_year' => $currentYear,
+            'eligible_leaves' => $eligibleLeaves,
+            'current_quarter' => $currentQuarter,
+            'full_year_access' => $fullYearAccess
+        ]);
+    }
+
+    /**
+     * Get used leave days for a specific leave type in a year
+     */
+    private function getUsedLeaveDays($employeeId, $leaveType, $year)
+    {
+        $leaves = leave_master::where('employee_id', $employeeId)
+            ->where('leave_type', $leaveType)
+            ->whereIn('status', ['Approved', 'HR_Approved', 'Pending'])
+            ->where(function ($query) use ($year) {
+                $query->whereYear('leave_date', $year)
+                    ->orWhereYear('leave_from', $year);
+            })
+            ->get();
+
+        $totalDays = 0;
+        foreach ($leaves as $leave) {
+            if ($leave->is_half_day) {
+                $totalDays += 0.5;
+            } else {
+                $totalDays += $leave->leave_duration ?? 1;
+            }
+        }
+
+        return $totalDays;
+    }
+
+    /**
+     * Get used leave days for a specific leave type within a quarter
+     */
+    private function getUsedLeaveDaysInQuarter($employeeId, $leaveType, $year, $startMonth, $endMonth)
+    {
+        $startDate = Carbon::create($year, $startMonth, 1)->startOfMonth();
+        $endDate = Carbon::create($year, $endMonth, 1)->endOfMonth();
+
+        $leaves = leave_master::where('employee_id', $employeeId)
+            ->where('leave_type', $leaveType)
+            ->whereIn('status', ['Approved', 'HR_Approved', 'Pending'])
+            ->where(function ($query) use ($startDate, $endDate) {
+                $query->whereBetween('leave_date', [$startDate, $endDate])
+                    ->orWhere(function ($q) use ($startDate, $endDate) {
+                        $q->whereBetween('leave_from', [$startDate, $endDate]);
+                    });
+            })
+            ->get();
+
+        $totalDays = 0;
+        foreach ($leaves as $leave) {
+            if ($leave->is_half_day) {
+                $totalDays += 0.5;
+            } else {
+                $totalDays += $leave->leave_duration ?? 1;
+            }
+        }
+
+        return $totalDays;
     }
 }
