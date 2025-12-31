@@ -87,6 +87,7 @@ class InventoryController extends Controller
         }
 
         // Discount value handling - accept multiple field names used by frontend
+        // Purchase Return UI may send `total_discount` or `totalDiscount`.
         $discountValue = $request->input('discountValue');
         if ($discountValue === null) {
             $discountValue = $request->input('discount');
@@ -97,6 +98,33 @@ class InventoryController extends Controller
         if ($discountValue === null) {
             $discountValue = $request->input('discount_total');
         }
+        if ($discountValue === null) {
+            $discountValue = $request->input('total_discount');
+        }
+        if ($discountValue === null) {
+            $discountValue = $request->input('totalDiscount');
+        }
+        $discountPayload = $request->input('discount', []);
+        $discountLevelPayload = $request->input('discountLevel', []);
+        $invoicePayload = $request->input('invoice', []);
+
+        // Extract discount level ID from various frontend payload shapes
+        $discountLevelId = $request->input('discountLevelId')
+            ?? $request->input('discount_level_id')
+            ?? $request->input('discountLevel_id')
+            ?? data_get($discountPayload, 'discountLevelId')
+            ?? data_get($discountPayload, 'discountLevel_id')
+            ?? data_get($discountPayload, 'discount_level_id')
+            ?? data_get($discountPayload, 'id')
+            ?? data_get($discountLevelPayload, 'id')
+            ?? data_get($discountLevelPayload, 'discountLevelId')
+            ?? data_get($discountLevelPayload, 'discountLevel_id')
+            ?? data_get($discountLevelPayload, 'discount_level_id')
+            ?? data_get($invoicePayload, 'discountLevelId')
+            ?? data_get($invoicePayload, 'discountLevel_id')
+            ?? data_get($invoicePayload, 'discount_level_id')
+            ?? data_get($invoicePayload, 'discountLevel.id')
+            ?? data_get($invoicePayload, 'discountLevel.discountLevel_id');
         // don't default to 0 here yet - later we cast and set a default
 
         // Total amount handling
@@ -172,6 +200,7 @@ class InventoryController extends Controller
         $paid_value = (float) ($paid_value ?? 0);
         $referVoucherNumber = $referVoucherNumberInput ? (string) $referVoucherNumberInput : null;
         $isRef = (bool) ($isRefInput ?? false);
+        $discountLevelId = $discountLevelId ? (int) $discountLevelId : null;
 
         // AUTHENTICATION CHECK - Ensure we have a valid creator
         $creatorId = optional($request->user())->id ?? $request->input('created_by');
@@ -203,7 +232,9 @@ class InventoryController extends Controller
                 $lineCost = $line['unitPrice'] ?? $line['cost'] ?? data_get($line, 'pivot.cost', 0);
                 $lineMinPrice = $line['min_price'] ?? $line['minPrice'] ?? data_get($line, 'pivot.min_price', 0);
                 $lineMrp = $line['mrp'] ?? data_get($line, 'pivot.mrp', 0);
-                $lineAmount = $line['amount'] ?? $line['total'] ?? data_get($line, 'pivot.amount');
+                // Accept explicit per-line totals from frontend: amount, total, line_net, line_total, lineTotal
+                // Prefer `line_net`/`lineNet` when frontend provides net line amount after discounts
+                $lineAmount = $line['amount'] ?? $line['total'] ?? $line['line_net'] ?? $line['lineNet'] ?? $line['line_total'] ?? $line['lineTotal'] ?? data_get($line, 'pivot.amount');
                 $lineBatchNumber = $line['batch_number']
                     ?? $line['batchNumber']
                     ?? $line['batch']
@@ -221,9 +252,12 @@ class InventoryController extends Controller
                     }
                 }
 
+                // Extract per-line product discount (frontend may send `product_discount`, `lineDiscountInput`, or `discountPerUnit`)
+                $lineDiscount = $line['lineDiscountInput'] ?? $line['discountPerUnit'] ?? $line['discount_per_unit'] ?? $line['product_discount'] ?? $line['productDiscount'] ?? $line['discount'] ?? $line['line_discount'] ?? 0;
+
                 // Only add valid line items with product and quantity
                 if ($productId && $lineQty > 0) {
-                    $linePayloads[] = [
+                    $payload = [
                         'product_id' => (int) $productId,
                         'quantity' => $lineQty,
                         'cost' => (float) $lineCost,
@@ -233,6 +267,14 @@ class InventoryController extends Controller
                         'batch_number' => $this->normalizeBatchNumber($lineBatchNumber),
                         'created_by' => $creatorId,
                     ];
+
+                    // For GRN / Purchase Order / Purchase Return / Sales Order / Invoice, map frontend per-line discount
+                    // into the inventory item's `discount` column so per-product discounts are preserved.
+                    if (in_array($documentType, ['grn', 'purchase_order', 'purchase_return', 'sales_order', 'invoice', 'sales_return'], true)) {
+                        $payload['discount'] = (float) $lineDiscount;
+                    }
+
+                    $linePayloads[] = $payload;
                 }
             }
         }
@@ -247,16 +289,26 @@ class InventoryController extends Controller
                 $rootBatchNumber = $request->input('batch_number')
                     ?? $request->input('batchNumber')
                     ?? $request->input('batch');
-                $linePayloads[] = [
+                // Accept discountPerUnit or product_discount keys at root level as well
+                $rootDiscount = $request->input('discountPerUnit') ?? $request->input('discount_per_unit') ?? $request->input('product_discount') ?? $request->input('productDiscount') ?? $request->input('discount') ?? 0;
+
+                $payload = [
                     'product_id' => (int) $rootProductId,
                     'quantity' => $quantity,
                     'cost' => $unitPrice,
                     'min_price' => (float) ($request->input('min_price') ?? $request->input('minPrice') ?? 0),
                     'mrp' => (float) ($request->input('mrp') ?? 0),
-                    'amount' => (float) ($request->input('lineAmount') ?? ($quantity * $unitPrice)),
+                    // Prefer explicit per-line totals if provided by frontend: favor `line_net`/`lineNet`
+                    'amount' => (float) ($request->input('line_net') ?? $request->input('lineNet') ?? $request->input('line_total') ?? $request->input('lineTotal') ?? $request->input('lineAmount') ?? ($quantity * $unitPrice)),
                     'batch_number' => $this->normalizeBatchNumber($rootBatchNumber),
                     'created_by' => $creatorId,
                 ];
+
+                if (in_array($documentType, ['grn', 'purchase_order', 'purchase_return', 'sales_order', 'invoice', 'sales_return'], true)) {
+                    $payload['discount'] = (float) $rootDiscount;
+                }
+
+                $linePayloads[] = $payload;
             }
         }
 
@@ -563,7 +615,7 @@ class InventoryController extends Controller
         $transferDate = $paymentInput['transferDate'] ?? $paymentInput['transfer_date'] ?? null;
 
         // DATABASE TRANSACTION - Atomic persistence of inventory, items, and payment
-        $result = DB::transaction(function () use ($documentType, $request, $discountValue, $amount, $paid_value, $referNumber, $referVoucherNumber, $center_id, $supplier_id, $customer_id, $from_center, $to_center, $status, $creatorId, $linePayloads, $stockLines, $stockCenterId, $paymentAmount, $paymentMode, $paymentNote, $bankName, $chequeNo, $chequeDate, $referenceNo, $transferDate, $isRef, $isConfirmed, $shouldApplySalesReturnStockImmediately) {
+        $result = DB::transaction(function () use ($documentType, $request, $discountValue, $amount, $paid_value, $referNumber, $referVoucherNumber, $center_id, $supplier_id, $customer_id, $from_center, $to_center, $status, $creatorId, $linePayloads, $stockLines, $stockCenterId, $paymentAmount, $paymentMode, $paymentNote, $bankName, $chequeNo, $chequeDate, $referenceNo, $transferDate, $isRef, $isConfirmed, $shouldApplySalesReturnStockImmediately, $discountLevelId) {
             // VOUCHER NUMBER GENERATION BASED ON DOCUMENT TYPE
             $voucherNumber = $request->input('voucherNumber')
                 ?? $request->input('voucher_number')
@@ -578,8 +630,9 @@ class InventoryController extends Controller
             $recordData = [
                 'voucherNumber' => $voucherNumber,
                 'amount' => $amount,
-                'paid_value' => $paid_value,
+                'paid_value' => $paymentAmount,
                 'discountValue' => $discountValue,
+                'discountLevel_id' => $discountLevelId,
                 'referNumber' => $referNumber,
                 'refervoucherNumber' => $referVoucherNumber,
                 'center_id' => $center_id,
@@ -633,6 +686,32 @@ class InventoryController extends Controller
             $createdItems = [];
             if (!empty($linePayloads)) {
                 $createdItems = $record->items()->createMany($linePayloads);
+
+                // Ensure `min_price` is set for GRN and Purchase Return items.
+                // Some clients may omit min_price when creating these documents.
+                // If missing or zero, fall back to the product's `min_price`
+                // (if available) or to the item's cost.
+                if (in_array($documentType, ['grn', 'purchase_return'], true)) {
+                    foreach ($createdItems as $createdItem) {
+                        // Use property names as stored on the model
+                        $currentMin = $createdItem->min_price ?? 0;
+                        if (empty($currentMin) || (float) $currentMin <= 0) {
+                            $productModel = product::find($createdItem->product_id);
+                            $fallback = null;
+                            if ($productModel && !empty($productModel->min_price) && (float)$productModel->min_price > 0) {
+                                $fallback = $productModel->min_price;
+                            } else {
+                                $fallback = $createdItem->cost;
+                            }
+
+                            // update only if we have a fallback value
+                            if ($fallback !== null) {
+                                $createdItem->min_price = (float) $fallback;
+                                $createdItem->save();
+                            }
+                        }
+                    }
+                }
             }
 
             // CREATE PAYMENT RECORD IF PAYMENT AMOUNT > 0
@@ -1237,7 +1316,7 @@ class InventoryController extends Controller
             }
         }
 
-        // Attach `current_stock` and `batches` to each item
+        // Attach `current_stock`, `batches` and ensure `min_price` to each item
         foreach ($records as $rec) {
             $center = $rec->center_id;
             foreach ($rec->items as $it) {
@@ -1245,6 +1324,20 @@ class InventoryController extends Controller
                 $key = ($center ? $center : '') . '|' . ($pid ? $pid : '');
                 $it->current_stock = isset($stockMap[$key]) ? (int) $stockMap[$key] : 0;
                 $it->batches = $batchMap[$key] ?? [];
+
+                // Ensure min_price is populated for client: prefer item's stored min_price,
+                // otherwise fallback to product.min_price or the item's cost.
+                $currentMin = $it->min_price ?? 0;
+                if (empty($currentMin) || (float)$currentMin <= 0) {
+                    $productModel = $it->product ?? product::find($it->product_id);
+                    $fallback = null;
+                    if ($productModel && !empty($productModel->min_price) && (float)$productModel->min_price > 0) {
+                        $fallback = $productModel->min_price;
+                    } else {
+                        $fallback = $it->cost ?? 0;
+                    }
+                    $it->min_price = (float) ($fallback ?? 0);
+                }
             }
         }
 
@@ -1993,6 +2086,7 @@ class InventoryController extends Controller
                 'mrp' => $mrp,
                 'amount' => (float) $amount,
                 'batch_number' => $line['batch_number'] ?? $line['batchNumber'] ?? $line['batch'] ?? null,
+                'product_discount' => $line['product_discount'] ?? $line['discount'] ?? $line['productDiscount'] ?? 0,
             ];
         }
 
@@ -2041,24 +2135,40 @@ class InventoryController extends Controller
             }
         }
 
-        if (!$request->has('center_id') && $request->has('center')) {
-            $normalizations['center_id'] = $request->input('center');
+        if (!$request->has('center_id')) {
+            if ($request->has('centerId')) {
+                $normalizations['center_id'] = $request->input('centerId');
+            } elseif ($request->has('center')) {
+                $normalizations['center_id'] = $request->input('center');
+            }
         }
 
-        if (!$request->has('supplier_id') && $request->has('supplier')) {
-            $normalizations['supplier_id'] = $request->input('supplier');
+        if (!$request->has('supplier_id')) {
+            if ($request->has('supplierId')) {
+                $normalizations['supplier_id'] = $request->input('supplierId');
+            } elseif ($request->has('supplier')) {
+                $normalizations['supplier_id'] = $request->input('supplier');
+            }
         }
 
-        if (!$request->has('referNumber') && $request->has('refNumber')) {
-            $normalizations['referNumber'] = $request->input('refNumber');
+        if (!$request->has('referNumber')) {
+            if ($request->has('refNumber')) {
+                $normalizations['referNumber'] = $request->input('refNumber');
+            } elseif ($request->has('referenceNumber')) {
+                $normalizations['referNumber'] = $request->input('referenceNumber');
+            }
         }
 
         if (!$request->has('discountValue') && $request->has('discountTotal')) {
             $normalizations['discountValue'] = $request->input('discountTotal');
         }
 
-        if (!$request->has('amount') && $request->has('subtotal')) {
-            $normalizations['amount'] = $request->input('subtotal');
+        if (!$request->has('amount')) {
+            if ($request->has('subtotal')) {
+                $normalizations['amount'] = $request->input('subtotal');
+            } elseif ($request->has('totalAmount')) {
+                $normalizations['amount'] = $request->input('totalAmount');
+            }
         }
 
         if (!$request->has('paid_value') && $request->has('paidValue')) {

@@ -104,7 +104,7 @@ Route::get('/salary/update/status', [SalaryProcessController::class, 'updateSlar
 Route::apiResource('customers', CustomerController::class);
 
 // Discount levels (index/show are public; create/update/delete require auth)
-Route::get('/discount-levels', [DiscountLevelController::class, 'index']);
+
 Route::get('/discount-levels/{id}', [DiscountLevelController::class, 'show']);
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/discount-levels', [DiscountLevelController::class, 'store']);
@@ -298,8 +298,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::delete('/pms/kpi-weights/{id}', [PmsController::class, 'deleteKpiWeight']);
 });
 
-// Supplier routes
-Route::apiResource('suppliers', SupplierController::class);
+
 
 
 // Employee Performance Evaluation endpoints (these can remain public if needed)
@@ -368,7 +367,7 @@ Route::get('products/inventory/details', [ProductController::class, 'inventoryDe
 //  Customer routes
 Route::get('/customer/email/{email}', [CustomerController::class, 'getByEmail']);
 Route::get('/customer/type/{typeId}', [CustomerController::class, 'getByType']);
-Route::get('/customer/name/{name}', [CustomerController::class, 'getByName']);
+
 
 // Product Type routes
 Route::apiResource('product-types', ProductTypeController::class);
@@ -389,11 +388,12 @@ Route::get('/grn/next', [InventoryController::class, 'nextGrn']);  //for next GR
 Route::get('/grn', [InventoryController::class, 'listGrns']); //for get all GRNs
 Route::get('/invoices/next', [InventoryController::class, 'nextInv']); //for next Invoice number
 Route::get('/stock-transfer/next', [InventoryController::class, 'nextStockTransfer']); // next Stock Transfer number
-Route::get('/salesOrder', [InventoryController::class, 'listSalesOrders']); //for get all salesOrder
-Route::get('/invoices', [InventoryController::class, 'listInvoices']); //for get all invoices
+
+
 Route::post('/salesOrder', [InventoryController::class, 'storeSalesOrder']);
 Route::get('/salesOrder/next', [InventoryController::class, 'nextSalesOrder']); //for next Sales Order number
 Route::get('/salesreturn/next', [InventoryController::class, 'nextSalesReturn']); //for next Sales Return number
+Route::get('/invoices', [InventoryController::class, 'listInvoices']); //for get all invoices
 Route::post('/invoices', [InventoryController::class, 'storeInvoice']);
 Route::post('/salesreturn', [InventoryController::class, 'storeSalesReturn']);
 Route::get('/salesreturn', [InventoryController::class, 'listSalesReturns']); //for get pending salesReturn
@@ -440,3 +440,12 @@ Route::apiResource('shift-overtime-rates', ShiftOvertimeRateController::class);
 Route::get('/reports/time-cards/single-entry', [SingleEntryReportController::class, 'index']);
 Route::get('/reports/time-cards/attendance', [AttendanceReportController::class, 'index']);
 Route::get('/reports/time-cards/absent', [AbsentReportController::class, 'index']);
+
+
+
+Route::get('/customer/name/{name}', [CustomerController::class, 'getByName']);
+// Supplier routes
+Route::apiResource('suppliers', SupplierController::class);
+Route::get('/salesOrder', [InventoryController::class, 'listSalesOrders']); //for get all salesOrder
+Route::get('/discount-levels', [DiscountLevelController::class, 'index']);
+Route::get('/purchaseOrder', [InventoryController::class, 'listPurchaseOrders']);//for get all purchase orders

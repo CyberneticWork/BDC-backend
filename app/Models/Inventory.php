@@ -24,6 +24,7 @@ class Inventory extends Model
         'amount',
         'paid_value',
         'discountValue',
+        'discountLevel_id',
         'referNumber',
         'refervoucherNumber',
         'is_ref',

@@ -13,6 +13,7 @@ return new class extends Migration {
             $table->float('amount')->default(0);
             $table->float('paid_value')->default(0);
             $table->float('discountValue')->default(0);
+            $table->foreignId('discountLevel_id')->nullable()->constrained('discount_levels')->nullOnDelete();
             $table->string('referNumber')->nullable();
             $table->string('refervoucherNumber')->nullable();
             $table->boolean('is_ref')->default(false);

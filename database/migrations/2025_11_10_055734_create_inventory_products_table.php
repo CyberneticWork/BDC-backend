@@ -19,6 +19,7 @@ return new class extends Migration
             $table->decimal('min_price', 10, 2);
             $table->decimal('mrp', 10, 2);
             $table->decimal('amount', 10, 2);
+            $table->decimal('discount', 10, 2)->default(0);
             $table->foreignId('product_id')->constrained('products')->restrictOnDelete();
             $table->foreignId('inventory_id')->constrained('inventory')->restrictOnDelete();
             $table->foreignId('created_by')->constrained('users')->restrictOnDelete();
