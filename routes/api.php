@@ -35,20 +35,13 @@ use App\Http\Controllers\CustomerCategoryController;
 use App\Http\Controllers\CustomerTypeController;
 use App\Http\Controllers\PerformanceEvaluationController;
 use App\Http\Controllers\PerformanceAppraisalController;
-use App\Http\Controllers\ShiftOvertimeRateController;
 use App\Http\Controllers\JournalEntryController;
 use App\Http\Controllers\DiscountLevelController;
 use App\Http\Controllers\ProductTypeController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\CentersController;
-use App\Http\Controllers\InventoryController;
-use App\Http\Controllers\InventoryProductController;
-use App\Http\Controllers\InventoryStockController;
-use App\Http\Controllers\LeaveSettingController;
+use App\Http\Controllers\ShiftOvertimeRateController;
 
-use App\Http\Controllers\SingleEntryReportController;
-use App\Http\Controllers\AttendanceReportController;
-use App\Http\Controllers\AbsentReportController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -76,12 +69,18 @@ Route::get('/emp/table', [EmployeeController::class, 'getEmployeesForTable']);
 Route::get('/emp/search', [EmployeeController::class, 'search']);
 Route::get('/emp/search/empno', [EmployeeController::class, 'searchByAttendanceNo']);
 Route::apiResource('loans', LoanController::class);
+// ✅ Special route FIRST
+Route::get('/allowances/by-company-or-department', [AllowancesController::class, 'getAllowancesByCompanyOrDepartment']);
+
+// ✅ (optional) remove this duplicate unless you really need it
+// Route::get('/allowance/by-company-or-department', [AllowancesController::class, 'getAllowancesByCompanyOrDepartment']);
+
 Route::apiResource('allowances', AllowancesController::class);
+
+
 Route::get('/allowance/by-company-or-department', [AllowancesController::class, 'getAllowancesByCompanyOrDepartment']);
 Route::get('/deduction/by-company-or-department', [DeductionController::class, 'getDeductionsByCompanyOrDepartment']);
 Route::get('/leave-masters/{employeeId}/counts', [LeaveMasterController::class, 'getLeaveRecordCountsByEmployee']);
-// Leave eligibility endpoint - get eligible leave types and available balance for an employee
-Route::get('/leave-masters/eligibility', [LeaveMasterController::class, 'getLeaveEligibility']);
 Route::apiResource('deductions', DeductionController::class);
 Route::apiResource('leave-calendars', LeaveCalenderController::class);
 Route::apiResource('companies', CompanyController::class);
@@ -104,7 +103,7 @@ Route::get('/salary/update/status', [SalaryProcessController::class, 'updateSlar
 Route::apiResource('customers', CustomerController::class);
 
 // Discount levels (index/show are public; create/update/delete require auth)
-
+Route::get('/discount-levels', [DiscountLevelController::class, 'index']);
 Route::get('/discount-levels/{id}', [DiscountLevelController::class, 'show']);
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/discount-levels', [DiscountLevelController::class, 'store']);
@@ -123,6 +122,7 @@ Route::get('/Leave-Master/{employeeId}/counts', [LeaveMasterController::class, '
 Route::get('/Leave-Master/status/pending', [LeaveMasterController::class, 'getPendingLeaveRecords']);
 Route::get('/Leave-Master/status/approved', [LeaveMasterController::class, 'getApprovedLeaveRecords']);
 Route::get('/Leave-Master/status/hr-approved', [LeaveMasterController::class, 'getHRApprovedLeaveRecords']);
+
 
 Route::get('/time-cards', [TimeCardController::class, 'index']);
 
@@ -298,7 +298,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::delete('/pms/kpi-weights/{id}', [PmsController::class, 'deleteKpiWeight']);
 });
 
-
+// Supplier routes
+Route::apiResource('suppliers', SupplierController::class);
 
 
 // Employee Performance Evaluation endpoints (these can remain public if needed)
@@ -337,6 +338,32 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/performance-evaluations/{id}/force', [App\Http\Controllers\PerformanceEvaluationController::class, 'forceDestroy']);
 });
 
+
+
+Route::apiResource('shift-overtime-rates', ShiftOvertimeRateController::class);
+
+// Dropdown route
+Route::get(
+  'shift-overtime-rates/shifts/dropdown',
+  [ShiftOvertimeRateController::class, 'getShifts']
+);
+
+// By shift
+Route::get(
+  'shift-overtime-rates/by-shift/{shiftId}',
+  [ShiftOvertimeRateController::class, 'getByShiftId']
+);
+
+// Calculate
+Route::post(
+  'shift-overtime-rates/{shiftId}/calculate',
+  [ShiftOvertimeRateController::class, 'calculateRates']
+);
+
+
+
+
+
 // Performance Appraisal routes - using the new controller
 Route::middleware('auth:sanctum')->group(function () {
     // CRUD operations
@@ -354,20 +381,16 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/performance-appraisals/{id}/force', [App\Http\Controllers\PerformanceAppraisalController::class, 'forceDestroy']);
     Route::get('/performance-appraisals/stats/overview', [App\Http\Controllers\PerformanceAppraisalController::class, 'getStats']);
 
-
+    //Center routes
+    Route::apiResource('centers', CentersController::class);
+    Route::apiResource('products', ProductController::class);
 
 });
-Route::middleware('auth:sanctum')->group(function () {
-    Route::post('/pms/kpi-task-assignments/check-weights', [PmsController::class, 'checkAssigneeWeights']);
-
-
-// Product routes
-Route::get('products/inventory/details', [ProductController::class, 'inventoryDetails']);
 
 //  Customer routes
 Route::get('/customer/email/{email}', [CustomerController::class, 'getByEmail']);
 Route::get('/customer/type/{typeId}', [CustomerController::class, 'getByType']);
-
+Route::get('/customer/name/{name}', [CustomerController::class, 'getByName']);
 
 // Product Type routes
 Route::apiResource('product-types', ProductTypeController::class);
@@ -378,74 +401,8 @@ Route::get('product-types/trashed/list', [ProductTypeController::class, 'getTras
 Route::get('product-types/stats/overview', [ProductTypeController::class, 'getStats']);
 Route::delete('product-types/{id}/force', [ProductTypeController::class, 'forceDestroy']);
 
-// Inventory routes
-Route::apiResource('products', ProductController::class);
-Route::apiResource('inventories', InventoryController::class);
-Route::get('/inventory-pending', [InventoryController::class, 'getPending']); // return all inventory records with status 'pending'
-Route::post('/inventory-approved', [InventoryController::class, 'getApproved']); // return all inventory records with status 'approved'
-Route::post('/grn', [InventoryController::class, 'store']);
-Route::get('/grn/next', [InventoryController::class, 'nextGrn']);  //for next GRN number
-Route::get('/grn', [InventoryController::class, 'listGrns']); //for get all GRNs
-Route::get('/invoices/next', [InventoryController::class, 'nextInv']); //for next Invoice number
-Route::get('/stock-transfer/next', [InventoryController::class, 'nextStockTransfer']); // next Stock Transfer number
-
-
-Route::post('/salesOrder', [InventoryController::class, 'storeSalesOrder']);
-Route::get('/salesOrder/next', [InventoryController::class, 'nextSalesOrder']); //for next Sales Order number
-Route::get('/salesreturn/next', [InventoryController::class, 'nextSalesReturn']); //for next Sales Return number
-Route::get('/invoices', [InventoryController::class, 'listInvoices']); //for get all invoices
-Route::post('/invoices', [InventoryController::class, 'storeInvoice']);
-Route::post('/salesreturn', [InventoryController::class, 'storeSalesReturn']);
-Route::get('/salesreturn', [InventoryController::class, 'listSalesReturns']); //for get pending salesReturn
-Route::post('/stock-transfer', [InventoryController::class, 'storeStockTransfer']);
-Route::get('/purchaseOrder/next', [InventoryController::class, 'nextPurchaseOrder']); //for next Purchase Order number
-Route::post('/purchaseOrder', [InventoryController::class, 'storePurchaseOrder']);
-Route::get('/purchaseOrder', [InventoryController::class, 'listPurchaseOrders']);//for get all purchase orders
-Route::get('/purchaseReturn/next', [InventoryController::class, 'nextPurchaseReturn']); //for next Purchase Return number
-Route::post('/purchaseReturn', [InventoryController::class, 'storePurchaseReturn']);
-Route::get('/stockVerification/next', [InventoryController::class, 'nextStockVerification']); // next Stock Verification number
-Route::post('/stockVerification', [InventoryController::class, 'storeStockVerification']);
-Route::apiResource('inventory-products', InventoryProductController::class);
-Route::get('/inventory-stocks/all', [InventoryStockController::class, 'all']);
-Route::get('products/inventory/details', [ProductController::class, 'inventoryDetails']);
-Route::apiResource('centers', CentersController::class);
-});
-
-// Leave Settings routes
-Route::apiResource('leave-settings', LeaveSettingController::class);
-Route::get('/leave-settings/type/{type}', [LeaveSettingController::class, 'getByType']);
-Route::get('/leave-settings/active/summary', [LeaveSettingController::class, 'getActiveSummary']);
-
+// Product routes
 Route::middleware('auth:sanctum')->group(function () {
     // Add this new route
     Route::post('/pms/kpi-task-assignments/check-weights', [PmsController::class, 'checkAssigneeWeights']);
 });
-
-Route::middleware('auth:sanctum')->group(function () {
-    Route::get('/rosters/trashed', [RosterController::class, 'getTrashed']);
-    Route::post('/rosters/{id}/restore', [RosterController::class, 'restore']);
-    Route::delete('/rosters/bulk-delete', [RosterController::class, 'bulkDestroy']);
-
-});
-
-// Shift Overtime Rates routes - MOVE THESE BEFORE apiResource
-Route::get('/shift-overtime-rates/shifts/dropdown', [ShiftOvertimeRateController::class, 'getShifts']);
-Route::get('/shift-overtime-rates/by-shift/{shiftId}', [ShiftOvertimeRateController::class, 'getByShiftId']);
-Route::post('/shift-overtime-rates/{shiftId}/calculate', [ShiftOvertimeRateController::class, 'calculateRates']);
-
-// Then the standard resource routes
-Route::apiResource('shift-overtime-rates', ShiftOvertimeRateController::class);
-
-// Reports: Single Entry (Time Cards)
-Route::get('/reports/time-cards/single-entry', [SingleEntryReportController::class, 'index']);
-Route::get('/reports/time-cards/attendance', [AttendanceReportController::class, 'index']);
-Route::get('/reports/time-cards/absent', [AbsentReportController::class, 'index']);
-
-
-
-Route::get('/customer/name/{name}', [CustomerController::class, 'getByName']);
-// Supplier routes
-Route::apiResource('suppliers', SupplierController::class);
-Route::get('/salesOrder', [InventoryController::class, 'listSalesOrders']); //for get all salesOrder
-Route::get('/discount-levels', [DiscountLevelController::class, 'index']);
-Route::get('/purchaseOrder', [InventoryController::class, 'listPurchaseOrders']);//for get all purchase orders

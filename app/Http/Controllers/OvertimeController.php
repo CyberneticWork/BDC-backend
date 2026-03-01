@@ -33,6 +33,7 @@ class OvertimeController extends Controller
                     if ($outTimeCard->actual_date) {
                         $inTimeCard = time_card::where('employee_id', $overtime->employee_id)
                             ->where('date', $outTimeCard->actual_date)
+                            
                             ->where('status', 'IN')
                             ->orderBy('time', 'desc')
                             ->first();
@@ -41,6 +42,7 @@ class OvertimeController extends Controller
                         $inTimeCard = time_card::where('employee_id', $overtime->employee_id)
                             ->where('date', $outTimeCard->date)
                             ->where('status', 'IN')
+                            ->where('time', '<=', $outTimeCard->time) // (optional; depends on how you store out time date)
                             ->orderBy('time', 'desc')
                             ->first();
                     }

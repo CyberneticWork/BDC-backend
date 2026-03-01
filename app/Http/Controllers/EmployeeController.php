@@ -249,7 +249,6 @@ class EmployeeController extends Controller
                 'primaryEmploymentBasic' => 'required|boolean',
                 'enableEpfEtf' => 'required|boolean',
                 'otActive' => 'required|boolean',
-                'otActiveSpecial' => 'required|boolean',
                 'earlyDeduction' => 'required|boolean',
                 'incrementActive' => 'required|boolean',
                 'nopayActive' => 'required|boolean',
@@ -257,12 +256,6 @@ class EmployeeController extends Controller
                 'eveningOt' => 'required|boolean',
                 'ot_morning_rate' => 'nullable|numeric',
                 'ot_night_rate' => 'nullable|numeric',
-
-                'morningOtSpecial' => 'required|boolean',
-                'ot_morning_rate_special' => 'nullable|numeric',
-                'ot_night_rate_special' => 'nullable|numeric',
-                'eveningOtSpecial' => 'required|boolean',
-
                 'budgetaryReliefAllowance2015' => 'required|boolean',
                 'budgetaryReliefAllowance2016' => 'required|boolean',
                 'stamp' => 'required|boolean',
@@ -291,7 +284,8 @@ class EmployeeController extends Controller
                 'currentStatus' => 'required|boolean',
                 'dayOff' => 'nullable|string'
             ]);
-
+            
+            /*
             // Add custom validation for NIC uniqueness
             $employeeNic = strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $personal['nicNumber']));
             $spouseNic = strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $personal['spouseNic']));
@@ -299,19 +293,21 @@ class EmployeeController extends Controller
             if ($employeeNic === $spouseNic) {
                 $validator->errors()->add("personal.spouseNic", "Spouse NIC cannot be the same as employee NIC.");
             }
+             */
 
-            // Validate Employee DOB vs Age
-            // if (isset($personal['dob'])) {
-            //     $employeeDob = Carbon::parse($personal['dob']);
-            //     $employeeAge = $employeeDob->diffInYears(Carbon::now());
 
-            // You can add age validation here if you have an employee age field
-            // For example, if you had an 'age' field in personal data:
-            // if (isset($personal['age']) && $personal['age'] != $employeeAge) {
-            //     $validator->errors()->add("personal.age", "Entered Age does not match Date of Birth.");
-            // }
-            // }
+            // Add custom validation for NIC uniqueness (SAFE)
+$employeeNic = strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $personal['nicNumber'] ?? ''));
 
+$spouseNicRaw = $personal['spouseNic'] ?? null;
+$spouseNic = $spouseNicRaw
+    ? strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $spouseNicRaw))
+    : null;
+
+if ($spouseNic && $employeeNic === $spouseNic) {
+    $validator->errors()->add("personal.spouseNic", "Spouse NIC cannot be the same as employee NIC.");
+}
+           
             // Validate Spouse DOB vs Age
             if (isset($personal['spouseDob']) && isset($personal['spouseAge'])) {
                 $spouseDob = Carbon::parse($personal['spouseDob']);
@@ -537,7 +533,6 @@ class EmployeeController extends Controller
                 'primary_emp_basic' => $compensation['primaryEmploymentBasic'],
                 'enable_epf_etf' => $compensation['enableEpfEtf'],
                 'ot_active' => $compensation['otActive'],
-                'ot_active_special' => $compensation['otActiveSpecial'],
                 'early_deduction' => $compensation['earlyDeduction'],
                 'increment_active' => $compensation['incrementActive'],
                 'active_nopay' => $compensation['nopayActive'],
@@ -545,12 +540,6 @@ class EmployeeController extends Controller
                 'ot_evening' => $compensation['eveningOt'],
                 'ot_morning_rate' => $compensation['ot_morning_rate'],
                 'ot_night_rate' => $compensation['ot_night_rate'],
-
-                'ot_morning_special' => $compensation['morningOtSpecial'],
-                'ot_evening_special' => $compensation['eveningOtSpecial'],
-                'ot_morning_rate_special' => $compensation['ot_morning_rate_special'],
-                'ot_night_rate_special' => $compensation['ot_night_rate_special'],
-
                 'br1' => $compensation['budgetaryReliefAllowance2015'],
                 'br2' => $compensation['budgetaryReliefAllowance2016'],
                 'stamp' => $compensation['stamp'],
@@ -780,7 +769,8 @@ class EmployeeController extends Controller
                 'currentStatus' => 'required|boolean',
                 'dayOff' => 'nullable|string'
             ]);
-
+            
+            /*
             // Add custom validation for NIC uniqueness
             $employeeNic = strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $personal['nicNumber']));
             $spouseNic = strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $personal['spouseNic']));
@@ -788,6 +778,19 @@ class EmployeeController extends Controller
             if ($employeeNic === $spouseNic) {
                 $validator->errors()->add("personal.spouseNic", "Spouse NIC cannot be the same as employee NIC.");
             }
+                */
+
+            // Add custom validation for NIC uniqueness (SAFE)
+$employeeNic = strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $personal['nicNumber'] ?? ''));
+
+$spouseNicRaw = $personal['spouseNic'] ?? null;
+$spouseNic = $spouseNicRaw
+    ? strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $spouseNicRaw))
+    : null;
+
+if ($spouseNic && $employeeNic === $spouseNic) {
+    $validator->errors()->add("personal.spouseNic", "Spouse NIC cannot be the same as employee NIC.");
+}
 
             // Validate Spouse DOB vs Age
             if (isset($personal['spouseDob']) && isset($personal['spouseAge'])) {

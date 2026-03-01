@@ -20,6 +20,19 @@ class loans extends Model
         'with_interest',
         'installment_count',
         'status',
+        
+    ];
+
+
+     // ✅ THIS FIXES "Array to string conversion"
+    protected $casts = [
+        'with_interest' => 'boolean',
+        'loan_amount' => 'float',
+        'installment_amount' => 'float',
+        'interest_rate_per_annum' => 'float',
+        'installment_count' => 'integer',
+        'schedule' => 'array', // JSON <-> array automatic
+        'start_from' => 'date',
     ];
 
     //relationships

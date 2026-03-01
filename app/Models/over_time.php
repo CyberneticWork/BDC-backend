@@ -9,6 +9,8 @@ class over_time extends Model
 {
     use SoftDeletes;
 
+    protected $table = 'over_times'; // ✅ make sure correct (most common)
+
     protected $fillable = [
         'employee_id',
         'shift_code',
@@ -49,6 +51,7 @@ class over_time extends Model
     }
     public function timeCard()
     {
-        return $this->belongsTo(time_card::class, 'time_cards_id', 'id');
+       // return $this->belongsTo(time_card::class, 'time_cards_id', 'id');
+       return $this->belongsTo(\App\Models\time_card::class, 'time_cards_id');
     }
 }

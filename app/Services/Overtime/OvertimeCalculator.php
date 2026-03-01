@@ -252,7 +252,7 @@ class OvertimeCalculator
 
         return $candidate;
     }
-
+/*
     private function buildMorningRegularWindow(shifts $shift, ?Carbon $shiftStart): ?array
     {
         if (!$shiftStart) {
@@ -266,11 +266,31 @@ class OvertimeCalculator
             return $this->makeWindowFromTimes($shiftStart, $startTime, $endTime, allowPast: true);
         }
 
+
+
         // Fallback (legacy) = 12h before shift start
         $start = $shiftStart->copy()->subHours(12);
         return [$start, $shiftStart->copy()];
     }
+*/
 
+
+
+private function buildMorningRegularWindow(shifts $shift, ?Carbon $shiftStart): ?array
+{
+    if (!$shiftStart) return null;
+
+    // ✅ REQUIRE BOTH
+    if ($shift->morning_ot_start && $shift->morning_ot_end) {
+        return $this->makeWindowFromTimes($shiftStart, $shift->morning_ot_start, $shift->morning_ot_end, allowPast: true);
+    }
+
+    // fallback (legacy) = 12h before shift start
+    $start = $shiftStart->copy()->subHours(12);
+    return [$start, $shiftStart->copy()];
+}
+
+/*
     private function buildEveningRegularWindow(shifts $shift, ?Carbon $shiftStart, ?Carbon $shiftEnd): ?array
     {
         if (!$shiftEnd) {
@@ -289,6 +309,25 @@ class OvertimeCalculator
         $end = $shiftEnd->copy()->addHours(12);
         return [$start, $end];
     }
+*/
+
+
+private function buildEveningRegularWindow(shifts $shift, ?Carbon $shiftStart, ?Carbon $shiftEnd): ?array
+{
+    if (!$shiftEnd) return null;
+
+    // ✅ REQUIRE BOTH
+    if ($shift->night_ot_start && $shift->night_ot_end) {
+        $base = $shiftStart ?? $shiftEnd;
+        return $this->buildEveningWindowWithTimes($base, $shiftEnd, $shift->night_ot_start, $shift->night_ot_end);
+    }
+
+    // fallback (legacy) = 12h after shift end
+    $start = $shiftEnd->copy();
+    $end = $shiftEnd->copy()->addHours(12);
+    return [$start, $end];
+}
+
 
     private function buildMorningSpecialWindow(shifts $shift, ?array $regularWindow, ?bool $specialEnabled): ?array
     {

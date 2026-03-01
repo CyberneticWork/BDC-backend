@@ -195,6 +195,8 @@ class AllowancesController extends Controller
         return response()->json(['data' => $departments], 200);
     }
 
+
+    /*
     public function getAllowancesByCompanyOrDepartment(Request $request)
     {
         $query = allowances::where('status', 'active');
@@ -215,7 +217,47 @@ class AllowancesController extends Controller
 
         return response()->json(['data' => $allowances], 200);
     }
+    */
 
+public function getAllowancesByCompanyOrDepartment(Request $request)
+{
+    $validator = Validator::make($request->all(), [
+        'company_id' => 'nullable|integer|exists:companies,id',
+        'department_id' => 'nullable|integer|exists:departments,id',
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json([
+            'message' => 'Validation failed',
+            'errors' => $validator->errors(),
+        ], 422);
+    }
+
+    $companyId = $request->input('company_id');
+    $departmentId = $request->input('department_id');
+
+    $query = allowances::query()
+        ->where('status', 'active')
+        ->with(['company:id,name', 'department:id,name']);
+
+    // ✅ if company_id given
+    if (!is_null($companyId) && $companyId !== '') {
+        $query->where('company_id', $companyId);
+    }
+
+    // ✅ if department_id given
+    if (!is_null($departmentId) && $departmentId !== '') {
+        $query->where('department_id', $departmentId);
+    }
+
+    $allowances = $query->orderBy('id', 'desc')->get();
+
+    // ✅ Always return 200 (frontend එකට easy)
+    return response()->json([
+        'data' => $allowances,
+        'count' => $allowances->count(),
+    ], 200);
+}
     /**
      * Download Excel template for allowances import
      */

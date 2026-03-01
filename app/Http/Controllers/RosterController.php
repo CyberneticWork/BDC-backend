@@ -14,14 +14,21 @@ class RosterController extends Controller
     public function index()
     {
         // Eager load to avoid N+1
-        $rosters = roster::with(['company', 'department', 'subDepartment', 'employee'])
+        $rosters = roster::with(['company', 'department', 'subDepartment', 'employee', 'shift'])
             ->orderBy('created_at', 'desc')
             ->get();
         $data = $rosters->map(function ($r) {
             return [
                 'id' => $r->id,
                 'roster_id' => $r->roster_id,
+                'shift_id' => $r->shift_code,
                 'shift_code' => $r->shift_code,
+                
+                'shift_name' => $r->shift?->shift_name ?? $r->shift?->shift_description,
+
+                'start_time' => $r->shift?->start_time ? substr($r->shift->start_time, 0, 5) : null,
+                'end_time'   => $r->shift?->end_time ? substr($r->shift->end_time, 0, 5) : null,
+
                 'company_id' => $r->company_id,
                 'company_name' => $r->company?->name,
                 'department_id' => $r->department_id,
@@ -344,13 +351,14 @@ class RosterController extends Controller
             'sub_department_id' => 'nullable|exists:sub_departments,id',
             'employee_id' => 'nullable|exists:employees,id',
             'roster_id' => 'nullable|string', // Add this line
+
         ]);
 
         if ($validator->fails()) {
             return response()->json(['errors' => $validator->errors()], 422);
         }
 
-        $query = roster::with(['company', 'department', 'subDepartment', 'employee'])
+        $query = roster::with(['company', 'department', 'subDepartment', 'employee', 'shift'])
             ->orderBy('created_at', 'desc');
 
         if ($request->filled('date_from') || $request->filled('date_to')) {
@@ -399,6 +407,13 @@ class RosterController extends Controller
                         'id' => $roster->id,
                         'roster_id' => $roster->roster_id,
                         'shift_code' => $roster->shift_code,
+
+                          // ✅ add these
+            'shift_real_code' => $roster->shift?->shift_code,
+            'shift_name' => $roster->shift?->shift_name ?? $roster->shift?->shift_description,
+            'start_time' => $roster->shift?->start_time ? substr($roster->shift->start_time, 0, 5) : null,
+            'end_time'   => $roster->shift?->end_time ? substr($roster->shift->end_time, 0, 5) : null,
+
                         'is_recurring' => $roster->is_recurring,
                         'recurrence_pattern' => $roster->recurrence_pattern,
                         'notes' => $roster->notes,

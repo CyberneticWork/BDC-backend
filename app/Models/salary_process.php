@@ -50,6 +50,7 @@ class salary_process extends Model
         'basic_salary' => 'decimal:2',
         'total_loan_amount' => 'decimal:2',
         'installment_amount' => 'decimal:2',
+        'installment_count' => 'integer',   // ✅ add
         'allowances' => 'json',
         'deductions' => 'json',
         'salary_breakdown' => 'json',

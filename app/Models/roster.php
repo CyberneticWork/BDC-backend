@@ -32,7 +32,8 @@ class roster extends Model
     //relation for shift
     public function shift()
     {
-        return $this->belongsTo(shifts::class);
+       // return $this->belongsTo(shifts::class);
+       return $this->belongsTo(shifts::class, 'shift_code', 'id');
     }
     //relation for department
     public function department()

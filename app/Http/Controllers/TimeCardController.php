@@ -106,18 +106,24 @@ class TimeCardController extends Controller
 
             if ($morningOutRecord) {
                 $previousDayIN = time_card::where('employee_id', $employee->id)
-                    ->where('status', 'IN')
-                    ->where('date', '<', $validated['date'])
-                    ->whereNotExists(function ($query) {
-                        $query->select(DB::raw(1))
-                            ->from('time_cards as tc')
-                            ->whereRaw('tc.actual_date = time_cards.date')
-                            ->where('tc.status', 'OUT');
-                    })
-                    ->orderBy('date', 'desc')
-                    ->orderBy('time', 'desc')
-                    ->first();
-
+    ->where('status', 'IN')
+    ->where('date', '<', $validated['date'])
+    ->whereNotExists(function ($q) {
+        $q->select(DB::raw(1))
+          ->from('time_cards as tc')
+          ->whereRaw('tc.employee_id = time_cards.employee_id')
+          ->whereIn('tc.status', ['OUT', 'Early OUT'])
+          ->where(function ($x) {
+              $x->whereRaw('tc.actual_date = time_cards.date')
+                ->orWhere(function ($y) {
+                    $y->whereNull('tc.actual_date')
+                      ->whereRaw('tc.date = time_cards.date');
+                });
+          });
+    })
+    ->orderBy('date', 'desc')
+    ->orderBy('time', 'desc')
+    ->first();
                 if ($previousDayIN) {
                     $lastInCard = $previousDayIN;
                 } else {
@@ -154,34 +160,38 @@ class TimeCardController extends Controller
                 }
             }
 
-            if ($lastInCard) {
-                $pairedInCard = $lastInCard;
-                $lastInDate = Carbon::parse($lastInCard->date);
-                $currentDate = Carbon::parse($validated['date']);
+           if ($lastInCard) {
+    $pairedInCard = $lastInCard;
 
-                if ($lastInDate->eq($currentDate)) {
-                    $inTime = Carbon::parse($lastInCard->time);
-                    $outTime = $inputTime;
-                    $working_hours = round($inTime->floatDiffInHours($outTime), 2);
+    // ✅ build full datetimes (date + time)
+    $inDate  = $lastInCard->date;     // IN date
+    $outDate = $validated['date'];    // OUT date
 
-                    if ($outTime->lt($shiftEnd)) {
-                        $entryType = 0;
-                        $status = 'Early OUT';
-                        // REMOVED: $pairedInCard = null;  <-- KEEP pairedInCard for OT calculation
-                    } else {
-                        $entryType = 2;
-                        $status = 'OUT';
-                    }
-                } else {
-                    $inDateTime = Carbon::parse($lastInCard->date . ' ' . $lastInCard->time);
-                    $outDateTime = Carbon::parse($validated['date'] . ' ' . $validated['time']);
-                    $working_hours = round($inDateTime->floatDiffInHours($outDateTime), 2);
+    $inDateTime  = Carbon::parse($inDate . ' ' . $lastInCard->time);
+    $outDateTime = Carbon::parse($outDate . ' ' . $storeTime);
 
-                    $entryType = 2;
-                    $status = 'OUT';
-                    $actual_date = $lastInCard->date;
-                }
-            }
+    // ✅ working hours always from datetime pair
+    $working_hours = round($inDateTime->floatDiffInHours($outDateTime), 2);
+
+    // ✅ shift end datetime aligned to IN date (night shifts supported)
+    $shiftStartDT = Carbon::parse($inDate . ' ' . $shift->start_time);
+    $shiftEndDT   = Carbon::parse($inDate . ' ' . $shift->end_time);
+    if ($shiftEndDT->lte($shiftStartDT)) {
+        $shiftEndDT->addDay();
+    }
+
+    // ✅ cross-day flag for your DB
+    $actual_date = ($inDate !== $outDate) ? $inDate : null;
+
+    // ✅ Early OUT vs OUT using datetime compare
+    if ($outDateTime->lt($shiftEndDT)) {
+        $entryType = 0;
+        $status = 'Early OUT';
+    } else {
+        $entryType = 2;
+        $status = 'OUT';
+    }
+}
         } else {
             $entryType = 1;
             $status = 'IN';
@@ -266,6 +276,9 @@ class TimeCardController extends Controller
         }
 
         $inputTime = Carbon::createFromFormat('H:i:s', $request->time);
+
+        $storeTime = Carbon::createFromFormat('H:i:s', $request->time)->format('H:i:s');
+$outDateTime = Carbon::parse($request->date . ' ' . $storeTime);
 
         // Prevent duplicate/close attendance for this employee (±5 min)
         $recentCard = time_card::where('employee_id', $employee->id)
@@ -605,6 +618,7 @@ class TimeCardController extends Controller
                     $lastInCard = time_card::where('employee_id', $employee->id)
                         ->where('date', $validated['date'])
                         ->where('status', 'IN')
+                        ->where('time', '<', $storeTime)   // ✅ KEY FIX
                         ->where('time', '<', $validated['time']) // Only IN records before this OUT time
                         ->where('id', '!=', $timeCard->id) // Exclude current record
                         ->orderBy('time', 'desc')
@@ -824,6 +838,10 @@ class TimeCardController extends Controller
 
         $clockIn = Carbon::parse($inCard->date . ' ' . $inCard->time);
         $clockOut = Carbon::parse($outCard->date . ' ' . $outCard->time);
+
+        if ($clockOut->lte($clockIn)) {
+    return; // invalid pair
+}
 
         // NEW: determine holiday (company or department) for target date
         $isHoliday = $this->isHoliday($employee, $targetDate);
