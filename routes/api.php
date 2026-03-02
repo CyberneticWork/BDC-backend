@@ -42,6 +42,8 @@ use App\Http\Controllers\ProductController;
 use App\Http\Controllers\CentersController;
 use App\Http\Controllers\ShiftOvertimeRateController;
 
+use App\Http\Controllers\BonusesController;
+
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -97,6 +99,16 @@ Route::post('/salary/process/fetchExcelData', [SalaryProcessController::class, '
 Route::post('/salary/process/importExcelData', [SalaryProcessController::class, 'importExcelData']);
 Route::get('/salary/update/status', [SalaryProcessController::class, 'updateSlaryStatus']);
 // Route::apiResource('salary', SalaryController::class);
+
+
+// ✅ Special route FIRST (Bonuses)
+Route::get('/bonuses/by-company-or-department', [BonusesController::class, 'getBonusesByCompanyOrDepartment']);
+
+Route::apiResource('bonuses', BonusesController::class);
+
+// Bonuses import/export routes
+Route::get('/bonuses/template/download', [BonusesController::class, 'downloadTemplate']);
+Route::post('/bonuses/import', [BonusesController::class, 'import']);
 
 
 // Route::get('salary/{id}/audit', [SalaryController::class, 'getAuditLogs']);
