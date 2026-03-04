@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\company;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Validator;
 
 class CompanyController extends Controller
 {
@@ -15,7 +16,7 @@ class CompanyController extends Controller
 
     public function store(Request $request)
     {
-        $validator = \Validator::make($request->all(), [
+        $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'location' => 'nullable|string|max:255',
             'established' => 'nullable|digits:4|integer|min:1900|max:' . (date('Y')),
@@ -50,7 +51,7 @@ class CompanyController extends Controller
     {
         $company = company::findOrFail($id);
 
-        $validator = \Validator::make($request->all(), [
+        $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'location' => 'nullable|string|max:255',
             'established' => 'nullable|digits:4|integer|min:1900|max:' . (date('Y')),

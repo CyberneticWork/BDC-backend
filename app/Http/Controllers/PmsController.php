@@ -17,10 +17,27 @@ use App\Models\Notification;
 use App\Models\User;
 use App\Models\KpiWeight; // Import the KpiWeight model
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
 use Carbon\Carbon;
 use Illuminate\Database\QueryException;
 use Illuminate\Validation\Rule;
 use App\Models\PerformanceAppraisal;
+
+/**
+ * @method static \Illuminate\Contracts\Auth\Guard|\Illuminate\Contracts\Auth\StatefulGuard auth()
+ */
+
+/**
+ * Helper function type hints for Intelephense
+ * @return \Illuminate\Contracts\Auth\Guard|\Illuminate\Contracts\Auth\StatefulGuard
+ */
+if (false) {
+    function auth() {
+        return app('auth');
+    }
+}
 
 class PmsController extends Controller
 {
@@ -323,7 +340,7 @@ class PmsController extends Controller
                 try {
                     $departmentId = $employee->organizationAssignment?->department_id ?? null;
                 } catch (\Throwable $e) {
-                    \Log::warning('Failed to get department from employee organizationAssignment', [
+                    Log::warning('Failed to get department from employee organizationAssignment', [
                         'employee_id' => $employee->id,
                         'error' => $e->getMessage()
                     ]);
@@ -353,7 +370,7 @@ class PmsController extends Controller
         }
 
         // Log successful creation
-        \Log::info('KPI task assignments created successfully', [
+        Log::info('KPI task assignments created successfully', [
             'task_name' => $validated['task_name'],
             'creator_id' => $creatorId,
             'assignments_count' => count($assignments),
@@ -430,7 +447,7 @@ class PmsController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            \Log::error('Error checking assignee weights', [
+            Log::error('Error checking assignee weights', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -549,7 +566,7 @@ class PmsController extends Controller
             $assignments = $query->orderBy('created_at', 'desc')->get();
 
             // Log for debugging
-            \Log::info('KPI Tasks query results', [
+            Log::info('KPI Tasks query results', [
                 'user_role' => $userRole,
                 'user_id' => $currentUser->id,
                 'employee_id' => $currentUser->employee_id,
@@ -613,7 +630,7 @@ class PmsController extends Controller
             return response()->json($transformed);
 
         } catch (\Exception $e) {
-            \Log::error('getKpiTaskAssignments error: ' . $e->getMessage(), [
+            Log::error('getKpiTaskAssignments error: ' . $e->getMessage(), [
                 'trace' => $e->getTraceAsString(),
                 'line' => $e->getLine(),
                 'file' => $e->getFile()
@@ -728,7 +745,7 @@ class PmsController extends Controller
             $assignment->approval_status = 'pending';
             
             // Log the change
-            \Log::info('KPI task approval status reset due to update', [
+            Log::info('KPI task approval status reset due to update', [
                 'task_id' => $id,
                 'previous_status' => $previousStatus,
                 'updated_by' => auth()->id()
@@ -870,18 +887,18 @@ class PmsController extends Controller
                 return response()->json(['message' => 'Deleted'], 200);
             } catch (\Throwable $e) {
                 // Log the error and fallback to direct DB update of deleted_at to ensure soft-delete behavior
-                \Log::error('PmsController::destroy - Eloquent delete failed', [
+                Log::error('PmsController::destroy - Eloquent delete failed', [
                     'id' => $id,
                     'error' => $e->getMessage(),
                     'trace' => $e->getTraceAsString(),
                 ]);
 
-                \DB::table('kpi_task_assignments')->where('id', $id)->update(['deleted_at' => now()]);
+                DB::table('kpi_task_assignments')->where('id', $id)->update(['deleted_at' => now()]);
 
                 return response()->json(['message' => 'Deleted (soft) via fallback'], 200);
             }
         } catch (\Throwable $e) {
-            \Log::error('PmsController::destroy - unexpected error', [
+            Log::error('PmsController::destroy - unexpected error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
@@ -997,7 +1014,7 @@ class PmsController extends Controller
 
             return response()->json($payload);
         } catch (\Exception $e) {
-            \Log::error('getEmployeeKpiTaskAssignments error: ' . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
+            Log::error('getEmployeeKpiTaskAssignments error: ' . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
             return response()->json([], 500);
         }
     }
@@ -1008,7 +1025,7 @@ class PmsController extends Controller
     public function storeTaskProgressSubmission(Request $request)
     {
         // Log incoming request for debugging
-        \Log::info('Task progress submission request received', [
+        Log::info('Task progress submission request received', [
             'data' => $request->except(['document']),
             'hasFile' => $request->hasFile('document'),
             'fileInfo' => $request->hasFile('document') ? [
@@ -1018,7 +1035,7 @@ class PmsController extends Controller
             ] : null
         ]);
 
-        $validator = \Validator::make($request->all(), [
+        $validator = Validator::make($request->all(), [
             'kpi_assignment_id' => 'required|integer|exists:kpi_task_assignments,id',
             'employee_id' => 'required|integer|exists:employees,id',
             'note' => 'required|string|min:5|max:1000',
@@ -1050,7 +1067,7 @@ class PmsController extends Controller
         ]);
 
         if ($validator->fails()) {
-            \Log::warning('Task progress submission validation failed', [
+            Log::warning('Task progress submission validation failed', [
                 'errors' => $validator->errors()->toArray(),
                 'input' => $request->except(['document'])
             ]);
@@ -1067,7 +1084,7 @@ class PmsController extends Controller
             // Parse the JSON string back to array
             $performanceMetrics = json_decode($validated['performance_metrics'], true);
             if (json_last_error() !== JSON_ERROR_NONE) {
-                \Log::error('Invalid JSON in performance_metrics', [
+                Log::error('Invalid JSON in performance_metrics', [
                     'json_error' => json_last_error_msg(),
                     'raw_data' => $validated['performance_metrics']
                 ]);
@@ -1112,7 +1129,7 @@ class PmsController extends Controller
                 'document_path' => $documentPath,
             ];
 
-            \Log::info('Creating task progress submission', ['data' => $submissionData]);
+            Log::info('Creating task progress submission', ['data' => $submissionData]);
 
             $submission = TaskProgressSubmission::create($submissionData);
 
@@ -1152,7 +1169,7 @@ class PmsController extends Controller
             ], 201);
 
         } catch (\Exception $e) {
-            \Log::error('Error storing task progress submission', [
+            Log::error('Error storing task progress submission', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
                 'data' => $request->except(['document'])
@@ -1179,7 +1196,7 @@ class PmsController extends Controller
             return response()->json($submissions, 200);
 
         } catch (\Exception $e) {
-            \Log::error('Error fetching task progress submissions', [
+            Log::error('Error fetching task progress submissions', [
                 'assignmentId' => $assignmentId,
                 'error' => $e->getMessage()
             ]);
@@ -1220,7 +1237,7 @@ class PmsController extends Controller
             return response()->json($submissions, 200);
 
         } catch (\Exception $e) {
-            \Log::error('Error fetching employee progress submissions', [
+            Log::error('Error fetching employee progress submissions', [
                 'employeeId' => $employeeId,
                 'error' => $e->getMessage()
             ]);
@@ -1248,7 +1265,7 @@ class PmsController extends Controller
                 return response()->json(['error' => 'User not authenticated'], 401);
             }
 
-            \Log::info('Performance reviews - User authenticated', [
+            Log::info('Performance reviews - User authenticated', [
                 'user_id' => $currentUser->id,
                 'role' => $currentUser->role ?? 'null'
             ]);
@@ -1426,7 +1443,7 @@ class PmsController extends Controller
             ], 200);
 
         } catch (\Exception $e) {
-            \Log::error('Error fetching performance reviews', [
+            Log::error('Error fetching performance reviews', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -1571,7 +1588,7 @@ class PmsController extends Controller
             ], 200);
 
         } catch (\Exception $e) {
-            \Log::error('Error fetching performance review details', [
+            Log::error('Error fetching performance review details', [
                 'assignment_id' => $assignmentId,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
@@ -1612,7 +1629,7 @@ class PmsController extends Controller
             return response()->json($documents, 200);
 
         } catch (\Exception $e) {
-            \Log::error('Error fetching assignment documents', [
+            Log::error('Error fetching assignment documents', [
                 'assignmentId' => $assignmentId,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
@@ -1760,7 +1777,7 @@ class PmsController extends Controller
                     }
                 }
             } catch (\Throwable $notifyEx) {
-                \Log::warning('Failed to create performance review notification', [
+                Log::warning('Failed to create performance review notification', [
                     'assignment_id' => $assignment->id ?? null,
                     'review_id' => $review->id ?? null,
                     'error' => $notifyEx->getMessage()
@@ -1768,7 +1785,7 @@ class PmsController extends Controller
             }
 
             // Log for debugging
-            \Log::info('Performance review saved', [
+            Log::info('Performance review saved', [
                 'assignment_id' => $assignmentId,
                 'task_name' => $taskName,
                 'progress' => $validated['progress'],
@@ -1784,7 +1801,7 @@ class PmsController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            \Log::error('Error updating performance review', [
+            Log::error('Error updating performance review', [
                 'assignment_id' => $assignmentId,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
@@ -1978,7 +1995,7 @@ class PmsController extends Controller
             $departmentId = $validated['department_id'] ?? null;
 
             // Log the request parameters
-            \Log::info('Performance calculation request', [
+            Log::info('Performance calculation request', [
                 'startDate' => $startDate,
                 'endDate' => $endDate,
                 'employeeId' => $employeeId,
@@ -2122,7 +2139,7 @@ class PmsController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            \Log::error('Error calculating employee performance', [
+            Log::error('Error calculating employee performance', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -2189,7 +2206,7 @@ class PmsController extends Controller
                 'errors' => $e->errors()
             ], 422);
         } catch (\Exception $e) {
-            \Log::error('Error saving employee performance evaluation', [
+            Log::error('Error saving employee performance evaluation', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
                 'request_data' => $request->all()
@@ -2223,7 +2240,7 @@ class PmsController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            \Log::error('Error fetching employee performance evaluations', [
+            Log::error('Error fetching employee performance evaluations', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -2575,7 +2592,7 @@ class PmsController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            \Log::error('Error fetching PMS dashboard stats', [
+            Log::error('Error fetching PMS dashboard stats', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -2649,7 +2666,7 @@ class PmsController extends Controller
             return response()->json($deadlines);
 
         } catch (\Exception $e) {
-            \Log::error('Error fetching upcoming deadlines', [
+            Log::error('Error fetching upcoming deadlines', [
                 'error' => $e->getMessage()
             ]);
 
@@ -2679,7 +2696,7 @@ class PmsController extends Controller
 
             $kpiTask = KpiTask::create($validated);
 
-            \Log::info('KPI task created successfully', [
+            Log::info('KPI task created successfully', [
                 'task_name' => $kpiTask->task_name
             ]);
 
@@ -2692,10 +2709,10 @@ class PmsController extends Controller
             if ($qe->getCode() === '23000') {
                 return response()->json(['message' => 'A KPI task with this name already exists'], 422);
             }
-            \Log::error('QueryException creating KPI task', ['error' => $qe->getMessage()]);
+            Log::error('QueryException creating KPI task', ['error' => $qe->getMessage()]);
             return response()->json(['error' => 'Database error creating KPI task'], 500);
         } catch (\Exception $e) {
-            \Log::error('Error creating KPI task', ['data' => $request->all(), 'error' => $e->getMessage()]);
+            Log::error('Error creating KPI task', ['data' => $request->all(), 'error' => $e->getMessage()]);
             return response()->json(['error' => 'Failed to create KPI task'], 500);
         }
     }
@@ -2725,7 +2742,7 @@ class PmsController extends Controller
 
             $kpiTask->update($validated);
 
-            \Log::info('KPI task updated successfully', [
+            Log::info('KPI task updated successfully', [
                 'id' => $kpiTask->id,
                 'task_name' => $kpiTask->task_name
             ]);
@@ -2740,10 +2757,10 @@ class PmsController extends Controller
             if ($qe->getCode() === '23000') {
                 return response()->json(['message' => 'A KPI task with this name already exists'], 422);
             }
-            \Log::error('QueryException updating KPI task', ['id' => $id, 'error' => $qe->getMessage()]);
+            Log::error('QueryException updating KPI task', ['id' => $id, 'error' => $qe->getMessage()]);
             return response()->json(['error' => 'Database error updating KPI task'], 500);
         } catch (\Exception $e) {
-            \Log::error('Error updating KPI task', ['id' => $id, 'data' => $request->all(), 'error' => $e->getMessage()]);
+            Log::error('Error updating KPI task', ['id' => $id, 'data' => $request->all(), 'error' => $e->getMessage()]);
             return response()->json(['error' => 'Failed to update KPI task'], 500);
         }
     }
@@ -2770,7 +2787,7 @@ class PmsController extends Controller
 
             $kpiTask->delete(); // This will soft delete due to SoftDeletes trait
 
-            \Log::info('KPI task deleted successfully', [
+            Log::info('KPI task deleted successfully', [
                 'id' => $id,
                 'task_name' => $kpiTask->task_name
             ]);
@@ -2782,7 +2799,7 @@ class PmsController extends Controller
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return response()->json(['message' => 'KPI task not found'], 404);
         } catch (\Exception $e) {
-            \Log::error('Error deleting KPI task', [
+            Log::error('Error deleting KPI task', [
                 'id' => $id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
@@ -2826,10 +2843,10 @@ class PmsController extends Controller
             if ($qe->getCode() === '23000') {
                 return response()->json(['message' => 'A creator role with this name already exists'], 422);
             }
-            \Log::error('QueryException creating CreatorRole', ['error' => $qe->getMessage()]);
+            Log::error('QueryException creating CreatorRole', ['error' => $qe->getMessage()]);
             return response()->json(['error' => 'Database error creating creator role'], 500);
         } catch (\Exception $e) {
-            \Log::error('Error creating CreatorRole', ['error' => $e->getMessage(), 'data' => $request->all()]);
+            Log::error('Error creating CreatorRole', ['error' => $e->getMessage(), 'data' => $request->all()]);
             return response()->json(['error' => 'Failed to create creator role'], 500);
         }
     }
@@ -2867,10 +2884,10 @@ class PmsController extends Controller
             if ($qe->getCode() === '23000') {
                 return response()->json(['message' => 'A creator role with this name already exists'], 422);
             }
-            \Log::error('QueryException updating CreatorRole', ['id' => $id, 'error' => $qe->getMessage()]);
+            Log::error('QueryException updating CreatorRole', ['id' => $id, 'error' => $qe->getMessage()]);
             return response()->json(['error' => 'Database error updating creator role'], 500);
         } catch (\Exception $e) {
-            \Log::error('Error updating CreatorRole', ['id' => $id, 'error' => $e->getMessage(), 'data' => $request->all()]);
+            Log::error('Error updating CreatorRole', ['id' => $id, 'error' => $e->getMessage(), 'data' => $request->all()]);
             return response()->json(['error' => 'Failed to update creator role'], 500);
         }
     }
@@ -2899,7 +2916,7 @@ class PmsController extends Controller
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return response()->json(['message' => 'Creator role not found'], 404);
         } catch (\Exception $e) {
-            \Log::error('Error deleting CreatorRole', ['id' => $id, 'error' => $e->getMessage()]);
+            Log::error('Error deleting CreatorRole', ['id' => $id, 'error' => $e->getMessage()]);
             return response()->json(['error' => 'Failed to delete creator role'], 500);
         }
     }
@@ -2934,7 +2951,7 @@ class PmsController extends Controller
                 }
             }
 
-            \Log::info('KPI task approved', ['id' => $id]);
+            Log::info('KPI task approved', ['id' => $id]);
 
             return response()->json([
                 'message' => 'KPI task approved successfully',
@@ -2943,7 +2960,7 @@ class PmsController extends Controller
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return response()->json(['message' => 'KPI task not found'], 404);
         } catch (\Exception $e) {
-            \Log::error('Error approving KPI task', [
+            Log::error('Error approving KPI task', [
                 'id' => $id,
                 'error' => $e->getMessage()
             ]);
@@ -2974,7 +2991,7 @@ class PmsController extends Controller
 
             $assignment->save();
 
-            \Log::info('KPI task rejected', [
+            Log::info('KPI task rejected', [
                 'id' => $id,
                 'reason' => $reason
             ]);
@@ -2986,7 +3003,7 @@ class PmsController extends Controller
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return response()->json(['message' => 'KPI task not found'], 404);
         } catch (\Exception $e) {
-            \Log::error('Error rejecting KPI task', [
+            Log::error('Error rejecting KPI task', [
                 'id' => $id,
                 'error' => $e->getMessage()
             ]);
@@ -3046,7 +3063,7 @@ class PmsController extends Controller
             // Here you would implement actual email sending
             // Mail::to($recipientEmail)->send(new PracticalFeedbackMail($feedback));
 
-            \Log::info('Practical feedback created successfully', [
+            Log::info('Practical feedback created successfully', [
                 'feedback_id' => $feedback->id,
                 'assignment_id' => $assignmentId,
                 'from' => $senderEmail,
@@ -3070,7 +3087,7 @@ class PmsController extends Controller
             ], 200);
 
         } catch (\Exception $e) {
-            \Log::error('Error submitting practical feedback', [
+            Log::error('Error submitting practical feedback', [
                 'assignment_id' => $assignmentId,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
@@ -3206,7 +3223,7 @@ class PmsController extends Controller
 
             return response()->json($weights);
         } catch (\Exception $e) {
-            \Log::error('Error fetching KPI weights', [
+            Log::error('Error fetching KPI weights', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -3235,14 +3252,14 @@ class PmsController extends Controller
 
             $weight = KpiWeight::create($validated);
 
-            \Log::info('KPI weight created successfully', [
+            Log::info('KPI weight created successfully', [
                 'weight_id' => $weight->id,
                 'name' => $weight->name
             ]);
 
             return response()->json($weight, 201);
         } catch (\Exception $e) {
-            \Log::error('Error creating KPI weight', [
+            Log::error('Error creating KPI weight', [
                 'data' => $request->all(),
                 'error' => $e->getMessage()
             ]);
@@ -3273,14 +3290,14 @@ class PmsController extends Controller
 
             $weight->update($validated);
 
-            \Log::info('KPI weight updated successfully', [
+            Log::info('KPI weight updated successfully', [
                 'weight_id' => $weight->id,
                 'name' => $weight->name
             ]);
 
             return response()->json($weight);
         } catch (\Exception $e) {
-            \Log::error('Error updating KPI weight', [
+            Log::error('Error updating KPI weight', [
                 'id' => $id,
                 'data' => $request->all(),
                 'error' => $e->getMessage()
@@ -3303,14 +3320,14 @@ class PmsController extends Controller
             // Force soft delete without checking usage
             $weight->delete();
 
-            \Log::info('KPI weight soft deleted successfully', [
+            Log::info('KPI weight soft deleted successfully', [
                 'weight_id' => $id,
                 'name' => $weight->name
             ]);
 
             return response()->json(['message' => 'Weight deleted successfully']);
         } catch (\Exception $e) {
-            \Log::error('Error deleting KPI weight', [
+            Log::error('Error deleting KPI weight', [
                 'id' => $id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
@@ -3514,7 +3531,7 @@ class PmsController extends Controller
             $perPage = $validated['per_page'] ?? 10;
 
             // Log the request parameters
-            \Log::info('Performance appraisal calculation request', [
+            Log::info('Performance appraisal calculation request', [
                 'startDate' => $startDate,
                 'endDate' => $endDate,
                 'employeeId' => $employeeId,
@@ -3628,7 +3645,7 @@ class PmsController extends Controller
 
                 // Skip this task if either rating is missing (0)
                 if ($employeeSelfRating === 0 || $supervisorRating === 0) {
-                    \Log::warning('Skipping task due to missing ratings', [
+                    Log::warning('Skipping task due to missing ratings', [
                         'assignment_id' => $assignment->id,
                         'employee_self_rating' => $employeeSelfRating,
                         'supervisor_rating' => $supervisorRating
@@ -3732,7 +3749,7 @@ class PmsController extends Controller
             return response()->json($response);
 
         } catch (\Exception $e) {
-            \Log::error('Error calculating performance appraisal', [
+            Log::error('Error calculating performance appraisal', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -3866,7 +3883,7 @@ class PmsController extends Controller
                 'errors' => $e->errors()
             ], 422);
         } catch (\Exception $e) {
-            \Log::error('Error saving performance appraisal', [
+            Log::error('Error saving performance appraisal', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -3911,7 +3928,7 @@ class PmsController extends Controller
             return response()->json($appraisals);
 
         } catch (\Exception $e) {
-            \Log::error('Error fetching performance appraisals', [
+            Log::error('Error fetching performance appraisals', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);

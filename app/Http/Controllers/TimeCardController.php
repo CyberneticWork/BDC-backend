@@ -108,7 +108,7 @@ class TimeCardController extends Controller
                 $previousDayIN = time_card::where('employee_id', $employee->id)
     ->where('status', 'IN')
     ->where('date', '<', $validated['date'])
-    ->whereNotExists(function ($q) {
+    ->whereNotExists(function ($q) use ($employee) {
         $q->select(DB::raw(1))
           ->from('time_cards as tc')
           ->whereRaw('tc.employee_id = time_cards.employee_id')
@@ -602,7 +602,7 @@ $outDateTime = Carbon::parse($request->date . ' ' . $storeTime);
                 $previousDayIN = time_card::where('employee_id', $employee->id)
                     ->where('status', 'IN')
                     ->where('date', '<', $validated['date'])
-                    ->whereNotExists(function($query) {
+                    ->whereNotExists(function($query) use ($employee) {
                         $query->select(DB::raw(1))
                               ->from('time_cards as tc')
                               ->whereRaw('tc.actual_date = time_cards.date')
@@ -1045,7 +1045,7 @@ $outDateTime = Carbon::parse($request->date . ' ' . $storeTime);
             'errors' => [],
         ];
 
-        \DB::beginTransaction();
+        DB::beginTransaction();
         try {
             foreach ($rows as $index => $row) {
                 if ($index === 0) continue; // skip header row
@@ -1141,7 +1141,7 @@ $outDateTime = Carbon::parse($request->date . ' ' . $storeTime);
                             $previousDayIN = time_card::where('employee_id', $employee->id)
                                 ->where('status', 'IN')
                                 ->where('date', '<', $date)
-                                ->whereNotExists(function($query) {
+                                ->whereNotExists(function($query) use ($employee) {
                                     $query->select(DB::raw(1))
                                           ->from('time_cards as tc')
                                           ->whereRaw('tc.actual_date = time_cards.date')
@@ -1270,9 +1270,9 @@ $outDateTime = Carbon::parse($request->date . ' ' . $storeTime);
                     $results['errors'][] = "Unknown status";
                 }
             }
-            \DB::commit();
+            DB::commit();
         } catch (\Exception $e) {
-            \DB::rollBack();
+            DB::rollBack();
             return response()->json([
                 'message' => 'Import error',
                 'errors' => array_unique($results['errors']),

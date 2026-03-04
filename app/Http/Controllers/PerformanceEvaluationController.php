@@ -9,6 +9,7 @@ use App\Models\user;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Auth;
 
 class PerformanceEvaluationController extends Controller
 {
@@ -343,7 +344,7 @@ class PerformanceEvaluationController extends Controller
             Log::info('Performance evaluation soft deleted', [
                 'id' => $id,
                 'employee_id' => $evaluation->employee_id,
-                'deleted_by' => auth()->id() ?? 'system'
+                'deleted_by' => Auth::id() ?? 'system'
             ]);
             
             return response()->json([
@@ -541,7 +542,7 @@ class PerformanceEvaluationController extends Controller
             Log::info('Performance evaluation restored', [
                 'id' => $id,
                 'employee_id' => $evaluation->employee_id,
-                'restored_by' => auth()->id() ?? 'system'
+                'restored_by' => Auth::id() ?? 'system'
             ]);
             
             return response()->json([
@@ -580,7 +581,7 @@ class PerformanceEvaluationController extends Controller
             Log::info('Performance evaluation force deleted', [
                 'id' => $id,
                 'employee_id' => $evaluation->employee_id,
-                'deleted_by' => auth()->id() ?? 'system'
+                'deleted_by' => Auth::id() ?? 'system'
             ]);
             
             $evaluation->forceDelete();
@@ -618,7 +619,7 @@ class PerformanceEvaluationController extends Controller
         try {
             Log::info('Bulk save performance evaluations request received', [
                 'data_count' => is_array($request->get('evaluations')) ? count($request->get('evaluations')) : 0,
-                'user_id' => auth()->id()
+                'user_id' => Auth::id()
             ]);
 
             $validator = Validator::make($request->all(), [
@@ -676,7 +677,7 @@ class PerformanceEvaluationController extends Controller
                                 Log::info('Performance evaluation restored and updated in bulk', [
                                     'evaluation_id' => $existing->id,
                                     'employee_id' => $evaluationData['employee_id'],
-                                    'restored_by' => auth()->id() ?? 'system'
+                                    'restored_by' => Auth::id() ?? 'system'
                                 ]);
                                 continue;
                             }
@@ -723,7 +724,7 @@ class PerformanceEvaluationController extends Controller
                                 Log::info('Performance evaluation updated in bulk (data was different)', [
                                     'evaluation_id' => $existing->id,
                                     'employee_id' => $evaluationData['employee_id'],
-                                    'updated_by' => auth()->id() ?? 'system'
+                                    'updated_by' => Auth::id() ?? 'system'
                                 ]);
                                 continue;
                             }
@@ -737,7 +738,7 @@ class PerformanceEvaluationController extends Controller
                         Log::info('Performance evaluation saved in bulk', [
                             'evaluation_id' => $evaluation->id,
                             'employee_id' => $evaluationData['employee_id'],
-                            'saved_by' => auth()->id() ?? 'system'
+                            'saved_by' => Auth::id() ?? 'system'
                         ]);
 
                     } catch (\Exception $e) {
@@ -765,7 +766,7 @@ class PerformanceEvaluationController extends Controller
                     'restored_count' => count($restored),
                     'duplicates_count' => count($duplicates),
                     'errors_count' => count($errors),
-                    'processed_by' => auth()->id() ?? 'system'
+                    'processed_by' => Auth::id() ?? 'system'
                 ]);
 
                 // Determine response status based on results

@@ -9,6 +9,7 @@ use App\Models\user;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Auth;
 
 class PerformanceAppraisalController extends Controller
 {
@@ -130,7 +131,7 @@ class PerformanceAppraisalController extends Controller
             }
 
             $data = $validator->validated();
-            $data['appraiser_id'] = $data['appraiser_id'] ?? auth()->id() ?? 1;
+            $data['appraiser_id'] = $data['appraiser_id'] ?? Auth::id() ?? 1;
 
             $appraisal = PerformanceAppraisal::create($data);
 
@@ -166,7 +167,7 @@ class PerformanceAppraisalController extends Controller
         try {
             Log::info('Bulk save performance appraisals request received', [
                 'data_count' => is_array($request->get('appraisals')) ? count($request->get('appraisals')) : 0,
-                'user_id' => auth()->id()
+                'user_id' => Auth::id()
             ]);
 
             $validator = Validator::make($request->all(), [
@@ -212,7 +213,7 @@ class PerformanceAppraisalController extends Controller
             try {
                 foreach ($request->appraisals as $index => $appraisalData) {
                     // Set defaults
-                    $appraisalData['appraiser_id'] = $appraisalData['appraiser_id'] ?? auth()->id() ?? 1;
+                    $appraisalData['appraiser_id'] = $appraisalData['appraiser_id'] ?? Auth::id() ?? 1;
                     $appraisalData['status'] = $appraisalData['status'] ?? 'Completed';
 
                     // Check for existing appraisal with same employee and date range (including soft-deleted)
@@ -233,7 +234,7 @@ class PerformanceAppraisalController extends Controller
                             Log::info('Performance appraisal restored and updated in bulk', [
                                 'appraisal_id' => $existing->id,
                                 'employee_id' => $appraisalData['employee_id'],
-                                'restored_by' => auth()->id() ?? 'system'
+                                'restored_by' => Auth::id() ?? 'system'
                             ]);
                             continue;
                         }
@@ -284,7 +285,7 @@ class PerformanceAppraisalController extends Controller
                             Log::info('Performance appraisal updated in bulk (data was different)', [
                                 'appraisal_id' => $existing->id,
                                 'employee_id' => $appraisalData['employee_id'],
-                                'updated_by' => auth()->id() ?? 'system'
+                                'updated_by' => Auth::id() ?? 'system'
                             ]);
                             continue;
                         }
@@ -299,7 +300,7 @@ class PerformanceAppraisalController extends Controller
                         Log::info('Performance appraisal saved in bulk', [
                             'appraisal_id' => $appraisal->id,
                             'employee_id' => $appraisalData['employee_id'],
-                            'saved_by' => auth()->id() ?? 'system'
+                            'saved_by' => Auth::id() ?? 'system'
                         ]);
                     } catch (\Exception $e) {
                         Log::error('Error saving individual appraisal in bulk', [
@@ -480,7 +481,7 @@ class PerformanceAppraisalController extends Controller
             Log::info('Performance appraisal soft deleted', [
                 'id' => $id,
                 'employee_id' => $appraisal->employee_id,
-                'deleted_by' => auth()->id() ?? 'system'
+                'deleted_by' => Auth::id() ?? 'system'
             ]);
             
             return response()->json([

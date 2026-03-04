@@ -433,23 +433,15 @@ if ($spouseNic && $employeeNic === $spouseNic) {
                 'profile_photo_path' => $profilePicturePath,
             ]);
 
-            $pwd = $this->generateStrongPassword(9);
+            $pwd = Hash::make($address['password']);
 
             $user = User::create([
                 'name' => $personal['fullName'],
                 'email' => $address['email'],
                 'employee_id' => $employee->id,
-                'password' => Hash::make($pwd),
-                'role' => 'user',
-            ]);
-
-            $mail_data = [
-                'email' => $address['email'],
                 'password' => $pwd,
-                'name' => $personal['fullName'],
-            ];
-
-            Mail::to($address['email'])->send(new EmployeePasswordSendEmail($mail_data));
+                'role' => 'employee',
+            ]);
 
             // Create children records if any valid children exist
             if (isset($personal['children']) && is_array($personal['children'])) {
