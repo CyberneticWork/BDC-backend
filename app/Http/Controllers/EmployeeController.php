@@ -35,7 +35,6 @@ class EmployeeController extends Controller
             'organizationAssignment.department',
             'organizationAssignment.subDepartment',
             'organizationAssignment.designation',
-            'rosters',
         ])->get();
         return response()->json($employees, 200);
     }
@@ -123,7 +122,6 @@ class EmployeeController extends Controller
             'organizationAssignment.department',
             'organizationAssignment.subDepartment',
             'organizationAssignment.designation',
-            'rosters',
         ])
             ->where('attendance_employee_no', $attendanceNo)
             ->first();
@@ -222,6 +220,7 @@ class EmployeeController extends Controller
                 'permanentAddress' => 'required|string|max:255',
                 'temporaryAddress' => 'nullable|string|max:255',
                 'email' => 'required|email',
+                'password' => 'required|string|min:8',
                 'landLine' => 'nullable|string|max:20',
                 'mobileLine' => 'required|string|max:20',
                 'gnDivision' => 'nullable|string|max:100',
@@ -431,17 +430,29 @@ if ($spouseNic && $employeeNic === $spouseNic) {
                 'organization_assignment_id' => $orgAssignment->id,
                 'spouse_id' => $spouse->id,
                 'profile_photo_path' => $profilePicturePath,
+                'email' => $address['email'],
+                'password' => Hash::make($address['password']),
             ]);
 
-            $pwd = Hash::make($address['password']);
+            // Use password from frontend
+            $plainPassword = $address['password'];
+            $hashedPassword = Hash::make($plainPassword);
 
             $user = User::create([
                 'name' => $personal['fullName'],
                 'email' => $address['email'],
                 'employee_id' => $employee->id,
-                'password' => $pwd,
+                'password' => $hashedPassword,
                 'role' => 'employee',
             ]);
+
+            // Send password via email
+            try {
+                Mail::to($address['email'])->send(new EmployeePasswordSendEmail($personal['fullName'], $address['email'], $plainPassword));
+            } catch (\Exception $e) {
+                // Log email error but don't fail the employee creation
+                \Log::error('Failed to send password email: ' . $e->getMessage());
+            }
 
             // Create children records if any valid children exist
             if (isset($personal['children']) && is_array($personal['children'])) {
@@ -592,13 +603,17 @@ if ($spouseNic && $employeeNic === $spouseNic) {
             'children',
             'contactDetail',
             'compensation',
+            'documents',
             'organizationAssignment.company',
             'organizationAssignment.department',
             'organizationAssignment.subDepartment',
             'organizationAssignment.designation',
-            'rosters',
         ])->findOrFail($id);
-        return response()->json($employee, 200);
+        
+        return response()->json([
+            'message' => 'Employee details fetched successfully',
+            'data' => $employee
+        ], 200);
     }
 
     /**
@@ -665,16 +680,17 @@ if ($spouseNic && $employeeNic === $spouseNic) {
                 'fullName' => 'required|string|max:100',
                 'displayName' => 'required|string|max:100',
                 'maritalStatus' => 'required|in:Single,Married,Divorced,Widowed',
-                'relationshipType' => 'required|string|max:20',
-                'spouseTitle' => 'required|string|max:20',
-                'spouseName' => 'required|string|max:100',
-                'spouseAge' => 'required|numeric|min:18|max:100',
-                'spouseDob' => 'required|date',
+                'relationshipType' => 'nullable|string|max:20',
+                'spouseTitle' => 'nullable|string|max:20',
+                'spouseName' => 'nullable|string|max:100',
+                'spouseAge' => 'nullable|numeric|min:18|max:100',
+                'spouseDob' => 'nullable|date',
                 'spouseNic' => [
-                    'required',
+                    'nullable',
                     'string',
                     'max:13',
                     function ($attribute, $value, $fail) {
+                        if (empty($value)) return;
                         $nic = strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $value));
                         if (!(preg_match('/^[0-9]{9}[VX]$/', $nic) || preg_match('/^[0-9]{12}$/', $nic))) {
                             $fail('The ' . $attribute . ' is not a valid Sri Lankan NIC number.');
@@ -857,14 +873,14 @@ if ($spouseNic && $employeeNic === $spouseNic) {
                 $personal['profile_picture_path'] = $profilePicturePath;
             }
 
-            // Update spouse record
+            // Update spouse record - Safe access
             $employee->spouse()->update([
-                'type' => $personal['relationshipType'],
-                'title' => $personal['spouseTitle'],
-                'name' => $personal['spouseName'],
-                'nic' => $personal['spouseNic'],
-                'age' => $personal['spouseAge'],
-                'dob' => $personal['spouseDob'],
+                'type' => $personal['relationshipType'] ?? null,
+                'title' => $personal['spouseTitle'] ?? null,
+                'name' => $personal['spouseName'] ?? null,
+                'nic' => $personal['spouseNic'] ?? null,
+                'age' => $personal['spouseAge'] ?? null,
+                'dob' => $personal['spouseDob'] ?? null,
             ]);
 
             // Update organization assignment
@@ -959,8 +975,8 @@ if ($spouseNic && $employeeNic === $spouseNic) {
                 'mobile_line' => $address['mobileLine'] ?? null,
                 'gn_division' => $address['gnDivision'] ?? null,
                 'police_station' => $address['policeStation'] ?? null,
-                'district' => $address['district'],
-                'province' => $address['province'],
+                'district' => $address['district'] ?? '',
+                'province' => $address['province'] ?? '',
                 'electoral_division' => $address['electoralDivision'] ?? null,
                 'emg_relationship' => $address['emergencyContact']['relationship'],
                 'emg_name' => $address['emergencyContact']['contactName'],
@@ -1090,5 +1106,41 @@ if ($spouseNic && $employeeNic === $spouseNic) {
                 : null,
             // Add other fields as needed
         ]);
+    }
+
+    public function changePassword(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'current_password' => 'required|string',
+            'new_password' => 'required|string|min:8|confirmed',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $user = $request->user();
+
+        if (!Hash::check($request->current_password, $user->password)) {
+            return response()->json([
+                'message' => 'Current password is incorrect'
+            ], 400);
+        }
+
+        $user->password = Hash::make($request->new_password);
+        $user->save();
+
+        // Also update employee table password if exists
+        if ($user->employee_id) {
+            employee::where('id', $user->employee_id)
+                ->update(['password' => Hash::make($request->new_password)]);
+        }
+
+        return response()->json([
+            'message' => 'Password changed successfully'
+        ], 200);
     }
 }

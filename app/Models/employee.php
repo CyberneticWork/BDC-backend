@@ -26,7 +26,13 @@ class employee extends Model
         'employment_type_id',
         'organization_assignment_id',
         'spouse_id',
-        'profile_photo_path'
+        'profile_photo_path',
+        'email',
+        'password'
+    ];
+
+    protected $hidden = [
+        'password'
     ];
 
     // Existing relations ...
@@ -73,5 +79,15 @@ class employee extends Model
     {
         return $this->belongsToMany(Deduction::class, 'employee_deductions', 'employee_id', 'deduction_id')
             ->withPivot('custom_amount');
+    }
+
+    public function rosters()
+    {
+        return $this->hasMany(Roster::class);
+    }
+
+    public function documents()
+    {
+        return $this->hasMany(documents::class);
     }
 }
