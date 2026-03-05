@@ -904,55 +904,101 @@ $outDateTime = Carbon::parse($request->date . ' ' . $storeTime);
             return;
         }
 
-        // Regular day OT calculation (existing logic)
-        $breakdown = $this->overtimeCalculator->calculate($employee, $resolvedShift, $clockIn, $clockOut, $isHoliday);
-        $totalHours = $breakdown['hours']['total'] ?? 0;
-        if ($totalHours <= 0) {
-            return;
-        }
+       // Regular day OT calculation (existing logic)
+$breakdown = $this->overtimeCalculator->calculate($employee, $resolvedShift, $clockIn, $clockOut, $isHoliday);
 
-        $comp = $employee->compensation;
-        if (!$comp || !$comp->ot_active) {
-            return;
-        }
+$comp = $employee->compensation;
+if (!$comp || !$comp->ot_active) {
+    return;
+}
 
-        $allowMorning = (bool) ($comp->ot_morning ?? false);
-        $allowEvening = (bool) ($comp->ot_evening ?? false);
-        $allowMorningSpecial = (bool) ($comp->ot_morning_special ?? false);
-        $allowEveningSpecial = (bool) ($comp->ot_evening_special ?? false);
+$allowMorning        = (bool) ($comp->ot_morning ?? false);
+$allowEvening        = (bool) ($comp->ot_evening ?? false);
+$allowMorningSpecial = (bool) ($comp->ot_morning_special ?? false);
+$allowEveningSpecial = (bool) ($comp->ot_evening_special ?? false);
 
-        $hours = $breakdown['hours'];
-        if (!$allowMorning) {
-            $hours['morning_regular'] = 0.0;
-        }
-        if (!$allowMorningSpecial) {
-            $hours['morning_special'] = 0.0;
-        }
-        if (!$allowEvening) {
-            $hours['evening_regular'] = 0.0;
-        }
-        if (!$allowEveningSpecial) {
-            $hours['evening_special'] = 0.0;
-        }
+$hours = $breakdown['hours'] ?? [];
+$hours = array_merge([
+    'morning_regular' => 0.0,
+    'morning_special' => 0.0,
+    'evening_regular' => 0.0,
+    'evening_special' => 0.0,
+    'total' => 0.0,
+], $hours);
 
-        $hours['total'] = round(
-            ($hours['morning_regular'] + $hours['morning_special'] + $hours['evening_regular'] + $hours['evening_special']),
-            2
-        );
+// apply employee OT enable flags
+if (!$allowMorning)        $hours['morning_regular'] = 0.0;
+if (!$allowMorningSpecial) $hours['morning_special'] = 0.0;
+if (!$allowEvening)        $hours['evening_regular'] = 0.0;
+if (!$allowEveningSpecial) $hours['evening_special'] = 0.0;
 
-        if ($hours['total'] <= 0) {
-            return;
-        }
+$hours['total'] = round(
+    ($hours['morning_regular'] + $hours['morning_special'] + $hours['evening_regular'] + $hours['evening_special']),
+    2
+);
 
-        // Recompute amounts using effective OT hourly rate from meta
-        $effectiveRate = (float) ($breakdown['meta']['effective_ot_hourly_rate'] ?? 0);
-        $amounts = [
-            'morning_regular' => round($hours['morning_regular'] * $effectiveRate, 2),
-            'morning_special' => round($hours['morning_special'] * $effectiveRate, 2),
-            'evening_regular' => round($hours['evening_regular'] * $effectiveRate, 2),
-            'evening_special' => round($hours['evening_special'] * $effectiveRate, 2),
-        ];
-        $amounts['total'] = round(array_sum($amounts), 2);
+if ($hours['total'] <= 0) {
+    return;
+}
+
+/**
+ * ✅ IMPORTANT FIX:
+ * Use ShiftOvertimeRate-based effective hourly rate IF it is > 0
+ * Otherwise fallback to compensation specific rates (morning/night/special)
+ */
+$effectiveRate = (float) ($breakdown['meta']['effective_ot_hourly_rate'] ?? 0);
+
+// Fallback rates from compensation (what you verified in tinker)
+$morningRate        = (float) ($comp->ot_morning_rate ?? 0);
+$nightRate          = (float) ($comp->ot_night_rate ?? 0);
+$morningSpecialRate = (float) ($comp->ot_morning_rate_special ?? $morningRate);
+$nightSpecialRate   = (float) ($comp->ot_night_rate_special ?? $nightRate);
+
+// If shift overtime rate config is missing/invalid => effectiveRate will be 0
+$useUniformRate = $effectiveRate > 0;
+
+// Compute amounts
+if ($useUniformRate) {
+    $amounts = [
+        'morning_regular' => round($hours['morning_regular'] * $effectiveRate, 2),
+        'morning_special' => round($hours['morning_special'] * $effectiveRate, 2),
+        'evening_regular' => round($hours['evening_regular'] * $effectiveRate, 2),
+        'evening_special' => round($hours['evening_special'] * $effectiveRate, 2),
+    ];
+} else {
+    // ✅ fallback to comp rates
+    $amounts = [
+        'morning_regular' => round($hours['morning_regular'] * $morningRate, 2),
+        'morning_special' => round($hours['morning_special'] * $morningSpecialRate, 2),
+        'evening_regular' => round($hours['evening_regular'] * $nightRate, 2),
+        'evening_special' => round($hours['evening_special'] * $nightSpecialRate, 2),
+    ];
+}
+
+$amounts['total'] = round(array_sum($amounts), 2);
+
+over_time::create([
+    'employee_id' => $employee->id,
+    'shift_code' => $resolvedShift->id,
+    'time_cards_id' => $outCard->id,
+
+    'ot_hours' => $hours['total'],
+    'morning_ot' => $hours['morning_regular'],
+    'afternoon_ot' => $hours['evening_regular'],
+    'morning_ot_special' => $hours['morning_special'],
+    'evening_ot_special' => $hours['evening_special'],
+
+    'morning_ot_amount' => $amounts['morning_regular'],
+    'morning_ot_special_amount' => $amounts['morning_special'],
+    'evening_ot_amount' => $amounts['evening_regular'],
+    'evening_ot_special_amount' => $amounts['evening_special'],
+    'total_ot_amount' => $amounts['total'],
+
+    'holiday_ot_hours' => 0.0,
+    'holiday_ot_amount' => 0.0,
+
+    'status' => 'pending',
+]);
 
         over_time::create([
             'employee_id' => $employee->id,
