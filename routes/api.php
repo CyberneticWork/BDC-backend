@@ -60,7 +60,7 @@ Route::middleware('auth:sanctum')->get('/logout', function (Request $request) {
 
 Route::post('/login', [AuthController::class, 'login']);
 Route::post('/register', [AuthController::class, 'register']);
-Route::put('/leave-masters/{id}/status', [LeaveMasterController::class, 'updateStatus']);
+//Route::put('/leave-masters/{id}/status', [LeaveMasterController::class, 'updateStatus']);
 // Route::get('/test', [AuthController::class, 'test']);
 Route::get('/dashboard/stats/today', [TimeCardController::class, 'getTodayStats']);
 Route::apiResource('users', UserController::class);
@@ -91,7 +91,17 @@ Route::apiResource('subdepartments', SubDepartmentsController::class);
 Route::apiResource('rosters', RosterController::class);
 Route::apiResource('overtime', OvertimeController::class);
 Route::post('/overtime/approve/{id}', [OvertimeController::class, 'approve']);
+//Route::apiResource('leave-masters', LeaveMasterController::class);
+
+
+Route::put('/leave-masters/{id}/status', [LeaveMasterController::class, 'updateStatus']);
+Route::get('/leave-masters/eligibility', [LeaveMasterController::class, 'getLeaveEligibility']);
+Route::get('/leave-masters/{employeeId}/counts', [LeaveMasterController::class, 'getLeaveRecordCountsByEmployee']);
+
 Route::apiResource('leave-masters', LeaveMasterController::class);
+
+
+
 Route::apiResource('salary-process', SalaryProcessController::class);
 Route::get('salary/processed', [SalaryProcessController::class, 'getProcessedSalaries']);
 Route::post('/salary/process/mark-issued', [SalaryProcessController::class, 'markAsIssued']);
@@ -200,6 +210,15 @@ Route::get('/roster/search', [RosterController::class, 'search']);
 // Deductions import/export routes
 Route::get('/deductions/template/download', [DeductionController::class, 'downloadTemplate']);
 Route::post('/deductions/import', [DeductionController::class, 'import']);
+
+
+
+
+// ✅ special route FIRST
+//Route::get('/loans/employee-by-number/{number}', [LoanController::class, 'getEmployeeByNumber']);
+
+// ✅ resource routes
+Route::apiResource('loans', LoanController::class);
 Route::get('/loans/employee-by-number/{number}', [LoanController::class, 'getEmployeeByNumber']);
 
 Route::post('/test', [ResignationController::class, 'testFunction']);

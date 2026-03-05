@@ -33,6 +33,8 @@ class salary_process extends Model
         'approved_no_pay_days',
         'allowances',
         'deductions',
+
+        'bonuses',
         'salary_breakdown',
         'month',
         'year',
@@ -54,6 +56,7 @@ class salary_process extends Model
         'allowances' => 'json',
         'deductions' => 'json',
         'salary_breakdown' => 'json',
+        'bonuses' => 'json',
         'increment_effected_date' => 'date',
     ];
     public function employee()
