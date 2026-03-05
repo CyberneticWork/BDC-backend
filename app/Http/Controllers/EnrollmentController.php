@@ -16,7 +16,7 @@ class EnrollmentController extends Controller
      */
     public function index(Request $request)
     {
-        $userId = auth()->id();
+        $userId = Auth::id();
 
         $query = enrollments::with(['course.modules', 'course.attachments'])
             ->where('user_id', $userId);
@@ -37,7 +37,7 @@ class EnrollmentController extends Controller
      */
     public function enroll(Request $request, $courseId)
     {
-        $userId = auth()->id();
+        $userId = Auth::id();
 
         // Validate course exists
         $course = courses::findOrFail($courseId);
@@ -94,7 +94,7 @@ class EnrollmentController extends Controller
      */
     public function checkEnrollment($courseId)
     {
-        $userId = auth()->id();
+        $userId = Auth::id();
 
         $enrollment = enrollments::where('user_id', $userId)
             ->where('course_id', $courseId)
@@ -111,7 +111,7 @@ class EnrollmentController extends Controller
      */
     public function getProgress($courseId)
     {
-        $userId = auth()->id();
+        $userId = Auth::id();
 
         // Get enrollment with course and module progress
         $enrollment = enrollments::with(['course.modules'])
@@ -148,7 +148,7 @@ class EnrollmentController extends Controller
      */
     public function updateModuleProgress(Request $request, $courseId, $moduleId)
     {
-        $userId = auth()->id();
+        $userId = Auth::id();
 
         // Verify enrollment exists
         $enrollment = enrollments::where('user_id', $userId)
@@ -183,7 +183,7 @@ class EnrollmentController extends Controller
      */
     public function unenroll($courseId)
     {
-        $userId = auth()->id();
+        $userId = Auth::id();
 
         $enrollment = enrollments::where('user_id', $userId)
             ->where('course_id', $courseId)
@@ -218,7 +218,7 @@ class EnrollmentController extends Controller
      */
     public function getUserProgress()
     {
-        $userId = auth()->id();
+        $userId = Auth::id();
 
         // Get all enrollments with courses and modules
         $enrollments = enrollments::with(['course.modules'])

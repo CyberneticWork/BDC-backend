@@ -26,11 +26,31 @@ class employee extends Model
         'employment_type_id',
         'organization_assignment_id',
         'spouse_id',
-        'profile_photo_path'
+        'profile_photo_path',
+        'email',
+        'password'
     ];
+
+    protected $hidden = [
+        'password'
+    ];
+
+    // Existing relations ...
+
+    // **My Profile API සදහා relations**
+    public function contactDetail()
+    {
+        return $this->hasOne(contact_detail::class);
+    }
+
+    public function compensation()
+    {
+        return $this->hasOne(compensation::class);
+    }
+
     public function employmentType()
     {
-        return $this->belongsTo(employment_type::class);
+        return $this->belongsTo(employment_type::class, 'employment_type_id');
     }
 
     public function organizationAssignment()
@@ -48,37 +68,7 @@ class employee extends Model
         return $this->hasMany(children::class);
     }
 
-    public function contactDetail()
-    {
-        return $this->hasOne(contact_detail::class);
-    }
-
-    public function compensation()
-    {
-        return $this->hasOne(compensation::class);
-    }
-
-    //relation to roster
-    public function rosters()
-    {
-        return $this->hasMany(roster::class);
-    }
-    //relation to leave master
-    public function leaveMasters()
-    {
-        return $this->hasMany(leave_master::class);
-    }
-    //relation to employee allowances
-    public function employeeAllowances()
-    {
-        return $this->hasMany(employee_allowances::class);
-    }
-    //relation to employee deductions
-    public function employeeDeductions()
-    {
-        return $this->hasMany(employee_deductions::class);
-    }
-
+    // Optional: allowances, deductions
     public function allowances()
     {
         return $this->belongsToMany(Allowances::class, 'employee_allowances', 'employee_id', 'allowance_id')
@@ -91,42 +81,13 @@ class employee extends Model
             ->withPivot('custom_amount');
     }
 
-    public function loans()
+    public function rosters()
     {
-        return $this->hasMany(loans::class);
+        return $this->hasMany(Roster::class);
     }
 
-    public function noPayRecords()
+    public function documents()
     {
-        return $this->hasMany(NoPayRecord::class);
+        return $this->hasMany(documents::class);
     }
-    public function salaryProcesses()
-    {
-        return $this->hasMany(salary_process::class, 'employee_id');
-    }
-    public function overTimes()
-    {
-        return $this->hasMany(over_time::class);
-    }
-
-    public function pmsTaskUpdates()
-    {
-        return $this->hasMany(PmsTaskUpdate::class, 'employee_id', 'attendance_employee_no');
-    }
-
-    public function pmsTaskAssignees()
-    {
-        return $this->hasMany(PmsTaskAssignee::class, 'employee_id', 'attendance_employee_no');
-    }
-
-    public function pmsTaskCreators()
-    {
-        return $this->hasMany(PmsTaskCreator::class, 'employee_id', 'attendance_employee_no');
-    }
-
-    public function pmsPerformanceReviews()
-    {
-        return $this->hasMany(PmsPerformanceReview::class, 'employee_id', 'attendance_employee_no');
-    }
-
 }

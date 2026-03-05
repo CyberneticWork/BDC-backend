@@ -247,6 +247,16 @@ class LeaveMasterController extends Controller
 
         $overLimitInfo = null;
 
+        // Compute requested full duration (days) up-front
+        $fullDuration = 0;
+        if (isset($request->leave_from) && isset($request->leave_to)) {
+            $from = new \DateTime($request->leave_from);
+            $to = new \DateTime($request->leave_to);
+            $fullDuration = $from->diff($to)->days + 1;
+        } elseif (isset($request->leave_date)) {
+            $fullDuration = 1;
+        }
+
         // Check if employee is in probationary period
         if ($orgAssignment && $orgAssignment->probationary_period) {
             // If in probation, process special leave rules
@@ -326,21 +336,25 @@ class LeaveMasterController extends Controller
         $data = $request->all();
 
         // Calculate leave_duration based on available data
+        $leaveDuration = 0;
         if (isset($data['leave_from']) && isset($data['leave_to'])) {
             // Calculate days between leave_from and leave_to (inclusive)
             $from = new \DateTime($data['leave_from']);
             $to = new \DateTime($data['leave_to']);
             $interval = $from->diff($to);
-            $data['leave_duration'] = $interval->days + 1; // +1 to include both start and end dates
+            $leaveDuration = $interval->days + 1; // +1 to include both start and end dates
+            $data['leave_duration'] = $leaveDuration;
         } elseif (isset($data['leave_date']) && !isset($data['leave_duration'])) {
             // Single day leave
+            $leaveDuration = 1;
             $data['leave_duration'] = 1;
         }
 
         if (isset($data['is_half_day']) && $data['is_half_day']) {
-            $data['leave_duration'] = isset($data['leave_duration']) && $data['leave_duration'] > 0
+            $leaveDuration = isset($data['leave_duration']) && $data['leave_duration'] > 0
                 ? $data['leave_duration'] / 2
                 : 0.5;
+            $data['leave_duration'] = $leaveDuration;
         }
 
         // For probationary period full-day leave override
@@ -352,9 +366,13 @@ class LeaveMasterController extends Controller
                 // For monthly limit, set the duration to 0 since it's all over limit
                 // We're recording it but it's entirely over their limit
                 $data['leave_duration'] = 0;
+            } else if ($overLimitInfo['reason'] === 'probation_no_balance') {
+                // No balance available - set duration to 0
+                $data['leave_duration'] = 0;
+            } else if ($overLimitInfo['reason'] === 'probation_partial_balance') {
+                // Partial balance - subtract the over_limit amount from the full duration
+                $data['leave_duration'] = $leaveDuration - $overLimitInfo['amount'];
             }
-        } else {
-            $data['leave_duration'] = $leaveDuration;
         }
 
         // Set over_limit value if needed

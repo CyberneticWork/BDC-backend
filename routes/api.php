@@ -59,13 +59,21 @@ Route::middleware('auth:sanctum')->get('/logout', function (Request $request) {
 });
 
 Route::post('/login', [AuthController::class, 'login']);
+Route::post('/send-otp', [AuthController::class, 'sendOtp']);
+Route::post('/login/otp', [AuthController::class, 'loginWithOtp']);
 Route::post('/register', [AuthController::class, 'register']);
-//Route::put('/leave-masters/{id}/status', [LeaveMasterController::class, 'updateStatus']);
+
+// Protected routes
+Route::middleware('auth:sanctum')->group(function () {
+    Route::post('/change-password', [AuthController::class, 'changePassword']);
+});
+Route::put('/leave-masters/{id}/status', [LeaveMasterController::class, 'updateStatus']);
 // Route::get('/test', [AuthController::class, 'test']);
 Route::get('/dashboard/stats/today', [TimeCardController::class, 'getTodayStats']);
 Route::apiResource('users', UserController::class);
 Route::apiResource('shifts', ShiftController::class);
 Route::apiResource('employees', EmployeeController::class);
+Route::post('/employees/change-password', [EmployeeController::class, 'changePassword'])->middleware('auth:sanctum');
 Route::post('employes/post/update', [EmployeeController::class, 'update']);
 Route::get('/emp/table', [EmployeeController::class, 'getEmployeesForTable']);
 Route::get('/emp/search', [EmployeeController::class, 'search']);

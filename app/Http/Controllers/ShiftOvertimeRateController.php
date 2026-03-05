@@ -7,6 +7,7 @@ use App\Models\ShiftOvertimeRate;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class ShiftOvertimeRateController extends Controller
 {
@@ -293,7 +294,7 @@ class ShiftOvertimeRateController extends Controller
             ], 200);
 
         } catch (\Exception $e) {
-            \Log::error('Error in getByShiftId: ' . $e->getMessage(), [
+            Log::error('Error in getByShiftId: ' . $e->getMessage(), [
                 'shift_id' => $shiftId,
                 'trace' => $e->getTraceAsString()
             ]);

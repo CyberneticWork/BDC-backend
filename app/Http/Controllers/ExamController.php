@@ -8,6 +8,7 @@ use App\Models\exam_results;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Auth;
 
 class ExamController extends Controller
 {
@@ -43,7 +44,7 @@ class ExamController extends Controller
     public function store(Request $request)
     {
         // For testing: Comment out auth and use fixed user ID
-        $userId = auth()->id();
+        $userId = Auth::id();
         // $userId = 1;
 
         $validator = Validator::make($request->all(), [
@@ -120,7 +121,7 @@ class ExamController extends Controller
     public function update(Request $request, $id)
     {
         // For testing: Comment out auth and use fixed user ID
-        $userId = auth()->id();
+        $userId = Auth::id();
         // $userId = 1;
 
         $exam = exams::where('id', $id)->where('created_by', $userId)->first();
@@ -188,7 +189,7 @@ class ExamController extends Controller
     public function destroy($id)
     {
         // For testing: Comment out auth and use fixed user ID
-        $userId = auth()->id();
+        $userId = Auth::id();
         // $userId = 1;
 
         $exam = exams::where('id', $id)->where('created_by', $userId)->first();
@@ -206,7 +207,7 @@ class ExamController extends Controller
      */
     public function submitExam(Request $request, $id)
     {
-        $userId = auth()->id(); // replace with auth()->id() later
+        $userId = Auth::id(); // replace with auth()->id() later
         $exam = exams::with('questions')->find($id);
 
         if (!$exam) {
@@ -277,7 +278,7 @@ class ExamController extends Controller
     public function getResults(Request $request)
     {
         // For testing: Comment out auth and use fixed user ID
-        $userId = auth()->id();
+        $userId = Auth::id();
         // $userId = 1;
 
         $results = exam_results::with('exam')->where('user_id', $userId)->paginate(10);
