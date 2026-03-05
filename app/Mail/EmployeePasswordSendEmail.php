@@ -15,9 +15,13 @@ class EmployeePasswordSendEmail extends Mailable implements ShouldQueue
 
     public $data;
 
-    public function __construct($data)
+    public function __construct($name, $email, $password)
     {
-        $this->data = $data;
+        $this->data = [
+            'name' => $name,
+            'email' => $email,
+            'password' => $password,
+        ];
     }
 
     /**
@@ -26,7 +30,7 @@ class EmployeePasswordSendEmail extends Mailable implements ShouldQueue
     public function envelope(): Envelope
     {
         return new Envelope(
-            subject: 'Employee Password Send Email',
+            subject: 'Welcome to the Team - Your Account Credentials',
         );
     }
 

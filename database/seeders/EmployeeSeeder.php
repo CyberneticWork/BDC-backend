@@ -182,6 +182,7 @@ class EmployeeSeeder extends Seeder
                 'name' => $fullName,
                 'email' => $email,
                 'password' => $password,
+                'employee_id' => $employee->id,
                 'role' => 'employee',
             ]);
 
