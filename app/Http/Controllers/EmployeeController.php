@@ -12,6 +12,7 @@ use App\Models\compensation;
 use Illuminate\Http\Request;
 use App\Models\contact_detail;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
 use App\Mail\EmployeePasswordSendEmail;
@@ -451,7 +452,7 @@ if ($spouseNic && $employeeNic === $spouseNic) {
                 Mail::to($address['email'])->send(new EmployeePasswordSendEmail($personal['fullName'], $address['email'], $plainPassword));
             } catch (\Exception $e) {
                 // Log email error but don't fail the employee creation
-                \Log::error('Failed to send password email: ' . $e->getMessage());
+                Log::error('Failed to send password email: ' . $e->getMessage());
             }
 
             // Create children records if any valid children exist
@@ -1112,7 +1113,8 @@ if ($spouseNic && $employeeNic === $spouseNic) {
     {
         $validator = Validator::make($request->all(), [
             'current_password' => 'required|string',
-            'new_password' => 'required|string|min:8|confirmed',
+            'new_password' => 'required|string|min:8',
+            'new_password_confirmation' => 'required|string|same:new_password',
         ]);
 
         if ($validator->fails()) {
