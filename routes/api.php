@@ -43,6 +43,12 @@ use App\Http\Controllers\CentersController;
 use App\Http\Controllers\ShiftOvertimeRateController;
 
 use App\Http\Controllers\BonusesController;
+use App\Http\Controllers\LeaveSettingController;
+
+use App\Http\Controllers\AttendanceReportController;
+use App\Http\Controllers\AbsentReportController;
+
+use App\Http\Controllers\SingleEntryReportController;
 
 
 Route::get('/user', function (Request $request) {
@@ -99,8 +105,11 @@ Route::get('/leave-masters/eligibility', [LeaveMasterController::class, 'getLeav
 Route::get('/leave-masters/{employeeId}/counts', [LeaveMasterController::class, 'getLeaveRecordCountsByEmployee']);
 
 Route::apiResource('leave-masters', LeaveMasterController::class);
+//absent
+Route::get('/reports/time-cards/absent', [AbsentReportController::class, 'index']);
 
-
+// Single Entry Report Route
+Route::get('/reports/time-cards/single-entry', [SingleEntryReportController::class, 'index']);
 
 Route::apiResource('salary-process', SalaryProcessController::class);
 Route::get('salary/processed', [SalaryProcessController::class, 'getProcessedSalaries']);
@@ -211,8 +220,21 @@ Route::get('/roster/search', [RosterController::class, 'search']);
 Route::get('/deductions/template/download', [DeductionController::class, 'downloadTemplate']);
 Route::post('/deductions/import', [DeductionController::class, 'import']);
 
+//leave settings
+// Leave Settings Routes
+Route::get('/leave-settings', [LeaveSettingController::class, 'index']);
+Route::post('/leave-settings', [LeaveSettingController::class, 'store']);
+Route::get('/leave-settings/active-summary', [LeaveSettingController::class, 'getActiveSummary']);
+Route::get('/leave-settings/type/{type}', [LeaveSettingController::class, 'getByType']);
+Route::get('/leave-settings/{leaveSetting}', [LeaveSettingController::class, 'show']);
+Route::put('/leave-settings/{leaveSetting}', [LeaveSettingController::class, 'update']);
+Route::delete('/leave-settings/{leaveSetting}', [LeaveSettingController::class, 'destroy']);
 
 
+// Attendance Report Routes
+Route::get('/reports/time-cards/attendance', [AttendanceReportController::class, 'index']);
+
+Route::get('/reports/time-cards/attendance/monthly', [AttendanceReportController::class, 'monthly']);
 
 // ✅ special route FIRST
 //Route::get('/loans/employee-by-number/{number}', [LoanController::class, 'getEmployeeByNumber']);
