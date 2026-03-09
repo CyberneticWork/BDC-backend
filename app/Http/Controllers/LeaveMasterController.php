@@ -706,6 +706,16 @@ class LeaveMasterController extends Controller
                     'is_half_day_only' => true,
                     'note' => 'Probation employees can only take half-day leaves'
                 ];
+            } else {
+                // No probation settings - return default
+                $eligibleLeaves[] = [
+                    'leave_type' => 'Casual Leave',
+                    'total_days' => 7,
+                    'used_days' => $leaveBalance['used_half_days'] / 2,
+                    'available_days' => $leaveBalance['available_half_days'] / 2,
+                    'is_half_day_only' => true,
+                    'note' => 'Probation employees can only take half-day leaves (Default: 7 half-days per year)'
+                ];
             }
 
             return response()->json([
@@ -731,9 +741,20 @@ class LeaveMasterController extends Controller
             ->first();
 
         if (!$permanentSettings) {
+            // Return empty eligibility instead of error
             return response()->json([
-                'message' => 'No leave settings found for permanent employees'
-            ], 404);
+                'employee_id' => $employee->id,
+                'emp_number' => $employee->attendance_employee_no,
+                'employee_name' => $employee->display_name ?? $employee->name_with_initials,
+                'is_probation' => false,
+                'join_date' => $orgAssignment->date_of_joining ?? null,
+                'join_year' => $joinYear,
+                'current_year' => $currentYear,
+                'eligible_leaves' => [],
+                'current_quarter' => null,
+                'full_year_access' => false,
+                'message' => 'No leave settings configured. Please contact HR.'
+            ]);
         }
 
         $eligibleLeaves = [];

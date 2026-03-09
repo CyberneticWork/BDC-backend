@@ -155,6 +155,7 @@ Route::get('/Leave-Master/status/hr-approved', [LeaveMasterController::class, 'g
 
 
 Route::get('/time-cards', [TimeCardController::class, 'index']);
+Route::get('/reports/time-cards/attendance', [TimeCardController::class, 'getAttendanceReport']);
 
 
 Route::prefix('apiData')->group(function () {
