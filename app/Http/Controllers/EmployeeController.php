@@ -442,6 +442,7 @@ if ($spouseNic && $employeeNic === $spouseNic) {
             $user = User::create([
                 'name' => $personal['fullName'],
                 'email' => $address['email'],
+                'nic' => $personal['nicNumber'],
                 'employee_id' => $employee->id,
                 'password' => $hashedPassword,
                 'role' => 'employee',
