@@ -239,11 +239,11 @@ class EmployeeController extends Controller
                 'basicSalary' => 'required|numeric',
                 'incrementValue' => 'nullable|numeric',
                 'incrementEffectiveFrom' => 'nullable|date',
-                'bankName' => 'required|string|max:100',
-                'branchName' => 'required|string|max:100',
-                'bankCode' => 'required|string|max:50',
-                'branchCode' => 'required|string|max:50',
-                'bankAccountNo' => 'required|string|max:50',
+                'bankName' => 'nullable|string|max:100',
+                'branchName' => 'nullable|string|max:100',
+                'bankCode' => 'nullable|string|max:50',
+                'branchCode' => 'nullable|string|max:50',
+                'bankAccountNo' => 'nullable|string|max:50',
                 'comments' => 'nullable|string|max:255',
                 'secondaryEmp' => 'required|boolean',
                 'primaryEmploymentBasic' => 'required|boolean',
@@ -486,7 +486,7 @@ if ($spouseNic && $employeeNic === $spouseNic) {
             // Handle document uploads if any
             if ($request->hasFile('documents')) {
                 // Get the documents metadata from the request
-                $documentsMeta = $request->input('documents');
+                $documentsMeta = json_decode($request->input('documents'), true) ?? [];
 
                 foreach ($request->file('documents') as $index => $document) {
                     $path = $document->store('employee/documents', 'public');
@@ -574,6 +574,12 @@ if ($spouseNic && $employeeNic === $spouseNic) {
             if ($profilePicturePath && Storage::disk('public')->exists($profilePicturePath)) {
                 Storage::disk('public')->delete($profilePicturePath);
             }
+
+            Log::error('Employee creation error: ' . $e->getMessage(), [
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString()
+            ]);
 
             return response()->json([
                 'message' => 'Employee creation failed',
@@ -716,9 +722,10 @@ if ($spouseNic && $employeeNic === $spouseNic) {
             $addressValidator = Validator::make($address, [
                 'permanentAddress' => 'required|string|max:255',
                 'temporaryAddress' => 'nullable|string|max:255',
-                'email' => 'required|email',
+                'email' => 'required|email|unique:contact_details,email,' . $employee->contactDetail?->id,
+                'password' => 'nullable|string|min:8',
                 'landLine' => 'nullable|string|max:20',
-                'mobileLine' => 'required|string|max:20',
+                'mobileLine' => 'required|string|max:20|unique:contact_details,mobile_line,' . $employee->contactDetail?->id,
                 'gnDivision' => 'nullable|string|max:100',
                 'policeStation' => 'nullable|string|max:100',
                 'district' => 'required|string|max:100',
@@ -734,11 +741,11 @@ if ($spouseNic && $employeeNic === $spouseNic) {
                 'basicSalary' => 'required|numeric',
                 'incrementValue' => 'nullable|numeric',
                 'incrementEffectiveFrom' => 'nullable|date',
-                'bankName' => 'required|string|max:100',
-                'branchName' => 'required|string|max:100',
-                'bankCode' => 'required|string|max:50',
-                'branchCode' => 'required|string|max:50',
-                'bankAccountNo' => 'required|string|max:50',
+                'bankName' => 'nullable|string|max:100',
+                'branchName' => 'nullable|string|max:100',
+                'bankCode' => 'nullable|string|max:50',
+                'branchCode' => 'nullable|string|max:50',
+                'bankAccountNo' => 'nullable|string|max:50',
                 'comments' => 'nullable|string|max:255',
                 'secondaryEmp' => 'required|boolean',
                 'primaryEmploymentBasic' => 'required|boolean',
@@ -876,37 +883,46 @@ if ($spouseNic && $employeeNic === $spouseNic) {
             }
 
             // Update spouse record - Safe access
-            $employee->spouse()->update([
-                'type' => $personal['relationshipType'] ?? null,
-                'title' => $personal['spouseTitle'] ?? null,
-                'name' => $personal['spouseName'] ?? null,
-                'nic' => $personal['spouseNic'] ?? null,
-                'age' => $personal['spouseAge'] ?? null,
-                'dob' => $personal['spouseDob'] ?? null,
-            ]);
+            if ($employee->spouse) {
+                $employee->spouse()->update([
+                    'type' => $personal['relationshipType'] ?? null,
+                    'title' => $personal['spouseTitle'] ?? null,
+                    'name' => $personal['spouseName'] ?? null,
+                    'nic' => $personal['spouseNic'] ?? null,
+                    'age' => $personal['spouseAge'] ?? null,
+                    'dob' => $personal['spouseDob'] ?? null,
+                ]);
+            }
 
             // Update organization assignment
-            $employee->organizationAssignment()->update([
-                'company_id' => $organization['company'],
-                'department_id' => !empty($organization['department']) ? $organization['department'] : null,
-                'sub_department_id' => !empty($organization['subDepartment']) ? $organization['subDepartment'] : null,
-                'designation_id' => $organization['designation'],
-                'current_supervisor' => $organization['currentSupervisor'] ?? null,
-                'date_of_joining' => $organization['dateOfJoined'],
-                'day_off' => empty($organization['dayOff']) ? null : $organization['dayOff'],
-                'confirmation_date' => empty($organization['confirmationDate']) ? null : $organization['confirmationDate'],
-                'probationary_period' => $organization['probationPeriod'],
-                'training_period' => $organization['trainingPeriod'],
-                'contract_period' => $organization['contractPeriod'],
-                'probationary_period_from' => empty($organization['probationFrom']) ? null : $organization['probationFrom'],
-                'probationary_period_to' => empty($organization['probationTo']) ? null : $organization['probationTo'],
-                'training_period_from' => empty($organization['trainingFrom']) ? null : $organization['trainingFrom'],
-                'training_period_to' => empty($organization['trainingTo']) ? null : $organization['trainingTo'],
-                'contract_period_from' => empty($organization['contractFrom']) ? null : $organization['contractFrom'],
-                'contract_period_to' => empty($organization['contractTo']) ? null : $organization['contractTo'],
-                'date_of_resigning' => empty($organization['confirmationDate']) ? null : $organization['confirmationDate'],
-                'is_active' => $organization['currentStatus'],
-            ]);
+            if ($employee->organizationAssignment) {
+                $companyId = is_numeric($organization['company']) ? $organization['company'] : $employee->organizationAssignment->company_id;
+                $designationId = is_numeric($organization['designation']) ? $organization['designation'] : $employee->organizationAssignment->designation_id;
+                $deptId = !empty($organization['department']) ? (is_numeric($organization['department']) ? $organization['department'] : $employee->organizationAssignment->department_id) : null;
+                $subDeptId = !empty($organization['subDepartment']) ? (is_numeric($organization['subDepartment']) ? $organization['subDepartment'] : $employee->organizationAssignment->sub_department_id) : null;
+                
+                $employee->organizationAssignment()->update([
+                    'company_id' => $companyId,
+                    'department_id' => $deptId,
+                    'sub_department_id' => $subDeptId,
+                    'designation_id' => $designationId,
+                    'current_supervisor' => $organization['currentSupervisor'] ?? null,
+                    'date_of_joining' => $organization['dateOfJoined'],
+                    'day_off' => empty($organization['dayOff']) ? null : $organization['dayOff'],
+                    'confirmation_date' => empty($organization['confirmationDate']) ? null : $organization['confirmationDate'],
+                    'probationary_period' => $organization['probationPeriod'],
+                    'training_period' => $organization['trainingPeriod'],
+                    'contract_period' => $organization['contractPeriod'],
+                    'probationary_period_from' => empty($organization['probationFrom']) ? null : $organization['probationFrom'],
+                    'probationary_period_to' => empty($organization['probationTo']) ? null : $organization['probationTo'],
+                    'training_period_from' => empty($organization['trainingFrom']) ? null : $organization['trainingFrom'],
+                    'training_period_to' => empty($organization['trainingTo']) ? null : $organization['trainingTo'],
+                    'contract_period_from' => empty($organization['contractFrom']) ? null : $organization['contractFrom'],
+                    'contract_period_to' => empty($organization['contractTo']) ? null : $organization['contractTo'],
+                    'date_of_resigning' => empty($organization['confirmationDate']) ? null : $organization['confirmationDate'],
+                    'is_active' => $organization['currentStatus'],
+                ]);
+            }
 
             // Update employee record
             $employee->update([
@@ -951,7 +967,9 @@ if ($spouseNic && $employeeNic === $spouseNic) {
             // Handle document uploads if any
             if ($request->hasFile('documents')) {
                 // Get the documents metadata from the request
-                $documentsMeta = $request->input('documents');
+                $documentsMetaJson = $request->input('documents');
+                $documentsMeta = is_string($documentsMetaJson) ? json_decode($documentsMetaJson, true) : $documentsMetaJson;
+                $documentsMeta = $documentsMeta ?? [];
 
                 foreach ($request->file('documents') as $index => $document) {
                     $path = $document->store('employee/documents', 'public');
@@ -969,49 +987,53 @@ if ($spouseNic && $employeeNic === $spouseNic) {
             }
 
             // Update contact details
-            $employee->contactDetail()->update([
-                'permanent_address' => $address['permanentAddress'],
-                'temporary_address' => $address['temporaryAddress'] ?? null,
-                'email' => $address['email'],
-                'land_line' => $address['landLine'] ?? null,
-                'mobile_line' => $address['mobileLine'] ?? null,
-                'gn_division' => $address['gnDivision'] ?? null,
-                'police_station' => $address['policeStation'] ?? null,
-                'district' => $address['district'] ?? '',
-                'province' => $address['province'] ?? '',
-                'electoral_division' => $address['electoralDivision'] ?? null,
-                'emg_relationship' => $address['emergencyContact']['relationship'],
-                'emg_name' => $address['emergencyContact']['contactName'],
-                'emg_address' => $address['emergencyContact']['contactAddress'],
-                'emg_tel' => $address['emergencyContact']['contactTel'],
-            ]);
+            if ($employee->contactDetail) {
+                $employee->contactDetail()->update([
+                    'permanent_address' => $address['permanentAddress'],
+                    'temporary_address' => $address['temporaryAddress'] ?? null,
+                    'email' => $address['email'],
+                    'land_line' => $address['landLine'] ?? null,
+                    'mobile_line' => $address['mobileLine'] ?? null,
+                    'gn_division' => $address['gnDivision'] ?? null,
+                    'police_station' => $address['policeStation'] ?? null,
+                    'district' => $address['district'] ?? '',
+                    'province' => $address['province'] ?? '',
+                    'electoral_division' => $address['electoralDivision'] ?? null,
+                    'emg_relationship' => $address['emergencyContact']['relationship'],
+                    'emg_name' => $address['emergencyContact']['contactName'],
+                    'emg_address' => $address['emergencyContact']['contactAddress'],
+                    'emg_tel' => $address['emergencyContact']['contactTel'],
+                ]);
+            }
 
             // Update compensation record
-            $employee->compensation()->update([
-                'basic_salary' => $compensation['basicSalary'],
-                'increment_value' => $compensation['incrementValue'] ?? null,
-                'increment_effected_date' => empty($compensation['incrementEffectiveFrom']) ? null : $compensation['incrementEffectiveFrom'],
-                'bank_name' => $compensation['bankName'] ?? null,
-                'branch_name' => $compensation['branchName'] ?? null,
-                'bank_code' => $compensation['bankCode'] ?? null,
-                'branch_code' => $compensation['branchCode'] ?? null,
-                'bank_account_no' => $compensation['bankAccountNo'] ?? null,
-                'comments' => $compensation['comments'] ?? null,
-                'secondary_emp' => $compensation['secondaryEmp'],
-                'primary_emp_basic' => $compensation['primaryEmploymentBasic'],
-                'enable_epf_etf' => $compensation['enableEpfEtf'],
-                'ot_active' => $compensation['otActive'],
-                'early_deduction' => $compensation['earlyDeduction'],
-                'increment_active' => $compensation['incrementActive'],
-                'active_nopay' => $compensation['nopayActive'],
-                'ot_morning' => $compensation['morningOt'],
-                'ot_evening' => $compensation['eveningOt'],
-                'ot_morning_rate' => $compensation['ot_morning_rate'] ?? null,
-                'ot_night_rate' => $compensation['ot_night_rate'] ?? null,
-                'br1' => $compensation['budgetaryReliefAllowance2015'],
-                'br2' => $compensation['budgetaryReliefAllowance2016'],
-                'stamp' => $compensation['stamp'],
-            ]);
+            if ($employee->compensation) {
+                $employee->compensation()->update([
+                    'basic_salary' => $compensation['basicSalary'],
+                    'increment_value' => $compensation['incrementValue'] ?? null,
+                    'increment_effected_date' => empty($compensation['incrementEffectiveFrom']) ? null : $compensation['incrementEffectiveFrom'],
+                    'bank_name' => $compensation['bankName'] ?? null,
+                    'branch_name' => $compensation['branchName'] ?? null,
+                    'bank_code' => $compensation['bankCode'] ?? null,
+                    'branch_code' => $compensation['branchCode'] ?? null,
+                    'bank_account_no' => $compensation['bankAccountNo'] ?? null,
+                    'comments' => $compensation['comments'] ?? null,
+                    'secondary_emp' => $compensation['secondaryEmp'],
+                    'primary_emp_basic' => $compensation['primaryEmploymentBasic'],
+                    'enable_epf_etf' => $compensation['enableEpfEtf'],
+                    'ot_active' => $compensation['otActive'],
+                    'early_deduction' => $compensation['earlyDeduction'],
+                    'increment_active' => $compensation['incrementActive'],
+                    'active_nopay' => $compensation['nopayActive'],
+                    'ot_morning' => $compensation['morningOt'],
+                    'ot_evening' => $compensation['eveningOt'],
+                    'ot_morning_rate' => $compensation['ot_morning_rate'] ?? null,
+                    'ot_night_rate' => $compensation['ot_night_rate'] ?? null,
+                    'br1' => $compensation['budgetaryReliefAllowance2015'],
+                    'br2' => $compensation['budgetaryReliefAllowance2016'],
+                    'stamp' => $compensation['stamp'],
+                ]);
+            }
 
             DB::commit();
 
@@ -1027,6 +1049,12 @@ if ($spouseNic && $employeeNic === $spouseNic) {
             if ($request->hasFile('profile_picture') && $profilePicturePath && Storage::disk('public')->exists($profilePicturePath)) {
                 Storage::disk('public')->delete($profilePicturePath);
             }
+
+            Log::error('Employee update error: ' . $e->getMessage(), [
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString()
+            ]);
 
             return response()->json([
                 'message' => 'Employee update failed',
@@ -1145,5 +1173,29 @@ if ($spouseNic && $employeeNic === $spouseNic) {
         return response()->json([
             'message' => 'Password changed successfully'
         ], 200);
+    }
+
+    public function updateProfilePicture(Request $request, $id)
+    {
+        $validator = Validator::make($request->all(), [
+            'profile_photo' => 'required|image|max:2048'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['message' => 'Validation failed', 'errors' => $validator->errors()], 422);
+        }
+
+        try {
+            $employee = Employee::findOrFail($id);
+            if ($employee->profile_photo_path && Storage::disk('public')->exists($employee->profile_photo_path)) {
+                Storage::disk('public')->delete($employee->profile_photo_path);
+            }
+            $path = $request->file('profile_photo')->store('employee/profile_pictures', 'public');
+            $employee->update(['profile_photo_path' => $path]);
+            return response()->json(['message' => 'Profile picture updated', 'profile_photo_path' => $path], 200);
+        } catch (\Exception $e) {
+            Log::error('Profile picture upload error: ' . $e->getMessage());
+            return response()->json(['message' => 'Upload failed', 'error' => $e->getMessage()], 500);
+        }
     }
 }
