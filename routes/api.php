@@ -245,6 +245,7 @@ Route::get('/reports/time-cards/attendance', [AttendanceReportController::class,
 
 Route::get('/reports/time-cards/attendance/monthly', [AttendanceReportController::class, 'monthly']);
 
+Route::put('/reports/time-cards/attendance/{employeeId}/{date}/approval-status', [AttendanceReportController::class, 'updateApprovalStatus']);
 // ✅ special route FIRST
 //Route::get('/loans/employee-by-number/{number}', [LoanController::class, 'getEmployeeByNumber']);
 
@@ -257,6 +258,8 @@ Route::post('/test', [ResignationController::class, 'testFunction']);
 Route::apiResource('salary', SalaryController::class);
 Route::get('salary/{id}/audit', [SalaryController::class, 'getAuditLogs']);
 Route::get('/salary/process/csv', [SalaryController::class, 'salaryCSV']);
+
+Route::get('/salary/process/csv', [SalaryProcessController::class, 'downloadSalaryCSV']);
 
 // LMS Routes
 
