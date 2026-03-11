@@ -1093,47 +1093,6 @@ private function processOvertimeForOutPunch(
 }
 
 
-/*
-    private function isHoliday(employee $employee, string $date): bool
-{
-    $org = $employee->organizationAssignment;
-    if (!$org) {
-        return false;
-    }
-
-    // IMPORTANT:
-    // Do NOT auto mark Saturday/Sunday as holiday.
-    // Only leave calendar based holidays should be treated as holiday.
-
-    $companyHoliday = \App\Models\leaveCalendar::where('company_id', $org->company_id)
-        ->whereDate('start_date', '<=', $date)
-        ->where(function ($q) use ($date) {
-            $q->whereNull('end_date')->orWhereDate('end_date', '>=', $date);
-        })
-        ->exists();
-
-    if ($companyHoliday) {
-        return true;
-    }
-
-    if ($org->department_id) {
-        $deptHoliday = \App\Models\leaveCalendar::where('department_id', $org->department_id)
-            ->whereDate('start_date', '<=', $date)
-            ->where(function ($q) use ($date) {
-                $q->whereNull('end_date')->orWhereDate('end_date', '>=', $date);
-            })
-            ->exists();
-
-        if ($deptHoliday) {
-            return true;
-        }
-    }
-
-    return false;
-}
-*/
-
-
 
 private function isHoliday(employee $employee, string $date): bool
 {
@@ -1142,14 +1101,41 @@ private function isHoliday(employee $employee, string $date): bool
         return false;
     }
 
-    // Weekend auto holiday කරන්න එපා
-    // leave_calendars table එකේ records විතරක් holiday ලෙස ගන්න
+    $holidayReasons = ['holiday', 'holyday', 'poya'];
+
+    $matchesHolidayReason = function ($query) use ($holidayReasons) {
+        $query->where(function ($q) use ($holidayReasons) {
+            foreach ($holidayReasons as $reason) {
+                $q->orWhereRaw('LOWER(TRIM(reason)) = ?', [$reason]);
+            }
+
+            // optional: poya day / company holiday wage text match karanna
+            $q->orWhereRaw('LOWER(reason) LIKE ?', ['%poya%'])
+              ->orWhereRaw('LOWER(reason) LIKE ?', ['%holiday%'])
+              ->orWhereRaw('LOWER(reason) LIKE ?', ['%holyday%']);
+        });
+    };
+
+    $matchesDate = function ($query) use ($date) {
+        $query->where(function ($q) use ($date) {
+            // Single-day record
+            $q->where(function ($x) use ($date) {
+                $x->whereNull('end_date')
+                  ->whereDate('start_date', '=', $date);
+            })
+            // Date range record
+            ->orWhere(function ($x) use ($date) {
+                $x->whereNotNull('end_date')
+                  ->whereDate('start_date', '<=', $date)
+                  ->whereDate('end_date', '>=', $date);
+            });
+        });
+    };
 
     $companyHoliday = \App\Models\leaveCalendar::where('company_id', $org->company_id)
-        ->whereDate('start_date', '<=', $date)
-        ->where(function ($q) use ($date) {
-            $q->whereNull('end_date')->orWhereDate('end_date', '>=', $date);
-        })
+        ->whereNull('department_id')
+        ->where($matchesDate)
+        ->where($matchesHolidayReason)
         ->exists();
 
     if ($companyHoliday) {
@@ -1157,11 +1143,10 @@ private function isHoliday(employee $employee, string $date): bool
     }
 
     if ($org->department_id) {
-        $deptHoliday = \App\Models\leaveCalendar::where('department_id', $org->department_id)
-            ->whereDate('start_date', '<=', $date)
-            ->where(function ($q) use ($date) {
-                $q->whereNull('end_date')->orWhereDate('end_date', '>=', $date);
-            })
+        $deptHoliday = \App\Models\leaveCalendar::where('company_id', $org->company_id)
+            ->where('department_id', $org->department_id)
+            ->where($matchesDate)
+            ->where($matchesHolidayReason)
             ->exists();
 
         if ($deptHoliday) {
