@@ -1092,6 +1092,8 @@ class SalaryProcessController extends Controller
         }
     }
 
+
+    /*
     public function getProcessedSalaries()
     {
         $processedSalaries = salary_process::where('status', 'processed')
@@ -1139,6 +1141,68 @@ class SalaryProcessController extends Controller
 
         return response()->json($response);
     }
+        */
+
+    public function getProcessedSalaries(Request $request)
+{
+    $month = $request->query('month');
+    $year = $request->query('year');
+
+    $processedSalaries = salary_process::whereIn('status', ['processed', 'issued'])
+        ->when($month, function ($query) use ($month) {
+            $query->where('month', $month);
+        })
+        ->when($year, function ($query) use ($year) {
+            $query->where('year', $year);
+        })
+        ->with([
+            'employee' => function ($query) {
+                $query->select('id', 'full_name', 'attendance_employee_no')
+                    ->with([
+                        'compensation' => function ($q) {
+                            $q->select(
+                                'employee_id',
+                                'basic_salary',
+                                'enable_epf_etf',
+                                'bank_name',
+                                'bank_account_no',
+                                'branch_name'
+                            );
+                        }
+                    ]);
+            }
+        ])
+        ->orderBy('created_at', 'desc')
+        ->get();
+
+    $response = $processedSalaries->map(function ($salary) {
+        return [
+            'id' => $salary->id,
+            'employee_id' => $salary->employee_id,
+            'employee_no' => $salary->employee_no,
+            'full_name' => $salary->full_name,
+            'company_name' => $salary->company_name,
+            'department_name' => $salary->department_name,
+            'stamp' => $salary->stamp,
+            'basic_salary' => $salary->basic_salary,
+            'ot_morning' => $salary->ot_morning,
+            'ot_evening' => $salary->ot_evening,
+            'month' => $salary->month,
+            'year' => $salary->year,
+            'status' => $salary->status,
+            'compensation' => $salary->employee->compensation ?? null,
+            'bank_details' => $salary->employee->bankDetails ?? null,
+            'salary_breakdown' => $salary->salary_breakdown,
+            'allowances' => $salary->allowances,
+            'deductions' => $salary->deductions,
+            'bonuses' => $salary->bonuses,
+        ];
+    });
+
+    return response()->json($response);
+}
+
+
 
     public function markAsIssued(Request $request)
     {
