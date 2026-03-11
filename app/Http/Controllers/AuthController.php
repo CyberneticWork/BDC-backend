@@ -17,7 +17,7 @@ class AuthController extends Controller
     public function login(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'email' => 'required|email',
+            'identifier' => 'required|email',
             'password' => 'required',
         ]);
 
@@ -28,7 +28,8 @@ class AuthController extends Controller
             ], 422);
         }
         
-        $user = User::where('email', $request->email)->first();
+        // Find user by email
+        $user = User::where('email', $request->identifier)->first();
 
         if (!$user || !Hash::check($request->password, $user->password)) {
             return response()->json([
@@ -36,7 +37,7 @@ class AuthController extends Controller
             ], 401);
         }
         
-        $token = $user->createToken($request->email)->plainTextToken;
+        $token = $user->createToken($request->identifier)->plainTextToken;
 
         return response()->json(['token' => $token], 200);
     }
