@@ -3221,10 +3221,9 @@ class SalaryProcessController extends Controller
 
 
 
-
-
-//=============================================================================================
 /*
+
+//======================================================================================/*
 namespace App\Http\Controllers;
 
 use App\Models\employee;
@@ -4224,11 +4223,4 @@ class SalaryProcessController extends Controller
             return response()->json(['message' => 'Error updating payslips and loans: ' . $e->getMessage()], 500);
         }
     }
-}
-
-
-
-*/
-
-
-
+}*/

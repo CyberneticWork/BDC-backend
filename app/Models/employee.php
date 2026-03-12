@@ -90,4 +90,9 @@ class employee extends Model
     {
         return $this->hasMany(documents::class);
     }
+
+    public function overtimes()
+    {
+        return $this->hasMany(over_time::class, 'employee_id');
+    }
 }

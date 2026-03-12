@@ -617,6 +617,7 @@ if ($spouseNic && $employeeNic === $spouseNic) {
             'organizationAssignment.department',
             'organizationAssignment.subDepartment',
             'organizationAssignment.designation',
+            'overtimes',
         ])->findOrFail($id);
         
         return response()->json([
