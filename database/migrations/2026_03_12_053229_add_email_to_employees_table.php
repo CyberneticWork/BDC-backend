@@ -11,8 +11,8 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('over_times', function (Blueprint $table) {
-            $table->integer('holiday_ot_hours')->default(0);
+        Schema::table('employees', function (Blueprint $table) {
+            $table->string('email')->nullable()->after('profile_photo_path');
         });
     }
 
@@ -21,8 +21,8 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('over_times', function (Blueprint $table) {
-            $table->dropColumn('holiday_ot_hours');
+        Schema::table('employees', function (Blueprint $table) {
+            $table->dropColumn('email');
         });
     }
 };

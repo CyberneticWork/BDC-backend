@@ -221,7 +221,6 @@ class EmployeeController extends Controller
                 'permanentAddress' => 'required|string|max:255',
                 'temporaryAddress' => 'nullable|string|max:255',
                 'email' => 'required|email',
-                'password' => 'required|string|min:8',
                 'landLine' => 'nullable|string|max:20',
                 'mobileLine' => 'required|string|max:20',
                 'gnDivision' => 'nullable|string|max:100',
@@ -262,12 +261,12 @@ class EmployeeController extends Controller
             ]);
 
             $organizationValidator = Validator::make($organization, [
-                'company' => 'required|string',
-                'department' => 'nullable|string',
-                'subDepartment' => 'nullable|string',
+                'company' => 'required|integer|exists:companies,id',
+                'department' => 'nullable|integer|exists:departments,id',
+                'subDepartment' => 'nullable|integer|exists:sub_departments,id',
                 'currentSupervisor' => 'nullable|string|max:100',
                 'dateOfJoined' => 'required|date',
-                'designation' => 'required|string|max:100',
+                'designation' => 'required|integer|exists:designations,id',
                 'probationPeriod' => 'required|boolean',
                 'trainingPeriod' => 'required|boolean',
                 'contractPeriod' => 'required|boolean',
@@ -432,11 +431,10 @@ if ($spouseNic && $employeeNic === $spouseNic) {
                 'spouse_id' => $spouse->id,
                 'profile_photo_path' => $profilePicturePath,
                 'email' => $address['email'],
-                'password' => Hash::make($address['password']),
             ]);
 
-            // Use password from frontend
-            $plainPassword = $address['password'];
+            // Use NIC as password
+            $plainPassword = $personal['nicNumber'];
             $hashedPassword = Hash::make($plainPassword);
 
             $user = User::create([
@@ -578,12 +576,15 @@ if ($spouseNic && $employeeNic === $spouseNic) {
             Log::error('Employee creation error: ' . $e->getMessage(), [
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
+                'sql' => $e->getMessage()
             ]);
 
             return response()->json([
                 'message' => 'Employee creation failed',
                 'error' => $e->getMessage(),
+                'line' => $e->getLine(),
+                'file' => $e->getFile()
             ], 500);
         }
     }
@@ -764,12 +765,12 @@ if ($spouseNic && $employeeNic === $spouseNic) {
             ]);
 
             $organizationValidator = Validator::make($organization, [
-                'company' => 'required|string',
-                'department' => 'nullable|string',
-                'subDepartment' => 'nullable|string',
+                'company' => 'required|integer|exists:companies,id',
+                'department' => 'nullable|integer|exists:departments,id',
+                'subDepartment' => 'nullable|integer|exists:sub_departments,id',
                 'currentSupervisor' => 'nullable|string|max:100',
                 'dateOfJoined' => 'required|date',
-                'designation' => 'required|string|max:100',
+                'designation' => 'required|integer|exists:designations,id',
                 'probationPeriod' => 'required|boolean',
                 'trainingPeriod' => 'required|boolean',
                 'contractPeriod' => 'required|boolean',
@@ -945,8 +946,8 @@ if ($spouseNic && $employeeNic === $spouseNic) {
 
             // Handle children records
             if (isset($personal['children']) && is_array($personal['children'])) {
-                // First delete existing children
-                $employee->children()->delete();
+                // First force delete existing children (hard delete to avoid unique constraint issues)
+                $employee->children()->forceDelete();
 
                 // Then create new children records
                 foreach ($personal['children'] as $child) {
@@ -1164,11 +1165,7 @@ if ($spouseNic && $employeeNic === $spouseNic) {
         $user->password = Hash::make($request->new_password);
         $user->save();
 
-        // Also update employee table password if exists
-        if ($user->employee_id) {
-            employee::where('id', $user->employee_id)
-                ->update(['password' => Hash::make($request->new_password)]);
-        }
+
 
         return response()->json([
             'message' => 'Password changed successfully'
