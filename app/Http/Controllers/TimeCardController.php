@@ -1093,7 +1093,7 @@ private function processOvertimeForOutPunch(
 }
 
 
-
+/*
 private function isHoliday(employee $employee, string $date): bool
 {
     $org = $employee->organizationAssignment;
@@ -1156,6 +1156,45 @@ private function isHoliday(employee $employee, string $date): bool
 
     return false;
 }
+*/
+
+
+private function isHoliday(employee $employee, string $date): bool
+{
+    $org = $employee->organizationAssignment;
+    if (!$org) {
+        return false;
+    }
+
+    return \App\Models\leaveCalendar::where('company_id', $org->company_id)
+        ->where(function ($query) use ($org) {
+            $query->where(function ($q) {
+                // company-wide holiday
+                $q->whereNull('department_id');
+            });
+
+            if (!empty($org->department_id)) {
+                $query->orWhere(function ($q) use ($org) {
+                    // department-specific holiday
+                    $q->where('department_id', $org->department_id);
+                });
+            }
+        })
+        ->where(function ($query) use ($date) {
+            $query->where(function ($q) use ($date) {
+                // single-day holiday
+                $q->whereNull('end_date')
+                  ->whereDate('start_date', $date);
+            })->orWhere(function ($q) use ($date) {
+                // date-range holiday
+                $q->whereNotNull('end_date')
+                  ->whereDate('start_date', '<=', $date)
+                  ->whereDate('end_date', '>=', $date);
+            });
+        })
+        ->exists();
+}
+
 
 
     public function importExcel(Request $request)
