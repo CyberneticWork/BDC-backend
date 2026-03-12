@@ -104,13 +104,17 @@ class ApiDataController extends Controller
 
     public function departmentsById($id)
     {
-        $department = departments::where('company_id', $id)->get();
+        $department = departments::where('company_id', $id)
+            ->whereNull('deleted_at')
+            ->get(['id', 'name', 'company_id']);
         return response()->json($department, 200);
     }
 
     public function subDepartmentsById($id)
     {
-        $subDepartment = sub_departments::where('department_id', $id)->get();
+        $subDepartment = sub_departments::where('department_id', $id)
+            ->whereNull('deleted_at')
+            ->get(['id', 'name', 'department_id']);
         return response()->json($subDepartment, 200);
     }
 
