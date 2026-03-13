@@ -12,7 +12,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('users', function (Blueprint $table) {
-            //$table->string('otp', 6)->nullable()->after('password');
+            $table->string('otp', 6)->nullable()->after('password');
             $table->timestamp('otp_expires_at')->nullable()->after('otp');
             $table->boolean('is_first_login')->default(true)->after('otp_expires_at');
         });
