@@ -40,6 +40,24 @@ class DatabaseSeeder extends Seeder
 
         $users = [
             [
+                'name' => 'Dilan Sriyantha',
+                'email' => 'dilan@mail.com',
+                'password' => '123456',
+                'role' => 'admin'
+            ],
+            [
+                'name' => 'Chamod Mahiru',
+                'email' => 'chamod@mail.com',
+                'password' => '123456',
+                'role' => 'admin'
+            ],
+            [
+                'name' => 'Manoja Somarathne',
+                'email' => 'manoja@mail.com',
+                'password' => '123456',
+                'role' => 'admin'
+            ],
+            [
                 'name' => 'Isuru Bandara',
                 'email' => 'isuru@mail.com',
                 'password' => '123456789',
@@ -108,7 +126,7 @@ class DatabaseSeeder extends Seeder
         ]);
 
         $shifts = [
-               ['001', 'No OT - WD', '08:00:00', '17:00:00', '08:00:00', '17:00:00', '00:00:00', false, 4.5],
+            ['001', 'No OT - WD', '08:00:00', '17:00:00', '08:00:00', '17:00:00', '00:00:00', false, 4.5],
             // ['002', 'Snr Mgt - FM', '08:15:00', '17:15:00', '08:15:00', '17:15:00', '00:00:00', false, 4.5],
             // ['003', 'Snr Mgt - Purchasing', '07:45:00', '16:45:00', '07:45:00', '16:45:00', '00:00:00', false, 4.5],
             // ['004', 'Office Executive - WD', '08:00:00', '17:00:00', '08:00:00', '17:00:00', '08:00:00', false, 5.0],
@@ -277,7 +295,7 @@ class DatabaseSeeder extends Seeder
         //         'primary_emp_basic' => rand(0, 1) ? true : false,
         //     ]);
         // }
-      
+
 
 
 
