@@ -96,6 +96,10 @@ Route::apiResource('allowances', AllowancesController::class);
 
 Route::get('/allowance/by-company-or-department', [AllowancesController::class, 'getAllowancesByCompanyOrDepartment']);
 Route::get('/deduction/by-company-or-department', [DeductionController::class, 'getDeductionsByCompanyOrDepartment']);
+
+Route::get('/deductions', [DeductionController::class, 'index']);
+Route::get('/deductions/{id}', [DeductionController::class, 'show']);
+
 Route::get('/leave-masters/{employeeId}/counts', [LeaveMasterController::class, 'getLeaveRecordCountsByEmployee']);
 Route::apiResource('deductions', DeductionController::class);
 Route::apiResource('leave-calendars', LeaveCalenderController::class);
