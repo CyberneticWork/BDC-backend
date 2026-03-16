@@ -11,6 +11,8 @@ class employee_allowances extends Model
         'employee_id',
         'attendance_employee_no',
         'allowance_id',
+        'month',          
+        'year',
         'custom_amount',
         'is_active',
     ];

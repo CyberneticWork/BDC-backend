@@ -96,6 +96,10 @@ Route::apiResource('allowances', AllowancesController::class);
 
 Route::get('/allowance/by-company-or-department', [AllowancesController::class, 'getAllowancesByCompanyOrDepartment']);
 Route::get('/deduction/by-company-or-department', [DeductionController::class, 'getDeductionsByCompanyOrDepartment']);
+
+Route::get('/deductions', [DeductionController::class, 'index']);
+Route::get('/deductions/{id}', [DeductionController::class, 'show']);
+
 Route::get('/leave-masters/{employeeId}/counts', [LeaveMasterController::class, 'getLeaveRecordCountsByEmployee']);
 Route::apiResource('deductions', DeductionController::class);
 Route::apiResource('leave-calendars', LeaveCalenderController::class);
@@ -106,6 +110,10 @@ Route::apiResource('rosters', RosterController::class);
 Route::apiResource('overtime', OvertimeController::class);
 Route::post('/overtime/approve/{id}', [OvertimeController::class, 'approve']);
 //Route::apiResource('leave-masters', LeaveMasterController::class);
+
+
+//new
+Route::get('/leave-eligibility', [LeaveMasterController::class, 'getLeaveEligibility']);
 
 
 Route::put('/leave-masters/{id}/status', [LeaveMasterController::class, 'updateStatus']);

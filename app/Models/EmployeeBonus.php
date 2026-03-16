@@ -10,6 +10,8 @@ class EmployeeBonus extends Model
         'employee_id',
         'bonus_id',
         'custom_amount',
+        'month',          // 
+        'year',
         'is_active'
     ];
 }
