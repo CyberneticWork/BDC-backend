@@ -112,6 +112,10 @@ Route::post('/overtime/approve/{id}', [OvertimeController::class, 'approve']);
 //Route::apiResource('leave-masters', LeaveMasterController::class);
 
 
+//new
+Route::get('/leave-eligibility', [LeaveMasterController::class, 'getLeaveEligibility']);
+
+
 Route::put('/leave-masters/{id}/status', [LeaveMasterController::class, 'updateStatus']);
 Route::get('/leave-masters/eligibility', [LeaveMasterController::class, 'getLeaveEligibility']);
 Route::get('/leave-masters/{employeeId}/counts', [LeaveMasterController::class, 'getLeaveRecordCountsByEmployee']);

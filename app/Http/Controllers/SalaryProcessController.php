@@ -330,7 +330,7 @@ class SalaryProcessController extends Controller
         ]);
     }
 
-
+/*
     public function getEmployeesByMonthAndCompany(Request $request)
     {
         $month = $request->query('month');
@@ -574,12 +574,10 @@ class SalaryProcessController extends Controller
 
         return response()->json(['data' => $data, 'meta' => ['count' => count($data)]]);
     }
+*/
 
 
-
-
-/*
-    public function getEmployeesByMonthAndCompany(Request $request)
+public function getEmployeesByMonthAndCompany(Request $request)
     {
         $month = $request->query('month');
         $year = $request->query('year');
@@ -616,6 +614,9 @@ class SalaryProcessController extends Controller
                 comp.br1,
                 comp.br2,
                 comp.stamp,
+                comp.bank_name,
+                comp.branch_name,
+                comp.bank_account_no,
                 COALESCE(SUM(lo.loan_amount), 0) AS total_loan_amount,
                 MAX(lo.installment_count) AS installment_count,
                 MAX(lo.installment_amount) AS installment_amount,
@@ -648,7 +649,7 @@ class SalaryProcessController extends Controller
 
                 (
                     SELECT COALESCE(CONCAT('[', GROUP_CONCAT(
-                        CONCAT('{\"id\":', b.id, ',\"name\":\"', REPLACE(IFNULL(b.bonus_name, ''), '\"', '\\\\\"'), '\",\"amount\":', COALESCE(eb.custom_amount, b.amount, 0), ',\"is_custom\":1,\"code\":\"', REPLACE(IFNULL(b.bonus_code, ''), '\"', '\\\\\"'), '\"}')
+                        CONCAT('{\"id\":', b.id, ',\"name\":\"', REPLACE(IFNULL(b.bonus_name, ''), '\"', '\\\\\"'), '\",\"amount\":', COALESCE(eb.custom_amount, b.amount, 0), ',\"is_custom\":1,\"code\":\"', REPLACE(IFNULL(b.bonus_code, ''), '\"', '\\\\\"'), '\",\"category\":\"', REPLACE(IFNULL(b.bonus_type, ''), '\"', '\\\\\"'), '\"}')
                     SEPARATOR ','), ']'), '[]')
                     FROM employee_bonuses eb JOIN bonuses b ON b.id = eb.bonus_id
                     WHERE eb.employee_id = e.id AND eb.is_active = 1 AND b.status = 'active' AND (eb.month = ? AND eb.year = ?)
@@ -666,43 +667,26 @@ class SalaryProcessController extends Controller
             WHERE e.is_active = '1'
         ";
 
-        // Bindings array
-        $params = [
-            $month, $year, // Allowances
-            $month, $year, // Deductions
-            $month, $year, // Bonuses
-            $startDate, $endDate // NoPay
-        ];
+        $params = [$month, $year, $month, $year, $month, $year, $startDate, $endDate];
 
-        if ($company_id) {
-            $query .= " AND oa.company_id = ? ";
-            $params[] = $company_id;
-        }
+        if ($company_id) { $query .= " AND oa.company_id = ? "; $params[] = $company_id; }
+        if ($department_id) { $query .= " AND oa.department_id = ? "; $params[] = $department_id; }
+        if ($search) { $query .= " AND (e.attendance_employee_no LIKE ? OR e.full_name LIKE ?) "; $params[] = "%{$search}%"; $params[] = "%{$search}%"; }
 
-        if ($department_id) {
-            $query .= " AND oa.department_id = ? ";
-            $params[] = $department_id;
-        }
-
-        if ($search) {
-            $query .= " AND (e.attendance_employee_no LIKE ? OR e.full_name LIKE ?) ";
-            $params[] = "%{$search}%";
-            $params[] = "%{$search}%";
-        }
-
-        $query .= "
-            GROUP BY
-                e.id, e.attendance_employee_no, e.full_name, c.name, d.name, sd.name,
-                comp.basic_salary, comp.br1, comp.br2, comp.increment_active, comp.increment_value,
-                comp.increment_effected_date, comp.ot_morning, comp.ot_evening,
-                comp.enable_epf_etf, comp.stamp, c.id, oa.department_id, oa.probationary_period
-        ";
+        $query .= " GROUP BY e.id, e.attendance_employee_no, e.full_name, c.name, d.name, sd.name, comp.basic_salary, comp.br1, comp.br2, comp.increment_active, comp.increment_value, comp.increment_effected_date, comp.ot_morning, comp.ot_evening, comp.enable_epf_etf, comp.stamp, comp.bank_name, comp.branch_name, comp.bank_account_no, c.id, oa.department_id, oa.probationary_period";
 
         $results = DB::select($query, $params);
         $data = [];
 
         foreach ($results as $result) {
             $employeeData = (array)$result;
+
+            // බැංකු විස්තර සකස් කිරීම
+            $employeeData['compensation'] = [
+                'bank_name' => $result->bank_name ?? null,
+                'branch_name' => $result->branch_name ?? null,
+                'bank_account_no' => $result->bank_account_no ?? null,
+            ];
 
             $allowancesArr = json_decode($result->allowances ?? '[]', true) ?: [];
             $deductionsArr = json_decode($result->deductions ?? '[]', true) ?: [];
@@ -714,79 +698,57 @@ class SalaryProcessController extends Controller
             $basicSalary = (float)($employeeData['basic_salary'] ?? 0);
             $brAllowance = 0;
 
-            if ((int)$result->br1 === 1 && (int)$result->br2 === 1) {
-                $brAllowance = 3500;
-            } elseif ((int)$result->br1 === 1) {
-                $brAllowance = 1000;
-            } elseif ((int)$result->br2 === 1) {
-                $brAllowance = 2500;
-            }
-
+            if ((int)$result->br1 === 1 && (int)$result->br2 === 1) { $brAllowance = 3500; } 
+            elseif ((int)$result->br1 === 1) { $brAllowance = 1000; } 
+            elseif ((int)$result->br2 === 1) { $brAllowance = 2500; }
+            
             $basicSalary += $brAllowance;
 
-            if (
-                !empty($employeeData['increment_active']) &&
-                !empty($employeeData['increment_effected_date']) &&
-                strtotime($employeeData['increment_effected_date']) <= strtotime($endDate)
-            ) {
+            if (!empty($employeeData['increment_active']) && !empty($employeeData['increment_effected_date']) && strtotime($employeeData['increment_effected_date']) <= strtotime($endDate)) {
                 $basicSalary += (float)($employeeData['increment_value'] ?? 0);
             }
 
-            // --- LOAN CALCULATION (Split Principal and Interest) ---
+            // LOAN CALCULATION
             $installmentAmount = 0.0;
             $loanInterest = 0.0;
             $loanPrincipal = 0.0;
-            $loanDeductFrom = $employeeData['loan_deduct_from'] ?? 'bonus'; // 'basic' or 'bonus'
+            $loanDeductFrom = $employeeData['loan_deduct_from'] ?? 'bonus'; 
             $loanStatus = strtolower((string)($employeeData['loan_status'] ?? ''));
 
             if ($loanStatus === 'active') {
                 $schedule = $employeeData['loan_schedule'] ?? null;
-                if (is_string($schedule)) {
-                    $decoded = json_decode($schedule, true);
-                    $schedule = is_array($decoded) ? $decoded : null;
-                }
-
+                if (is_string($schedule)) { $schedule = is_array(json_decode($schedule, true)) ? json_decode($schedule, true) : null; }
+                
                 if (is_array($schedule) && count($schedule) > 0) {
                     foreach ($schedule as $r) {
                         $due = $r['due_date'] ?? $r['dueDate'] ?? null;
-                        if (!$due) continue;
-                        if (date('Y-m', strtotime($due)) === $selectedMonthYear) {
+                        if ($due && date('Y-m', strtotime($due)) === $selectedMonthYear) {
                             $installmentAmount = (float)($r['installment_amount'] ?? $r['installmentAmount'] ?? 0);
                             break;
                         }
                     }
                 } else {
-                    $count = (int)($employeeData['installment_count'] ?? 0);
-                    $installmentAmount = ($count > 0) ? (float)($employeeData['installment_amount'] ?? 0) : 0.0;
+                    $installmentAmount = ((int)($employeeData['installment_count'] ?? 0) > 0) ? (float)($employeeData['installment_amount'] ?? 0) : 0.0;
                 }
 
-                // Calculate Interest if applied
                 if ($employeeData['with_interest'] && $employeeData['interest_rate_per_annum'] > 0) {
                     $loanAmountTotal = (float)($employeeData['total_loan_amount'] ?? 0);
-                    $interestRate = (float)($employeeData['interest_rate_per_annum']);
-                    $loanInterest = ($loanAmountTotal * ($interestRate / 100)) / 12;
-                    
-                    // Cap interest to not exceed installment
-                    if ($loanInterest > $installmentAmount) {
-                        $loanInterest = $installmentAmount;
-                    }
+                    $loanInterest = ($loanAmountTotal * ((float)$employeeData['interest_rate_per_annum'] / 100)) / 12;
+                    if ($loanInterest > $installmentAmount) { $loanInterest = $installmentAmount; }
                 }
-                
                 $loanPrincipal = $installmentAmount - $loanInterest;
             }
 
-            // Salary Settings
-            $companyLeavesCount = DB::table('leave_calendars')
-                ->where('company_id', $company_id ?? 0)
-                ->where(function ($q) use ($startDate, $endDate) {
-                    $q->whereBetween('start_date', [$startDate, $endDate])
-                      ->orWhereBetween('end_date', [$startDate, $endDate]);
+            // Working Days & No Pay Deductions
+            $companyLeavesCount = DB::table('leave_calendars')->where('company_id', $company_id ?? 0)
+                ->where(function ($q) use ($startDate, $endDate) { 
+                    $q->whereBetween('start_date', [$startDate, $endDate])->orWhereBetween('end_date', [$startDate, $endDate]); 
                 })->count();
-
+            
             $workingDaysInMonth = max(1, $totalDaysInMonth - $companyLeavesCount);
             $perDaySalary = $basicSalary / $workingDaysInMonth;
 
-            // No Pay Split Calculations
+            // Full Day, Early Out, Major Late Deductions
             $fullDayNoPays = (float)($employeeData['full_day_nopays'] ?? 0);
             $earlyOutNoPays = (float)($employeeData['early_out_nopays'] ?? 0);
             $majorLateNoPays = (float)($employeeData['major_late_nopays'] ?? 0);
@@ -795,52 +757,29 @@ class SalaryProcessController extends Controller
             $earlyOutNoPayDeduction = round($earlyOutNoPays * $perDaySalary, 2);
             $majorLateDeduction = round($majorLateNoPays * $perDaySalary, 2);
 
-            // Probation
-            $probationOverLimitDays = 0.0;
-            if ($employeeData['probationary_period']) {
-                $probationOverLimitDays = (float)(leave_master::where('employee_id', $employeeData['id'])
-                    ->whereRaw('LOWER(status) = ?', ['approved'])
-                    ->whereBetween('leave_date', [$startDate, $endDate])
-                    ->sum('over_limit') ?? 0);
-            }
-            $probationDeduction = round($probationOverLimitDays * $perDaySalary, 2);
+            // Probation Deduction
+            $probationDeduction = $employeeData['probationary_period'] ? round((float)(leave_master::where('employee_id', $employeeData['id'])->whereRaw('LOWER(status) = ?', ['approved'])->whereBetween('leave_date', [$startDate, $endDate])->sum('over_limit') ?? 0) * $perDaySalary, 2) : 0.0;
 
-            // Minor Late Deductions Calculation (<= 30 mins)
-            $minorLateData = $this->calculateLateDeductionData(
-                (int)$employeeData['id'],
-                $startDate,
-                $endDate,
-                $perDaySalary
-            );
-
+            // Minor Late Deductions (<= 30 mins)
+            $minorLateData = $this->calculateLateDeductionData((int)$employeeData['id'], $startDate, $endDate, $perDaySalary);
             $shortLeaveDeduction = $minorLateData['short_leave_deduction'] ?? 0;
             $halfDayDeduction = $minorLateData['half_day_deduction'] ?? 0;
 
-            // KPI / Bonuses
+            // KPI
             $kpiAllowance = 0.0;
             $kpiBonusAllowance = 0.0;
-
             if ($kpiType === 'monthly') {
-                $percentage = DB::table('performance_evaluations')
-                    ->where('employee_id', $employeeData['id'])
-                    ->whereBetween('start_date', [$startDate, $endDate])
-                    ->avg('percentage');
-
-                if (!is_null($percentage)) {
-                    $kpiAllowance = ($basicSalary * ((float)$percentage)) / 100.0;
-                    $allowancesArr[] = ['name' => 'KPI Allowance', 'amount' => round($kpiAllowance, 2), 'category' => 'kpi'];
+                $percentage = DB::table('performance_evaluations')->where('employee_id', $employeeData['id'])->whereBetween('start_date', [$startDate, $endDate])->avg('percentage');
+                if (!is_null($percentage)) { 
+                    $kpiAllowance = round(($basicSalary * ((float)$percentage)) / 100.0, 2);
+                    $allowancesArr[] = ['name' => 'KPI Allowance', 'amount' => $kpiAllowance, 'category' => 'kpi']; 
                 }
             } elseif ($kpiType === '6month') {
                 $sixMonthStart = Carbon::parse($startDate)->subMonths(5)->startOfMonth()->toDateString();
-                $percentage = DB::table('performance_appraisals')
-                    ->where('employee_id', $employeeData['id'])
-                    ->where('start_date', '>=', $sixMonthStart)
-                    ->where('end_date', '<=', $endDate)
-                    ->avg('percentage');
-
-                if (!is_null($percentage)) {
-                    $kpiBonusAllowance = ($basicSalary * ((float)$percentage)) / 100.0;
-                    $bonusesArr[] = ['name' => 'KPI Bonus (6M)', 'amount' => round($kpiBonusAllowance, 2), 'category' => 'kpi_bonus'];
+                $percentage = DB::table('performance_appraisals')->where('employee_id', $employeeData['id'])->where('start_date', '>=', $sixMonthStart)->where('end_date', '<=', $endDate)->avg('percentage');
+                if (!is_null($percentage)) { 
+                    $kpiBonusAllowance = round(($basicSalary * ((float)$percentage)) / 100.0, 2);
+                    $bonusesArr[] = ['name' => 'KPI Bonus (6M)', 'amount' => $kpiBonusAllowance, 'category' => 'kpi_bonus']; 
                 }
             }
 
@@ -850,53 +789,44 @@ class SalaryProcessController extends Controller
 
             $totalAllowances = array_reduce($allowancesArr, fn($c, $i) => $c + (float)($i['amount'] ?? 0), 0);
             $totalBonuses = array_reduce($bonusesArr, fn($c, $i) => $c + (float)($i['amount'] ?? 0), 0);
+            
+            // වෙනම එකතු කරන Custom Deductions ගණනය
+            $totalFixedDeductions = array_reduce($deductionsArr, fn($c, $i) => $c + (float)($i['amount'] ?? 0), 0); 
 
-            // EPF/ETF Base
-            $epfEligibleAllowances = array_reduce($allowancesArr, function ($carry, $item) {
-                return (strtolower($item['category'] ?? '') === 'kpi_bonus') ? $carry : $carry + (float)($item['amount'] ?? 0);
+            // EPF Base (Exclude KPI Bonus from EPF calculation)
+            $epfEligibleAllowances = array_reduce($allowancesArr, function ($carry, $item) { 
+                return (strtolower($item['category'] ?? '') === 'kpi_bonus') ? $carry : $carry + (float)($item['amount'] ?? 0); 
             }, 0);
-
             $epfEtfBase = $basicSalary + $epfEligibleAllowances;
             $epfEmployeeDeduction = !empty($employeeData['enable_epf_etf']) ? ($epfEtfBase * 0.08) : 0;
             
-            // OT Calculations
-            $empid = $employeeData['id'];
-            $otRows = over_time::with('timeCard:id,date,time,actual_date')
-                ->where('employee_id', $empid)
-                ->whereRaw('LOWER(status) = ?', ['approved'])
-                ->whereHas('timeCard', function ($q) use ($startDate, $endDate) {
-                    $q->whereBetween('date', [$startDate, $endDate]);
-                })->get();
+            // Overtime
+            $otRows = over_time::with('timeCard:id,date,time,actual_date')->where('employee_id', $employeeData['id'])->whereRaw('LOWER(status) = ?', ['approved'])->whereHas('timeCard', function ($q) use ($startDate, $endDate) { $q->whereBetween('date', [$startDate, $endDate]); })->get();
+            $morning_ot_fees = ((int)($employeeData['ot_morning'] ?? 0) === 1) ? ((float)$otRows->sum('morning_ot_amount') + (float)$otRows->sum('morning_ot_special_amount')) : 0.0;
+            $night_ot_fees = ((int)($employeeData['ot_evening'] ?? 0) === 1) ? ((float)$otRows->sum('evening_ot_amount') + (float)$otRows->sum('evening_ot_special_amount')) : 0.0;
+            $holiday_ot_fees = (float)$otRows->sum('holiday_ot_amount');
 
-            $sumMorningAmount = (float)$otRows->sum('morning_ot_amount') + (float)$otRows->sum('morning_ot_special_amount');
-            $sumNightAmount = (float)$otRows->sum('evening_ot_amount') + (float)$otRows->sum('evening_ot_special_amount');
-            $sumHolidayAmount = (float)$otRows->sum('holiday_ot_amount');
-
-            $ot_morning_hours = (float)$otRows->sum('morning_ot') + (float)$otRows->sum('morning_ot_special');
-            $ot_night_hours = (float)$otRows->sum('afternoon_ot') + (float)$otRows->sum('evening_ot_special');
-            $holiday_ot_hours = (float)$otRows->sum('holiday_ot_hours');
-
-            $morning_ot_fees = ((int)($employeeData['ot_morning'] ?? 0) === 1) ? $sumMorningAmount : 0.0;
-            $night_ot_fees = ((int)($employeeData['ot_evening'] ?? 0) === 1) ? $sumNightAmount : 0.0;
-            $holiday_ot_fees = $sumHolidayAmount;
-
+            // --- DEDUCTION SPLIT ---
             $basicGross = $basicSalary + $totalAllowances;
             $bonusGross = $totalBonuses;
-            
-            // DEDUCTION SPLIT
-            $basicDeductionsTotal = $epfEmployeeDeduction + $fullDayNoPayDeduction + $earlyOutNoPayDeduction + $probationDeduction;
-            $bonusDeductionsTotal = $shortLeaveDeduction + $halfDayDeduction + $majorLateDeduction;
 
-            // Principal Add
-            if ($loanDeductFrom === 'basic') {
-                $basicDeductionsTotal += $loanPrincipal;
-            } else {
-                $bonusDeductionsTotal += $loanPrincipal;
+            // 1. Basic Deductions (Full Day NoPay, EPF, Probation)
+            $basicDeductionsTotal = $epfEmployeeDeduction + $fullDayNoPayDeduction + $probationDeduction;
+
+            // 2. Bonus Deductions (Early Out, Short Leave, Half Day, Major Late, Custom Deductions)
+            $bonusDeductionsTotal = $earlyOutNoPayDeduction + $shortLeaveDeduction + $halfDayDeduction + $majorLateDeduction + $totalFixedDeductions;
+
+            // Loan Principal Split
+            if ($loanDeductFrom === 'basic') { 
+                $basicDeductionsTotal += $loanPrincipal; 
+            } else { 
+                $bonusDeductionsTotal += $loanPrincipal; 
             }
             
-            // Interest ALWAYS goes to bonus
+            // Loan Interest ALWAYS goes to Bonus
             $bonusDeductionsTotal += $loanInterest;
 
+            // Totals
             $grossSalary = $basicGross + $bonusGross + $morning_ot_fees + $night_ot_fees + $holiday_ot_fees;
             $totalDeductions = $basicDeductionsTotal + $bonusDeductionsTotal + $stampValue;
             $netSalary = $grossSalary - $totalDeductions;
@@ -904,27 +834,28 @@ class SalaryProcessController extends Controller
             $employeeData['salary_breakdown'] = [
                 'basic_salary' => round($basicSalary, 2),
                 'per_day_salary' => round($perDaySalary, 3),
-                
                 'ot_morning_fees' => round($morning_ot_fees, 2),
                 'ot_night_fees' => round($night_ot_fees, 2),
                 'holiday_ot_fees' => round($holiday_ot_fees, 2),
-                'ot_morning_hours' => round($ot_morning_hours, 2),
-                'ot_night_hours' => round($ot_night_hours, 2),
-                'holiday_ot_hours' => round($holiday_ot_hours, 2),
-
+                'ot_morning_hours' => round((float)$otRows->sum('morning_ot') + (float)$otRows->sum('morning_ot_special'), 2),
+                'ot_night_hours' => round((float)$otRows->sum('afternoon_ot') + (float)$otRows->sum('evening_ot_special'), 2),
+                'holiday_ot_hours' => round((float)$otRows->sum('holiday_ot_hours'), 2),
+                
+                // Deductions mapping
                 'full_day_nopay_deduction' => round($fullDayNoPayDeduction, 2),
                 'early_out_nopay_deduction' => round($earlyOutNoPayDeduction, 2),
-
                 'short_leave_deduction' => round($shortLeaveDeduction, 2),
                 'half_day_deduction' => round($halfDayDeduction, 2),
                 'major_late_deduction' => round($majorLateDeduction, 2),
-
                 'epf_employee_deduction' => round($epfEmployeeDeduction, 2),
                 
+                // Loan mappings
                 'loan_principal' => round($loanPrincipal, 2),
                 'loan_interest' => round($loanInterest, 2),
                 'loan_deduct_from' => $loanDeductFrom,
-
+                
+                'total_fixed_deductions' => round($totalFixedDeductions, 2),
+                
                 'net_salary' => round($netSalary, 2),
                 'gross_salary' => round($grossSalary, 2),
                 'total_deductions' => round($totalDeductions, 2),
@@ -933,14 +864,14 @@ class SalaryProcessController extends Controller
             $data[] = $employeeData;
         }
 
-        return response()->json([
-            'data' => $data,
-            'meta' => [
-                'count' => count($data),
-            ]
-        ]);
+        return response()->json(['data' => $data, 'meta' => ['count' => count($data)]]);
     }
-*/
+
+
+
+
+
+
     public function storeSalaryData(Request $request)
     {
         $validated = $request->validate([
@@ -1044,6 +975,80 @@ class SalaryProcessController extends Controller
 
         return response()->stream($callback, 200, $headers);
     }
+
+
+    public function updateSlaryStatus(Request $request)
+    {
+        DB::beginTransaction();
+
+        try {
+            // 1. Processed තත්ත්වයට පත් කිරීම
+            if ($request->has('status') && $request->status == 'processed') {
+                $salaryData = salary_process::where('status', 'pending')
+                                            ->orWhere('status', 'Unprocessed')
+                                            ->update([
+                    'status' => 'processed',
+                ]);
+                DB::commit();
+                return response()->json(['message' => 'Salary status updated to processed', 'data' => $salaryData], 200);
+            }
+
+            // 2. Issued තත්ත්වයට පත් කිරීම සහ Loan Installments අඩු කිරීම
+            if ($request->has('status') && $request->status == 'issued') {
+                $salaryProcesses = salary_process::where('status', 'processed')->get();
+
+                foreach ($salaryProcesses as $process) {
+                    $installmentCount = $process->installment_count;
+
+                    if ($installmentCount !== null) {
+                        $loan = loans::where('employee_id', $process->employee_id)
+                            ->where('status', 'active')
+                            ->first();
+
+                        if ($loan) {
+                            $prevCount = (int)($loan->installment_count ?? 0);
+                            $newInstallmentCount = max(0, $prevCount - 1);
+
+                            $loan->installment_count = $newInstallmentCount;
+                            $loan->status = $newInstallmentCount == 0 ? 'completed' : 'active';
+                            $loan->save();
+
+                            // Loan එක ඉවර නම් Completed Loans එකට දානවා
+                            if ($newInstallmentCount == 0) {
+                                DB::table('completed_loans')->insert([
+                                    'employee_id' => $loan->employee_id,
+                                    'loan_id' => $loan->id,
+                                    'loan_amount' => $loan->loan_amount,
+                                    'interest_rate_per_annum' => $loan->interest_rate_per_annum,
+                                    'with_interest' => $loan->with_interest,
+                                    'installment_count' => $prevCount,
+                                    'end_date' => now()->toDateString(),
+                                    'created_at' => now(),
+                                    'updated_at' => now(),
+                                ]);
+                            }
+                        }
+                    }
+                }
+
+                // ඔක්කොම Processed ඒවා Issued කරනවා
+                salary_process::where('status', 'processed')->update([
+                    'status' => 'issued',
+                ]);
+
+                DB::commit();
+                return response()->json(['message' => 'Salaries marked as issued and loan installments updated'], 200);
+            }
+
+            DB::rollBack();
+            return response()->json(['message' => 'Invalid status'], 400);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['message' => 'Error updating status: ' . $e->getMessage()], 500);
+        }
+    }
+
 }
 
 
