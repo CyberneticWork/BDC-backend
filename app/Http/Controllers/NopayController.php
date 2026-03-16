@@ -193,12 +193,17 @@ class NopayController extends Controller
         ]);
     }
 
+    // =====================================================================
+    // GENERATE DAILY NO-PAY RECORDS
+    // =====================================================================
     public function generateDailyNoPayRecords(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'date' => 'required|date',
+            'date' => 'required|date|before:today', 
             'company_id' => 'sometimes|exists:companies,id',
             'status' => 'sometimes|in:Pending,Approved,Rejected',
+        ], [
+            'date.before' => 'Cannot generate no-pay for today or future dates. Please select yesterday or a past date.'
         ]);
 
         if ($validator->fails()) {
@@ -230,7 +235,6 @@ class NopayController extends Controller
                 continue;
             }
 
-            // Clean up existing records if NoPay is inactive or employee is on leave/holiday/day off
             if ($employee->compensation && $employee->compensation->active_nopay === false) {
                 NoPayRecord::where('employee_id', $employee->id)->where('date', $date)->delete();
                 $skipped[] = ['employee_id' => $employee->id, 'reason' => 'NoPay inactive in compensation'];
@@ -283,6 +287,9 @@ class NopayController extends Controller
         ]);
     }
 
+    // =====================================================================
+    // GENERATE MONTHLY NO-PAY RECORDS
+    // =====================================================================
     public function generateMonthlyNoPayRecords(Request $request)
     {
         $validator = Validator::make($request->all(), [
@@ -302,6 +309,17 @@ class NopayController extends Controller
 
         $startDate = Carbon::create($year, $month, 1)->startOfMonth();
         $endDate = $startDate->copy()->endOfMonth();
+        $yesterday = Carbon::yesterday(); 
+
+        if ($startDate->greaterThan($yesterday)) {
+            return response()->json([
+                'month' => ['Cannot generate no-pay for future months or current day.']
+            ], 422);
+        }
+
+        if ($endDate->greaterThan($yesterday)) {
+            $endDate = $yesterday;
+        }
 
         $allGenerated = [];
         $allSkipped = [];
@@ -374,12 +392,15 @@ class NopayController extends Controller
         }
 
         return response()->json([
-            'message' => count($allGenerated) . ' no-pay record(s) generated for ' . $startDate->format('F Y'),
+            'message' => count($allGenerated) . ' no-pay record(s) generated for ' . $startDate->format('F Y') . ' (Up to ' . $endDate->format('Y-m-d') . ')',
             'records' => $allGenerated,
             'skipped' => $allSkipped,
         ]);
     }
 
+    // =====================================================================
+    // HELPER FUNCTIONS 
+    // =====================================================================
     protected function buildNoPayForEmployeeDay($employee, string $date, $shift, string $status): array
     {
         $records = [];
@@ -393,7 +414,6 @@ class NopayController extends Controller
 
         $shiftHours = max($shiftStart->floatDiffInHours($shiftEnd), 0.01);
 
-        // 1. එදා දවසට අදාල ඔක්කොම Time Cards ටික Database එකෙන් ගන්නවා
         $allCards = time_card::where('employee_id', $employee->id)
             ->where(function ($q) use ($date) {
                 $q->where('date', $date)
@@ -403,30 +423,23 @@ class NopayController extends Controller
             ->orderBy('time', 'asc')
             ->get();
 
-        // 2. IN Card එක හොයනවා
         $inCard = $allCards->first(function ($card) {
             $st = strtolower(trim($card->status));
             return $card->entry == 1 || in_array($st, ['in', 'late coming', 'late_coming']);
         });
 
-        // 3. OUT Card එක හොයනවා (අන්තිමටම ගහපු එක)
         $outCard = $allCards->sortByDesc('time')->first(function ($card) {
             $st = strtolower(trim($card->status));
             return in_array($card->entry, [0, 2]) || in_array($st, ['out', 'early out', 'early_out']);
         });
 
-        \Log::info("NoPay Check -> Emp: {$employee->attendance_employee_no} | Date: {$date} | IN: " . ($inCard ? 'YES' : 'NO') . " | OUT: " . ($outCard ? 'YES' : 'NO'));
-
-        // IN හෝ OUT එකක් හරි තියෙනවා නම්, පරණ Full Day No Pay එක මකා දමන්න
         if ($inCard || $outCard) {
             NoPayRecord::where('employee_id', $employee->id)
                 ->where('date', $date)
                 ->where('type', 'FULL_DAY')
                 ->delete();
         } 
-        // 4. සම්පූර්ණ දවසම absent නම් (IN එකකුත් නෑ, OUT එකකුත් නෑ)
         else {
-            // Full Day Absent නම් පරණ Late In / Early Out මකන්න
             NoPayRecord::where('employee_id', $employee->id)
                 ->where('date', $date)
                 ->whereIn('type', ['LATE_IN', 'EARLY_OUT'])
@@ -461,18 +474,14 @@ class NopayController extends Controller
             return $records; 
         }
 
-        // 5. LATE IN (පරක්කු වෙලා ආවම)
         if ($inCard) {
             $actualIn = Carbon::parse($inCard->date . ' ' . $inCard->time);
             
             if ($actualIn->gt($shiftStart)) {
                 $lateMinutes = $shiftStart->diffInMinutes($actualIn);
                 
-                // විනාඩි 30 ක Grace Period එක
                 if ($lateMinutes > 30) {
                     if (!$this->hasApprovedPartialLeaveForWindow($employee->id, $date, $shiftStart, $actualIn, 'LATE_IN')) {
-                        
-                        // ආසන්න පැය භාගයට Round කිරීම (උදා: 2h 33m -> 2h 30m / 153 -> 150)
                         $roundedMinutes = (int) (round($lateMinutes / 30) * 30);
 
                         if ($roundedMinutes > 0) {
@@ -481,20 +490,13 @@ class NopayController extends Controller
                             $descMins = $roundedMinutes % 60;
                             
                             $records[] = $this->createOrUpdatePartialNoPay(
-                                $employee->id,
-                                $date,
-                                'LATE_IN',
-                                $gapHours,
-                                $shiftHours,
-                                $shiftStart,
-                                $actualIn,
-                                $status,
+                                $employee->id, $date, 'LATE_IN', $gapHours, $shiftHours,
+                                $shiftStart, $actualIn, $status,
                                 "Automatic late-in no-pay: employee arrived late by {$descHours}h {$descMins}m"
                             );
                         }
                     }
                 } else {
-                    // විනාඩි 30ට අඩුවෙන් පරක්කු නම් පරණ Late In එක මකන්න
                     NoPayRecord::where('employee_id', $employee->id)
                         ->where('date', $date)
                         ->where('type', 'LATE_IN')
@@ -503,7 +505,6 @@ class NopayController extends Controller
             }
         }
 
-        // 6. EARLY OUT (කලින් ගියාම)
         if ($outCard) {
             $actualOut = Carbon::parse($outCard->date . ' ' . $outCard->time);
 
@@ -518,8 +519,6 @@ class NopayController extends Controller
             if ($actualOut->lt($shiftEnd)) {
                 if (!$this->hasApprovedPartialLeaveForWindow($employee->id, $date, $actualOut, $shiftEnd, 'EARLY_OUT')) {
                     $earlyMinutes = $actualOut->diffInMinutes($shiftEnd);
-
-                    // ආසන්න පැය භාගයට Round කිරීම
                     $roundedMinutes = (int) (round($earlyMinutes / 30) * 30);
 
                     if ($roundedMinutes > 0) {
@@ -528,14 +527,8 @@ class NopayController extends Controller
                         $descMins = $roundedMinutes % 60;
 
                         $records[] = $this->createOrUpdatePartialNoPay(
-                            $employee->id,
-                            $date,
-                            'EARLY_OUT',
-                            $gapHours,
-                            $shiftHours,
-                            $actualOut,
-                            $shiftEnd,
-                            $status,
+                            $employee->id, $date, 'EARLY_OUT', $gapHours, $shiftHours,
+                            $actualOut, $shiftEnd, $status,
                             "Automatic early-out no-pay: employee left early by {$descHours}h {$descMins}m"
                         );
                     }
@@ -552,15 +545,8 @@ class NopayController extends Controller
     }
 
     protected function createOrUpdatePartialNoPay(
-        int $employeeId,
-        string $date,
-        string $type,
-        float $gapHours,
-        float $shiftHours,
-        Carbon $from,
-        Carbon $to,
-        string $status,
-        string $description
+        int $employeeId, string $date, string $type, float $gapHours, float $shiftHours,
+        Carbon $from, Carbon $to, string $status, string $description
     ) {
         $minutes = (int) round($gapHours * 60);
         $hoursPart = floor($minutes / 60);
@@ -700,23 +686,14 @@ class NopayController extends Controller
             ->where(function ($query) {
                 $query->whereNull('leave_type')
                     ->orWhereNotIn('leave_type', [
-                        'Short Leave',
-                        'Half Day',
-                        'Half-Day',
-                        'Short',
-                        'HALF_DAY',
-                        'SHORT_LEAVE'
+                        'Short Leave', 'Half Day', 'Half-Day', 'Short', 'HALF_DAY', 'SHORT_LEAVE'
                     ]);
             })
             ->exists();
     }
 
     protected function hasApprovedPartialLeaveForWindow(
-        int $employeeId,
-        string $date,
-        Carbon $from,
-        Carbon $to,
-        string $mode = 'EARLY_OUT'
+        int $employeeId, string $date, Carbon $from, Carbon $to, string $mode = 'EARLY_OUT'
     ): bool {
         $leaves = leave_master::where('employee_id', $employeeId)
             ->where('status', 'Approved')
@@ -748,13 +725,7 @@ class NopayController extends Controller
 
         foreach ($possibleValues as $value) {
             if (in_array($value, [
-                'short leave',
-                'short_leave',
-                'short',
-                'half day',
-                'half-day',
-                'half_day',
-                'halfday'
+                'short leave', 'short_leave', 'short', 'half day', 'half-day', 'half_day', 'halfday'
             ])) {
                 return true;
             }
@@ -778,11 +749,16 @@ class NopayController extends Controller
             return false;
         }
 
+        // Company Holiday Check with corrected Logic
         $companyHoliday = leaveCalendar::where('company_id', $orgAssignment->company_id)
-            ->whereDate('start_date', '<=', $date)
             ->where(function ($query) use ($date) {
-                $query->whereNull('end_date')
-                    ->orWhereDate('end_date', '>=', $date);
+                $query->where(function ($q) use ($date) {
+                    $q->whereNull('end_date')->whereDate('start_date', $date);
+                })->orWhere(function ($q) use ($date) {
+                    $q->whereNotNull('end_date')
+                      ->whereDate('start_date', '<=', $date)
+                      ->whereDate('end_date', '>=', $date);
+                });
             })
             ->exists();
 
@@ -790,12 +766,17 @@ class NopayController extends Controller
             return true;
         }
 
+        // Department Holiday Check with corrected Logic
         if ($orgAssignment->department_id) {
             $deptHoliday = leaveCalendar::where('department_id', $orgAssignment->department_id)
-                ->whereDate('start_date', '<=', $date)
                 ->where(function ($query) use ($date) {
-                    $query->whereNull('end_date')
-                        ->orWhereDate('end_date', '>=', $date);
+                    $query->where(function ($q) use ($date) {
+                        $q->whereNull('end_date')->whereDate('start_date', $date);
+                    })->orWhere(function ($q) use ($date) {
+                        $q->whereNotNull('end_date')
+                          ->whereDate('start_date', '<=', $date)
+                          ->whereDate('end_date', '>=', $date);
+                    });
                 })
                 ->exists();
 
@@ -850,7 +831,6 @@ class NopayController extends Controller
             if ($record->type === 'FULL_DAY' || (float) $record->no_pay_count === 1.0) {
                 return 1;
             }
-
             return (float) $record->no_pay_count;
         });
 
@@ -887,7 +867,6 @@ class NopayController extends Controller
         return (string) $record->no_pay_count;
     }
 }
-
 
 
 

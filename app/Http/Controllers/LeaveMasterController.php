@@ -159,9 +159,20 @@ class LeaveMasterController extends Controller
             }
         }
 
+
+        if (isset($data['is_half_day']) && $data['is_half_day']) {
+            $leaveDuration = $leaveDuration > 0 ? $leaveDuration / 2 : 0.5;
+        } elseif (isset($data['is_short_leave']) && $data['is_short_leave']) {
+            $leaveDuration = 0.25; // Short leave  (0.25) 
+        }
+        
+        /*
         if (isset($data['is_half_day']) && $data['is_half_day']) {
             $leaveDuration = $leaveDuration > 0 ? $leaveDuration / 2 : 0.5;
         }
+         */
+
+
 
         // Apply probation over-limit rules
         if ($overLimitInfo) {
@@ -341,12 +352,26 @@ class LeaveMasterController extends Controller
             $data['leave_duration'] = 1;
         }
 
+
+        if (isset($data['is_half_day']) && $data['is_half_day']) {
+            $leaveDuration = isset($data['leave_duration']) && $data['leave_duration'] > 0
+                ? $data['leave_duration'] / 2
+                : 0.5;
+            $data['leave_duration'] = $leaveDuration;
+        } elseif (isset($data['is_short_leave']) && $data['is_short_leave']) {
+            $leaveDuration = 0.25;
+            $data['leave_duration'] = $leaveDuration;
+        }
+      
+        /*
         if (isset($data['is_half_day']) && $data['is_half_day']) {
             $leaveDuration = isset($data['leave_duration']) && $data['leave_duration'] > 0
                 ? $data['leave_duration'] / 2
                 : 0.5;
             $data['leave_duration'] = $leaveDuration;
         }
+        */
+
 
         // For probationary period full-day leave override
         if ($overLimitInfo) {

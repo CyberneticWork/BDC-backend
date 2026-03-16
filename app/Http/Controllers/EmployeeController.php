@@ -40,6 +40,8 @@ class EmployeeController extends Controller
         return response()->json($employees, 200);
     }
 
+
+    /*
     public function getEmployeesForTable(Request $request)
     {
         $perPage = $request->input('per_page', 10);
@@ -69,6 +71,73 @@ class EmployeeController extends Controller
                     ->orWhere('epf', 'like', "%{$search}%")
                     ->orWhere('attendance_employee_no', 'like', "%{$search}%")
                     ->orWhere('nic', 'like', "%{$search}%");
+            });
+        }
+
+        return $query->paginate($perPage, ['*'], 'page', $page);
+    }
+        */
+
+
+    public function getEmployeesForTable(Request $request)
+    {
+        $perPage = $request->input('per_page', 10);
+        $page = $request->input('page', 1);
+        $search = $request->input('search', '');
+
+        $query = Employee::with([
+            'employmentType:id,name',
+            'contactDetail:id,employee_id,email,mobile_line',
+            'organizationAssignment.company:id,name',
+            'organizationAssignment.department:id,name',
+            'organizationAssignment.designation:id,name'
+        ])->select([
+            'id',
+            'full_name',
+            'name_with_initials',
+            'profile_photo_path',
+            'epf',
+            'title',
+            'attendance_employee_no',
+            'is_active',
+            'employment_type_id',
+            'organization_assignment_id',
+            'nic'
+        ]);
+
+        if ($search) {
+            $query->where(function ($q) use ($search) {
+                // 1. සාමාන්‍ය දත්ත වලින් සෙවීම (Name, EMP No, EPF, NIC)
+                $q->where('full_name', 'like', "%{$search}%")
+                    ->orWhere('id', 'like', "%{$search}%")
+                    ->orWhere('epf', 'like', "%{$search}%")
+                    ->orWhere('attendance_employee_no', 'like', "%{$search}%")
+                    ->orWhere('nic', 'like', "%{$search}%")
+                    
+                    // 2. Type එකෙන් සෙවීම (PERMANENT, Contract ආදිය)
+                    ->orWhereHas('employmentType', function ($typeQuery) use ($search) {
+                        $typeQuery->where('name', 'like', "%{$search}%");
+                    })
+
+                    // 3. Company, Department, සහ Position (Designation) වලින් සෙවීම
+                    ->orWhereHas('organizationAssignment', function ($orgQuery) use ($search) {
+                        $orgQuery->whereHas('company', function ($companyQuery) use ($search) {
+                            $companyQuery->where('name', 'like', "%{$search}%");
+                        })
+                        ->orWhereHas('department', function ($deptQuery) use ($search) {
+                            $deptQuery->where('name', 'like', "%{$search}%");
+                        })
+                        ->orWhereHas('designation', function ($desigQuery) use ($search) {
+                            $desigQuery->where('name', 'like', "%{$search}%");
+                        });
+                    });
+
+                // 4. Status එකෙන් සෙවීම ("Active" හෝ "Inactive" ලෙස ටයිප් කළොත්)
+                if (strtolower($search) === 'active') {
+                    $q->orWhere('is_active', 1)->orWhere('is_active', true);
+                } elseif (strtolower($search) === 'inactive') {
+                    $q->orWhere('is_active', 0)->orWhere('is_active', false);
+                }
             });
         }
 
