@@ -10,6 +10,8 @@ class employee_deductions extends Model
         'employee_id',
         'attendance_employee_no',
         'deduction_id',
+        'month',          // 
+        'year',
         'custom_amount',
         'is_active',
     ];
