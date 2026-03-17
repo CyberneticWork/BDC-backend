@@ -18,8 +18,10 @@ class leave_master extends Model
         'leave_to',
         'is_half_day',
         'period',
+        'is_short_leave',      // 
+        'short_leave_slot',
         'leave_duration',
-        'leave_duration',
+        
         'cancel_from',
         'cancel_to',
         'reason',
