@@ -330,253 +330,8 @@ class SalaryProcessController extends Controller
         ]);
     }
 
+
 /*
-    public function getEmployeesByMonthAndCompany(Request $request)
-    {
-        $month = $request->query('month');
-        $year = $request->query('year');
-        $company_id = $request->query('company_id');
-        $department_id = $request->query('department_id');
-        $search = $request->query('search');
-
-        $kpiTypeRaw = strtolower((string)$request->query('kpi_type', ''));
-        $kpiType = in_array($kpiTypeRaw, ['monthly', '6month', 'six_month']) ? $kpiTypeRaw : '';
-
-        $startDate = "{$year}-{$month}-01";
-        $lastDay = date('t', strtotime($startDate));
-        $endDate = "{$year}-{$month}-{$lastDay}";
-        $selectedMonthYear = date('Y-m', strtotime($startDate));
-        $totalDaysInMonth = (int)$lastDay;
-
-        $query = "
-            SELECT
-                e.id,
-                e.attendance_employee_no AS emp_no,
-                e.full_name,
-                c.name AS company_name,
-                d.name AS department_name,
-                sd.name AS sub_department_name,
-                comp.basic_salary,
-                oa.probationary_period,
-                comp.increment_active,
-                CASE WHEN comp.increment_active = 1 THEN comp.increment_value ELSE NULL END AS increment_value,
-                CASE WHEN comp.increment_active = 1 THEN comp.increment_effected_date ELSE NULL END AS increment_effected_date,
-                comp.ot_morning,
-                comp.ot_evening,
-                comp.enable_epf_etf,
-                comp.br1,
-                comp.br2,
-                comp.stamp,
-                comp.bank_name,
-                comp.branch_name,
-                comp.bank_account_no,
-                COALESCE(SUM(lo.loan_amount), 0) AS total_loan_amount,
-                MAX(lo.installment_count) AS installment_count,
-                MAX(lo.installment_amount) AS installment_amount,
-                MAX(lo.status) AS loan_status,
-                MAX(lo.schedule) AS loan_schedule,
-                MAX(lo.deduct_from) AS loan_deduct_from,
-                MAX(lo.with_interest) AS with_interest,
-                MAX(lo.interest_rate_per_annum) AS interest_rate_per_annum,
-
-                COALESCE(SUM(CASE WHEN npr.type = 'FULL_DAY' THEN COALESCE(npr.no_pay_count, 0) ELSE 0 END), 0) AS full_day_nopays,
-                COALESCE(SUM(CASE WHEN npr.type = 'EARLY_OUT' THEN COALESCE(npr.no_pay_count, 0) ELSE 0 END), 0) AS early_out_nopays,
-                COALESCE(SUM(CASE WHEN npr.type = 'LATE_IN' THEN COALESCE(npr.no_pay_count, 0) ELSE 0 END), 0) AS major_late_nopays,
-
-                (
-                    SELECT COALESCE(CONCAT('[', GROUP_CONCAT(
-                        CONCAT('{\"id\":', a.id, ',\"name\":\"', REPLACE(IFNULL(a.allowance_name, ''), '\"', '\\\\\"'), '\",\"amount\":', COALESCE(ea.custom_amount, a.amount, 0), ',\"is_custom\":1,\"code\":\"', REPLACE(IFNULL(a.allowance_code, ''), '\"', '\\\\\"'), '\",\"category\":\"', REPLACE(IFNULL(a.category, ''), '\"', '\\\\\"'), '\"}')
-                    SEPARATOR ','), ']'), '[]')
-                    FROM employee_allowances ea JOIN allowances a ON a.id = ea.allowance_id
-                    WHERE ea.employee_id = e.id AND ea.is_active = 1 AND a.status = 'active' AND (ea.month = ? AND ea.year = ?)
-                ) AS allowances,
-
-                (
-                    SELECT COALESCE(CONCAT('[', GROUP_CONCAT(
-                        CONCAT('{\"id\":', dd.id, ',\"name\":\"', REPLACE(IFNULL(dd.deduction_name, ''), '\"', '\\\\\"'), '\",\"amount\":', COALESCE(ed.custom_amount, dd.amount, 0), ',\"is_custom\":', CASE WHEN ed.id IS NOT NULL THEN 1 ELSE 0 END, ',\"code\":\"', REPLACE(IFNULL(dd.deduction_code, ''), '\"', '\\\\\"'), '\",\"category\":\"', REPLACE(IFNULL(dd.category, ''), '\"', '\\\\\"'), '\"}')
-                    SEPARATOR ','), ']'), '[]')
-                    FROM deductions dd LEFT JOIN employee_deductions ed ON dd.id = ed.deduction_id AND ed.employee_id = e.id AND ed.is_active = 1 AND (ed.month = ? AND ed.year = ?)
-                    WHERE dd.company_id = c.id AND (dd.department_id IS NULL OR dd.department_id = oa.department_id) AND dd.status = 'active'
-                ) AS deductions,
-
-                (
-                    SELECT COALESCE(CONCAT('[', GROUP_CONCAT(
-                        CONCAT('{\"id\":', b.id, ',\"name\":\"', REPLACE(IFNULL(b.bonus_name, ''), '\"', '\\\\\"'), '\",\"amount\":', COALESCE(eb.custom_amount, b.amount, 0), ',\"is_custom\":1,\"code\":\"', REPLACE(IFNULL(b.bonus_code, ''), '\"', '\\\\\"'), '\",\"category\":\"', REPLACE(IFNULL(b.bonus_type, ''), '\"', '\\\\\"'), '\"}')
-                    SEPARATOR ','), ']'), '[]')
-                    FROM employee_bonuses eb JOIN bonuses b ON b.id = eb.bonus_id
-                    WHERE eb.employee_id = e.id AND eb.is_active = 1 AND b.status = 'active' AND (eb.month = ? AND eb.year = ?)
-                ) AS bonuses
-
-            FROM employees e
-            JOIN organization_assignments oa ON e.organization_assignment_id = oa.id
-            JOIN companies c ON oa.company_id = c.id
-            LEFT JOIN departments d ON oa.department_id = d.id
-            LEFT JOIN sub_departments sd ON oa.sub_department_id = sd.id
-            LEFT JOIN compensation comp ON e.id = comp.employee_id
-            LEFT JOIN loans lo ON e.id = lo.employee_id AND lo.status = 'active'
-            LEFT JOIN no_pay_records npr ON e.id = npr.employee_id AND LOWER(npr.status) = 'approved' AND npr.date BETWEEN ? AND ?
-
-            WHERE e.is_active = '1'
-        ";
-
-        $params = [$month, $year, $month, $year, $month, $year, $startDate, $endDate];
-
-        if ($company_id) { $query .= " AND oa.company_id = ? "; $params[] = $company_id; }
-        if ($department_id) { $query .= " AND oa.department_id = ? "; $params[] = $department_id; }
-        if ($search) { $query .= " AND (e.attendance_employee_no LIKE ? OR e.full_name LIKE ?) "; $params[] = "%{$search}%"; $params[] = "%{$search}%"; }
-
-        $query .= " GROUP BY e.id, e.attendance_employee_no, e.full_name, c.name, d.name, sd.name, comp.basic_salary, comp.br1, comp.br2, comp.increment_active, comp.increment_value, comp.increment_effected_date, comp.ot_morning, comp.ot_evening, comp.enable_epf_etf, comp.stamp, comp.bank_name, comp.branch_name, comp.bank_account_no, c.id, oa.department_id, oa.probationary_period";
-
-        $results = DB::select($query, $params);
-        $data = [];
-
-        foreach ($results as $result) {
-            $employeeData = (array)$result;
-
-            // බැංකු විස්තර සකස් කිරීම
-            $employeeData['compensation'] = [
-                'bank_name' => $result->bank_name ?? null,
-                'branch_name' => $result->branch_name ?? null,
-                'bank_account_no' => $result->bank_account_no ?? null,
-            ];
-
-            $allowancesArr = json_decode($result->allowances ?? '[]', true) ?: [];
-            $deductionsArr = json_decode($result->deductions ?? '[]', true) ?: [];
-            $bonusesArr = json_decode($result->bonuses ?? '[]', true) ?: [];
-
-            $stampValue = ((int)($result->stamp ?? 0) === 1) ? 25 : 0;
-            $employeeData['stamp'] = $stampValue;
-
-            $basicSalary = (float)($employeeData['basic_salary'] ?? 0);
-            $brAllowance = 0;
-
-            if ((int)$result->br1 === 1 && (int)$result->br2 === 1) { $brAllowance = 3500; } 
-            elseif ((int)$result->br1 === 1) { $brAllowance = 1000; } 
-            elseif ((int)$result->br2 === 1) { $brAllowance = 2500; }
-            $basicSalary += $brAllowance;
-
-            if (!empty($employeeData['increment_active']) && !empty($employeeData['increment_effected_date']) && strtotime($employeeData['increment_effected_date']) <= strtotime($endDate)) {
-                $basicSalary += (float)($employeeData['increment_value'] ?? 0);
-            }
-
-            // LOAN CALCULATION
-            $installmentAmount = 0.0;
-            $loanInterest = 0.0;
-            $loanPrincipal = 0.0;
-            $loanDeductFrom = $employeeData['loan_deduct_from'] ?? 'bonus'; 
-            $loanStatus = strtolower((string)($employeeData['loan_status'] ?? ''));
-
-            if ($loanStatus === 'active') {
-                $schedule = $employeeData['loan_schedule'] ?? null;
-                if (is_string($schedule)) { $schedule = is_array(json_decode($schedule, true)) ? json_decode($schedule, true) : null; }
-                if (is_array($schedule) && count($schedule) > 0) {
-                    foreach ($schedule as $r) {
-                        $due = $r['due_date'] ?? $r['dueDate'] ?? null;
-                        if ($due && date('Y-m', strtotime($due)) === $selectedMonthYear) {
-                            $installmentAmount = (float)($r['installment_amount'] ?? $r['installmentAmount'] ?? 0);
-                            break;
-                        }
-                    }
-                } else {
-                    $installmentAmount = ((int)($employeeData['installment_count'] ?? 0) > 0) ? (float)($employeeData['installment_amount'] ?? 0) : 0.0;
-                }
-
-                if ($employeeData['with_interest'] && $employeeData['interest_rate_per_annum'] > 0) {
-                    $loanAmountTotal = (float)($employeeData['total_loan_amount'] ?? 0);
-                    $loanInterest = ($loanAmountTotal * ((float)$employeeData['interest_rate_per_annum'] / 100)) / 12;
-                    if ($loanInterest > $installmentAmount) { $loanInterest = $installmentAmount; }
-                }
-                $loanPrincipal = $installmentAmount - $loanInterest;
-            }
-
-            // Days & Basic Deductions
-            $companyLeavesCount = DB::table('leave_calendars')->where('company_id', $company_id ?? 0)
-                ->where(function ($q) use ($startDate, $endDate) { $q->whereBetween('start_date', [$startDate, $endDate])->orWhereBetween('end_date', [$startDate, $endDate]); })->count();
-            $workingDaysInMonth = max(1, $totalDaysInMonth - $companyLeavesCount);
-            $perDaySalary = $basicSalary / $workingDaysInMonth;
-
-            $fullDayNoPayDeduction = round((float)($employeeData['full_day_nopays'] ?? 0) * $perDaySalary, 2);
-            $earlyOutNoPayDeduction = round((float)($employeeData['early_out_nopays'] ?? 0) * $perDaySalary, 2);
-            $majorLateDeduction = round((float)($employeeData['major_late_nopays'] ?? 0) * $perDaySalary, 2);
-
-            $probationDeduction = $employeeData['probationary_period'] ? round((float)(leave_master::where('employee_id', $employeeData['id'])->whereRaw('LOWER(status) = ?', ['approved'])->whereBetween('leave_date', [$startDate, $endDate])->sum('over_limit') ?? 0) * $perDaySalary, 2) : 0.0;
-
-            $minorLateData = $this->calculateLateDeductionData((int)$employeeData['id'], $startDate, $endDate, $perDaySalary);
-            $shortLeaveDeduction = $minorLateData['short_leave_deduction'] ?? 0;
-            $halfDayDeduction = $minorLateData['half_day_deduction'] ?? 0;
-
-            // KPI
-            if ($kpiType === 'monthly') {
-                $percentage = DB::table('performance_evaluations')->where('employee_id', $employeeData['id'])->whereBetween('start_date', [$startDate, $endDate])->avg('percentage');
-                if (!is_null($percentage)) { $allowancesArr[] = ['name' => 'KPI Allowance', 'amount' => round(($basicSalary * ((float)$percentage)) / 100.0, 2), 'category' => 'kpi']; }
-            } elseif ($kpiType === '6month') {
-                $sixMonthStart = Carbon::parse($startDate)->subMonths(5)->startOfMonth()->toDateString();
-                $percentage = DB::table('performance_appraisals')->where('employee_id', $employeeData['id'])->where('start_date', '>=', $sixMonthStart)->where('end_date', '<=', $endDate)->avg('percentage');
-                if (!is_null($percentage)) { $bonusesArr[] = ['name' => 'KPI Bonus (6M)', 'amount' => round(($basicSalary * ((float)$percentage)) / 100.0, 2), 'category' => 'kpi_bonus']; }
-            }
-
-            $employeeData['allowances'] = $allowancesArr;
-            $employeeData['deductions'] = $deductionsArr;
-            $employeeData['bonuses'] = $bonusesArr;
-
-            $totalAllowances = array_reduce($allowancesArr, fn($c, $i) => $c + (float)($i['amount'] ?? 0), 0);
-            $totalBonuses = array_reduce($bonusesArr, fn($c, $i) => $c + (float)($i['amount'] ?? 0), 0);
-            $totalFixedDeductions = array_reduce($deductionsArr, fn($c, $i) => $c + (float)($i['amount'] ?? 0), 0); // Custom Deductions ගණනය
-
-            $epfEligibleAllowances = array_reduce($allowancesArr, function ($carry, $item) { return (strtolower($item['category'] ?? '') === 'kpi_bonus') ? $carry : $carry + (float)($item['amount'] ?? 0); }, 0);
-            $epfEtfBase = $basicSalary + $epfEligibleAllowances;
-            $epfEmployeeDeduction = !empty($employeeData['enable_epf_etf']) ? ($epfEtfBase * 0.08) : 0;
-            
-            // OT
-            $otRows = over_time::with('timeCard:id,date,time,actual_date')->where('employee_id', $employeeData['id'])->whereRaw('LOWER(status) = ?', ['approved'])->whereHas('timeCard', function ($q) use ($startDate, $endDate) { $q->whereBetween('date', [$startDate, $endDate]); })->get();
-            $morning_ot_fees = ((int)($employeeData['ot_morning'] ?? 0) === 1) ? ((float)$otRows->sum('morning_ot_amount') + (float)$otRows->sum('morning_ot_special_amount')) : 0.0;
-            $night_ot_fees = ((int)($employeeData['ot_evening'] ?? 0) === 1) ? ((float)$otRows->sum('evening_ot_amount') + (float)$otRows->sum('evening_ot_special_amount')) : 0.0;
-            $holiday_ot_fees = (float)$otRows->sum('holiday_ot_amount');
-
-            // DEDUCTION SPLIT
-            $basicDeductionsTotal = $epfEmployeeDeduction + $fullDayNoPayDeduction + $earlyOutNoPayDeduction + $probationDeduction;
-            // deduction
-            $bonusDeductionsTotal = $shortLeaveDeduction + $halfDayDeduction + $majorLateDeduction + $totalFixedDeductions; 
-
-            if ($loanDeductFrom === 'basic') { $basicDeductionsTotal += $loanPrincipal; } else { $bonusDeductionsTotal += $loanPrincipal; }
-            $bonusDeductionsTotal += $loanInterest;
-
-            $grossSalary = $basicSalary + $totalAllowances + $totalBonuses + $morning_ot_fees + $night_ot_fees + $holiday_ot_fees;
-            $totalDeductions = $basicDeductionsTotal + $bonusDeductionsTotal + $stampValue;
-            $netSalary = $grossSalary - $totalDeductions;
-
-            $employeeData['salary_breakdown'] = [
-                'basic_salary' => round($basicSalary, 2),
-                'per_day_salary' => round($perDaySalary, 3),
-                'ot_morning_fees' => round($morning_ot_fees, 2),
-                'ot_night_fees' => round($night_ot_fees, 2),
-                'holiday_ot_fees' => round($holiday_ot_fees, 2),
-                'ot_morning_hours' => round((float)$otRows->sum('morning_ot') + (float)$otRows->sum('morning_ot_special'), 2),
-                'ot_night_hours' => round((float)$otRows->sum('afternoon_ot') + (float)$otRows->sum('evening_ot_special'), 2),
-                'holiday_ot_hours' => round((float)$otRows->sum('holiday_ot_hours'), 2),
-                'full_day_nopay_deduction' => round($fullDayNoPayDeduction, 2),
-                'early_out_nopay_deduction' => round($earlyOutNoPayDeduction, 2),
-                'short_leave_deduction' => round($shortLeaveDeduction, 2),
-                'half_day_deduction' => round($halfDayDeduction, 2),
-                'major_late_deduction' => round($majorLateDeduction, 2),
-                'epf_employee_deduction' => round($epfEmployeeDeduction, 2),
-                'loan_principal' => round($loanPrincipal, 2),
-                'loan_interest' => round($loanInterest, 2),
-                'loan_deduct_from' => $loanDeductFrom,
-                'total_fixed_deductions' => round($totalFixedDeductions, 2),
-                'net_salary' => round($netSalary, 2),
-                'gross_salary' => round($grossSalary, 2),
-                'total_deductions' => round($totalDeductions, 2),
-            ];
-
-            $data[] = $employeeData;
-        }
-
-        return response()->json(['data' => $data, 'meta' => ['count' => count($data)]]);
-    }
-*/
-
-
 public function getEmployeesByMonthAndCompany(Request $request)
     {
         $month = $request->query('month');
@@ -867,7 +622,319 @@ public function getEmployeesByMonthAndCompany(Request $request)
         return response()->json(['data' => $data, 'meta' => ['count' => count($data)]]);
     }
 
+*/
 
+
+public function getEmployeesByMonthAndCompany(Request $request)
+    {
+        $month = $request->query('month');
+        $year = $request->query('year');
+        $company_id = $request->query('company_id');
+        $department_id = $request->query('department_id');
+        $search = $request->query('search');
+
+        $kpiTypeRaw = strtolower((string)$request->query('kpi_type', ''));
+        $kpiType = in_array($kpiTypeRaw, ['monthly', '6month', 'six_month']) ? $kpiTypeRaw : '';
+
+        $startDate = "{$year}-{$month}-01";
+        $lastDay = date('t', strtotime($startDate));
+        $endDate = "{$year}-{$month}-{$lastDay}";
+        $selectedMonthYear = date('Y-m', strtotime($startDate));
+
+        $totalDaysInMonth = (int)$lastDay;
+
+        $query = "
+            SELECT
+                e.id,
+                e.attendance_employee_no AS emp_no,
+                e.full_name,
+                e.nic, -- NIC එක
+                c.name AS company_name,
+                d.name AS department_name,
+                sd.name AS sub_department_name,
+                comp.basic_salary,
+                oa.probationary_period,
+                oa.date_of_joining, -- Joined Date එක
+                e.epf, -- EPF එක
+                cd.permanent_address AS address, -- ලිපිනය
+                cd.mobile_line, -- දුරකථන අංකය
+                cd.emg_name, -- හදිසි ඇමතුම් නම
+                cd.emg_relationship, -- හදිසි ඇමතුම් සම්බන්ධය
+                cd.emg_tel, -- හදිසි ඇමතුම් අංකය
+                comp.increment_active,
+                CASE WHEN comp.increment_active = 1 THEN comp.increment_value ELSE NULL END AS increment_value,
+                CASE WHEN comp.increment_active = 1 THEN comp.increment_effected_date ELSE NULL END AS increment_effected_date,
+                comp.ot_morning,
+                comp.ot_evening,
+                comp.enable_epf_etf,
+                comp.br1,
+                comp.br2,
+                comp.stamp,
+                comp.bank_name,
+                comp.branch_name,
+                comp.bank_account_no,
+                COALESCE(SUM(lo.loan_amount), 0) AS total_loan_amount,
+                MAX(lo.installment_count) AS installment_count,
+                MAX(lo.installment_amount) AS installment_amount,
+                MAX(lo.status) AS loan_status,
+                MAX(lo.schedule) AS loan_schedule,
+                MAX(lo.deduct_from) AS loan_deduct_from,
+                MAX(lo.with_interest) AS with_interest,
+                MAX(lo.interest_rate_per_annum) AS interest_rate_per_annum,
+
+                -- No Pay Types Split (Approved records only)
+                COALESCE(SUM(CASE WHEN npr.type = 'FULL_DAY' THEN COALESCE(npr.no_pay_count, 0) ELSE 0 END), 0) AS full_day_nopays,
+                COALESCE(SUM(CASE WHEN npr.type = 'EARLY_OUT' THEN COALESCE(npr.no_pay_count, 0) ELSE 0 END), 0) AS early_out_nopays,
+                COALESCE(SUM(CASE WHEN npr.type = 'LATE_IN' THEN COALESCE(npr.no_pay_count, 0) ELSE 0 END), 0) AS major_late_nopays,
+                COALESCE(SUM(CASE WHEN npr.type = 'PARTIAL_ABSENT' THEN COALESCE(npr.no_pay_count, 0) ELSE 0 END), 0) AS partial_absent_nopays,
+
+                (
+                    SELECT COALESCE(CONCAT('[', GROUP_CONCAT(
+                        CONCAT('{\"id\":', a.id, ',\"name\":\"', REPLACE(IFNULL(a.allowance_name, ''), '\"', '\\\\\"'), '\",\"amount\":', COALESCE(ea.custom_amount, a.amount, 0), ',\"is_custom\":1,\"code\":\"', REPLACE(IFNULL(a.allowance_code, ''), '\"', '\\\\\"'), '\",\"category\":\"', REPLACE(IFNULL(a.category, ''), '\"', '\\\\\"'), '\"}')
+                    SEPARATOR ','), ']'), '[]')
+                    FROM employee_allowances ea JOIN allowances a ON a.id = ea.allowance_id
+                    WHERE ea.employee_id = e.id AND ea.is_active = 1 AND a.status = 'active' AND (ea.month = ? AND ea.year = ?)
+                ) AS allowances,
+
+                (
+                    SELECT COALESCE(CONCAT('[', GROUP_CONCAT(
+                        CONCAT('{\"id\":', dd.id, ',\"name\":\"', REPLACE(IFNULL(dd.deduction_name, ''), '\"', '\\\\\"'), '\",\"amount\":', COALESCE(ed.custom_amount, dd.amount, 0), ',\"is_custom\":', CASE WHEN ed.id IS NOT NULL THEN 1 ELSE 0 END, ',\"code\":\"', REPLACE(IFNULL(dd.deduction_code, ''), '\"', '\\\\\"'), '\",\"category\":\"', REPLACE(IFNULL(dd.category, ''), '\"', '\\\\\"'), '\"}')
+                    SEPARATOR ','), ']'), '[]')
+                    FROM deductions dd LEFT JOIN employee_deductions ed ON dd.id = ed.deduction_id AND ed.employee_id = e.id AND ed.is_active = 1 AND (ed.month = ? AND ed.year = ?)
+                    WHERE dd.company_id = c.id AND (dd.department_id IS NULL OR dd.department_id = oa.department_id) AND dd.status = 'active'
+                ) AS deductions,
+
+                (
+                    SELECT COALESCE(CONCAT('[', GROUP_CONCAT(
+                        CONCAT('{\"id\":', b.id, ',\"name\":\"', REPLACE(IFNULL(b.bonus_name, ''), '\"', '\\\\\"'), '\",\"amount\":', COALESCE(eb.custom_amount, b.amount, 0), ',\"is_custom\":1,\"code\":\"', REPLACE(IFNULL(b.bonus_code, ''), '\"', '\\\\\"'), '\",\"category\":\"', REPLACE(IFNULL(b.bonus_type, ''), '\"', '\\\\\"'), '\"}')
+                    SEPARATOR ','), ']'), '[]')
+                    FROM employee_bonuses eb JOIN bonuses b ON b.id = eb.bonus_id
+                    WHERE eb.employee_id = e.id AND eb.is_active = 1 AND b.status = 'active' AND (eb.month = ? AND eb.year = ?)
+                ) AS bonuses
+
+            FROM employees e
+            JOIN organization_assignments oa ON e.organization_assignment_id = oa.id
+            JOIN companies c ON oa.company_id = c.id
+            LEFT JOIN departments d ON oa.department_id = d.id
+            LEFT JOIN sub_departments sd ON oa.sub_department_id = sd.id
+            LEFT JOIN compensation comp ON e.id = comp.employee_id
+            LEFT JOIN contact_details cd ON e.id = cd.employee_id -- Contact විස්තර ගැනීම
+            LEFT JOIN loans lo ON e.id = lo.employee_id AND lo.status = 'active'
+            LEFT JOIN no_pay_records npr ON e.id = npr.employee_id AND LOWER(npr.status) = 'approved' AND npr.date BETWEEN ? AND ?
+
+            WHERE e.is_active = '1'
+        ";
+
+        $params = [$month, $year, $month, $year, $month, $year, $startDate, $endDate];
+
+        if ($company_id) { $query .= " AND oa.company_id = ? "; $params[] = $company_id; }
+        if ($department_id) { $query .= " AND oa.department_id = ? "; $params[] = $department_id; }
+        if ($search) { $query .= " AND (e.attendance_employee_no LIKE ? OR e.full_name LIKE ?) "; $params[] = "%{$search}%"; $params[] = "%{$search}%"; }
+
+        $query .= " GROUP BY e.id, e.attendance_employee_no, e.full_name, e.nic, c.name, d.name, sd.name, comp.basic_salary, comp.br1, comp.br2, comp.increment_active, comp.increment_value, comp.increment_effected_date, comp.ot_morning, comp.ot_evening, comp.enable_epf_etf, comp.stamp, comp.bank_name, comp.branch_name, comp.bank_account_no, c.id, oa.department_id, oa.probationary_period, oa.date_of_joining, e.epf, cd.permanent_address, cd.mobile_line, cd.emg_name, cd.emg_relationship, cd.emg_tel";
+
+        $results = DB::select($query, $params);
+        $data = [];
+
+        foreach ($results as $result) {
+            $employeeData = (array)$result;
+
+            $employeeData['compensation'] = [
+                'bank_name' => $result->bank_name ?? null,
+                'branch_name' => $result->branch_name ?? null,
+                'bank_account_no' => $result->bank_account_no ?? null,
+            ];
+
+            $allowancesArr = json_decode($result->allowances ?? '[]', true) ?: [];
+            $deductionsArr = json_decode($result->deductions ?? '[]', true) ?: [];
+            $bonusesArr = json_decode($result->bonuses ?? '[]', true) ?: [];
+
+            $stampValue = ((int)($result->stamp ?? 0) === 1) ? 25 : 0;
+            $employeeData['stamp'] = $stampValue;
+
+            $basicSalary = (float)($employeeData['basic_salary'] ?? 0);
+            $brAllowance = 0;
+
+            if ((int)$result->br1 === 1 && (int)$result->br2 === 1) { $brAllowance = 3500; } 
+            elseif ((int)$result->br1 === 1) { $brAllowance = 1000; } 
+            elseif ((int)$result->br2 === 1) { $brAllowance = 2500; }
+            
+            $basicSalary += $brAllowance;
+
+            if (!empty($employeeData['increment_active']) && !empty($employeeData['increment_effected_date']) && strtotime($employeeData['increment_effected_date']) <= strtotime($endDate)) {
+                $basicSalary += (float)($employeeData['increment_value'] ?? 0);
+            }
+
+            // LOAN CALCULATION
+            $installmentAmount = 0.0;
+            $loanInterest = 0.0;
+            $loanPrincipal = 0.0;
+            $loanDeductFrom = $employeeData['loan_deduct_from'] ?? 'bonus'; 
+            $loanStatus = strtolower((string)($employeeData['loan_status'] ?? ''));
+
+            if ($loanStatus === 'active') {
+                $schedule = $employeeData['loan_schedule'] ?? null;
+                if (is_string($schedule)) { $schedule = is_array(json_decode($schedule, true)) ? json_decode($schedule, true) : null; }
+                
+                if (is_array($schedule) && count($schedule) > 0) {
+                    foreach ($schedule as $r) {
+                        $due = $r['due_date'] ?? $r['dueDate'] ?? null;
+                        if ($due && date('Y-m', strtotime($due)) === $selectedMonthYear) {
+                            $installmentAmount = (float)($r['installment_amount'] ?? $r['installmentAmount'] ?? 0);
+                            break;
+                        }
+                    }
+                } else {
+                    $installmentAmount = ((int)($employeeData['installment_count'] ?? 0) > 0) ? (float)($employeeData['installment_amount'] ?? 0) : 0.0;
+                }
+
+                if ($employeeData['with_interest'] && $employeeData['interest_rate_per_annum'] > 0) {
+                    $loanAmountTotal = (float)($employeeData['total_loan_amount'] ?? 0);
+                    $loanInterest = ($loanAmountTotal * ((float)$employeeData['interest_rate_per_annum'] / 100)) / 12;
+                    if ($loanInterest > $installmentAmount) { $loanInterest = $installmentAmount; }
+                }
+                $loanPrincipal = $installmentAmount - $loanInterest;
+            }
+
+            // Working Days & No Pay Deductions
+            $companyLeavesCount = DB::table('leave_calendars')->where('company_id', $company_id ?? 0)
+                ->where(function ($q) use ($startDate, $endDate) { 
+                    $q->whereBetween('start_date', [$startDate, $endDate])->orWhereBetween('end_date', [$startDate, $endDate]); 
+                })->count();
+            
+            $workingDaysInMonth = max(1, $totalDaysInMonth - $companyLeavesCount);
+            $perDaySalary = $basicSalary / $workingDaysInMonth;
+
+            // Full Day, Partial Absent (Half day & Short leaves No pay), Early Out, Major Late Deductions
+            $fullDayNoPays = (float)($employeeData['full_day_nopays'] ?? 0);
+            $partialAbsentNoPays = (float)($employeeData['partial_absent_nopays'] ?? 0);
+            
+            $totalNoPayDays = $fullDayNoPays + $partialAbsentNoPays;
+            
+            $earlyOutNoPays = (float)($employeeData['early_out_nopays'] ?? 0);
+            $majorLateNoPays = (float)($employeeData['major_late_nopays'] ?? 0);
+            
+            $fullDayNoPayDeduction = round($totalNoPayDays * $perDaySalary, 2);
+            $earlyOutNoPayDeduction = round($earlyOutNoPays * $perDaySalary, 2);
+            $majorLateDeduction = round($majorLateNoPays * $perDaySalary, 2);
+
+            // Probation Deduction
+            $probationDeduction = 0.0;
+            if ($employeeData['probationary_period']) {
+                $probationLeaves = leave_master::where('employee_id', $employeeData['id'])
+                    ->whereRaw('LOWER(status) = ?', ['approved'])
+                    ->whereBetween('leave_date', [$startDate, $endDate])
+                    ->get();
+                    
+                $totalProbationOverLimit = 0;
+                foreach ($probationLeaves as $pl) {
+                    $totalProbationOverLimit += (float)($pl->over_limit ?? 0);
+                }
+                
+                $probationDeduction = round($totalProbationOverLimit * $perDaySalary, 2);
+            }
+
+            // Minor Late Deductions (<= 30 mins)
+            $minorLateData = $this->calculateLateDeductionData((int)$employeeData['id'], $startDate, $endDate, $perDaySalary);
+            $shortLeaveDeduction = $minorLateData['short_leave_deduction'] ?? 0;
+            $halfDayDeduction = $minorLateData['half_day_deduction'] ?? 0;
+
+            // KPI
+            $kpiAllowance = 0.0;
+            $kpiBonusAllowance = 0.0;
+            if ($kpiType === 'monthly') {
+                $percentage = DB::table('performance_evaluations')->where('employee_id', $employeeData['id'])->whereBetween('start_date', [$startDate, $endDate])->avg('percentage');
+                if (!is_null($percentage)) { 
+                    $kpiAllowance = round(($basicSalary * ((float)$percentage)) / 100.0, 2);
+                    $allowancesArr[] = ['name' => 'KPI Allowance', 'amount' => $kpiAllowance, 'category' => 'kpi']; 
+                }
+            } elseif ($kpiType === '6month') {
+                $sixMonthStart = Carbon::parse($startDate)->subMonths(5)->startOfMonth()->toDateString();
+                $percentage = DB::table('performance_appraisals')->where('employee_id', $employeeData['id'])->where('start_date', '>=', $sixMonthStart)->where('end_date', '<=', $endDate)->avg('percentage');
+                if (!is_null($percentage)) { 
+                    $kpiBonusAllowance = round(($basicSalary * ((float)$percentage)) / 100.0, 2);
+                    $bonusesArr[] = ['name' => 'KPI Bonus (6M)', 'amount' => $kpiBonusAllowance, 'category' => 'kpi_bonus']; 
+                }
+            }
+
+            $employeeData['allowances'] = $allowancesArr;
+            $employeeData['deductions'] = $deductionsArr;
+            $employeeData['bonuses'] = $bonusesArr;
+
+            $totalAllowances = array_reduce($allowancesArr, fn($c, $i) => $c + (float)($i['amount'] ?? 0), 0);
+            $totalBonuses = array_reduce($bonusesArr, fn($c, $i) => $c + (float)($i['amount'] ?? 0), 0);
+            
+            $totalFixedDeductions = array_reduce($deductionsArr, fn($c, $i) => $c + (float)($i['amount'] ?? 0), 0); 
+
+            $epfEligibleAllowances = array_reduce($allowancesArr, function ($carry, $item) { 
+                return (strtolower($item['category'] ?? '') === 'kpi_bonus') ? $carry : $carry + (float)($item['amount'] ?? 0); 
+            }, 0);
+            $epfEtfBase = $basicSalary + $epfEligibleAllowances;
+            $epfEmployeeDeduction = !empty($employeeData['enable_epf_etf']) ? ($epfEtfBase * 0.08) : 0;
+            
+            // Overtime
+            $otRows = over_time::with('timeCard:id,date,time,actual_date')->where('employee_id', $employeeData['id'])->whereRaw('LOWER(status) = ?', ['approved'])->whereHas('timeCard', function ($q) use ($startDate, $endDate) { $q->whereBetween('date', [$startDate, $endDate]); })->get();
+            $morning_ot_fees = ((int)($employeeData['ot_morning'] ?? 0) === 1) ? ((float)$otRows->sum('morning_ot_amount') + (float)$otRows->sum('morning_ot_special_amount')) : 0.0;
+            $night_ot_fees = ((int)($employeeData['ot_evening'] ?? 0) === 1) ? ((float)$otRows->sum('evening_ot_amount') + (float)$otRows->sum('evening_ot_special_amount')) : 0.0;
+            $holiday_ot_fees = (float)$otRows->sum('holiday_ot_amount');
+
+            // --- DEDUCTION SPLIT ---
+            $basicGross = $basicSalary + $totalAllowances;
+            $bonusGross = $totalBonuses;
+
+            $basicDeductionsTotal = $epfEmployeeDeduction + $fullDayNoPayDeduction + $probationDeduction;
+            $bonusDeductionsTotal = $earlyOutNoPayDeduction + $shortLeaveDeduction + $halfDayDeduction + $majorLateDeduction + $totalFixedDeductions;
+
+            if ($loanDeductFrom === 'basic') { 
+                $basicDeductionsTotal += $loanPrincipal; 
+            } else { 
+                $bonusDeductionsTotal += $loanPrincipal; 
+            }
+            
+            $bonusDeductionsTotal += $loanInterest;
+
+            $grossSalary = $basicGross + $bonusGross + $morning_ot_fees + $night_ot_fees + $holiday_ot_fees;
+            $totalDeductions = $basicDeductionsTotal + $bonusDeductionsTotal + $stampValue;
+            $netSalary = $grossSalary - $totalDeductions;
+
+            $employeeData['salary_breakdown'] = [
+                'basic_salary' => round($basicSalary, 2),
+                'per_day_salary' => round($perDaySalary, 3),
+                'ot_morning_fees' => round($morning_ot_fees, 2),
+                'ot_night_fees' => round($night_ot_fees, 2),
+                'holiday_ot_fees' => round($holiday_ot_fees, 2),
+                'ot_morning_hours' => round((float)$otRows->sum('morning_ot') + (float)$otRows->sum('morning_ot_special'), 2),
+                'ot_night_hours' => round((float)$otRows->sum('afternoon_ot') + (float)$otRows->sum('evening_ot_special'), 2),
+                'holiday_ot_hours' => round((float)$otRows->sum('holiday_ot_hours'), 2),
+                
+                'full_day_nopay_deduction' => round($fullDayNoPayDeduction, 2),
+                'early_out_nopay_deduction' => round($earlyOutNoPayDeduction, 2),
+                'short_leave_deduction' => round($shortLeaveDeduction, 2),
+                'half_day_deduction' => round($halfDayDeduction, 2),
+                'major_late_deduction' => round($majorLateDeduction, 2),
+                'epf_employee_deduction' => round($epfEmployeeDeduction, 2),
+
+                //new ones
+                
+                'probation_deduction' => round($probationDeduction, 2),
+                'stamp_duty' => $stampValue,
+                
+                'loan_principal' => round($loanPrincipal, 2),
+                'loan_interest' => round($loanInterest, 2),
+                'loan_deduct_from' => $loanDeductFrom,
+                
+                'total_fixed_deductions' => round($totalFixedDeductions, 2),
+                
+                'net_salary' => round($netSalary, 2),
+                'gross_salary' => round($grossSalary, 2),
+                'total_deductions' => round($totalDeductions, 2),
+            ];
+
+            $data[] = $employeeData;
+        }
+
+        return response()->json(['data' => $data, 'meta' => ['count' => count($data)]]);
+    }
 
 
 
