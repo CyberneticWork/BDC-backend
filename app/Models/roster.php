@@ -47,7 +47,7 @@ class Roster extends Model
         return $this->belongsTo(sub_departments::class);
     }
 
-    //relation for employee
+    //relation for employe
     public function employee()
     {
         return $this->belongsTo(employee::class);
