@@ -107,19 +107,19 @@ class EmployeeController extends Controller
 
         if ($search) {
             $query->where(function ($q) use ($search) {
-                // 1. සාමාන්‍ය දත්ත වලින් සෙවීම (Name, EMP No, EPF, NIC)
+                // (Name, EMP No, EPF, NIC)
                 $q->where('full_name', 'like', "%{$search}%")
                     ->orWhere('id', 'like', "%{$search}%")
                     ->orWhere('epf', 'like', "%{$search}%")
                     ->orWhere('attendance_employee_no', 'like', "%{$search}%")
                     ->orWhere('nic', 'like', "%{$search}%")
                     
-                    // 2. Type එකෙන් සෙවීම (PERMANENT, Contract ආදිය)
+                    // (PERMANENT, Contract )
                     ->orWhereHas('employmentType', function ($typeQuery) use ($search) {
                         $typeQuery->where('name', 'like', "%{$search}%");
                     })
 
-                    // 3. Company, Department, සහ Position (Designation) වලින් සෙවීම
+                    // 3. Company, Department Position (Designation) 
                     ->orWhereHas('organizationAssignment', function ($orgQuery) use ($search) {
                         $orgQuery->whereHas('company', function ($companyQuery) use ($search) {
                             $companyQuery->where('name', 'like', "%{$search}%");
@@ -132,7 +132,7 @@ class EmployeeController extends Controller
                         });
                     });
 
-                // 4. Status එකෙන් සෙවීම ("Active" හෝ "Inactive" ලෙස ටයිප් කළොත්)
+                // 4. Status  
                 if (strtolower($search) === 'active') {
                     $q->orWhere('is_active', 1)->orWhere('is_active', true);
                 } elseif (strtolower($search) === 'inactive') {
