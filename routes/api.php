@@ -219,6 +219,8 @@ Route::post('/salary/process/save', [SalaryProcessController::class, 'storeSalar
 Route::post('/attendance/mark-absentees', [TimeCardController::class, 'markAbsentees']);
 Route::get('/absentees', [ApiDataController::class, 'Absentees']);
 // No Pay routes
+/*
+Route::post('/no-pay-records/generate-monthly', [NoPayRecordController::class, 'generateMonthly']);
 Route::get('no-pay-records', [NopayController::class, 'index']);
 Route::post('no-pay-records', [NopayController::class, 'store']);
 Route::put('no-pay-records/{id}', [NopayController::class, 'update']);
@@ -226,6 +228,19 @@ Route::post('no-pay-records/bulk-update', [NopayController::class, 'bulkUpdateSt
 Route::delete('no-pay-records/{id}', [NopayController::class, 'destroy']);
 Route::delete('no-pay-records/bulk-delete', [NopayController::class, 'bulkDestroy']);
 Route::post('no-pay-records/generate', [NopayController::class, 'generateDailyNoPayRecords']);
+Route::get('no-pay-records/stats', [NopayController::class, 'getNoPayStats']);
+*/
+
+// No Pay routes
+Route::post('no-pay-records/generate-monthly', [NopayController::class, 'generateMonthlyNoPayRecords']); // නිවැරදි කළ පේළිය
+Route::post('no-pay-records/generate', [NopayController::class, 'generateDailyNoPayRecords']);
+
+Route::get('no-pay-records', [NopayController::class, 'index']);
+Route::post('no-pay-records', [NopayController::class, 'store']);
+Route::put('no-pay-records/{id}', [NopayController::class, 'update']);
+Route::post('no-pay-records/bulk-update', [NopayController::class, 'bulkUpdateStatus']);
+Route::delete('no-pay-records/{id}', [NopayController::class, 'destroy']);
+Route::delete('no-pay-records/bulk-delete', [NopayController::class, 'bulkDestroy']);
 Route::get('no-pay-records/stats', [NopayController::class, 'getNoPayStats']);
 
 // Allowances import/export routes
