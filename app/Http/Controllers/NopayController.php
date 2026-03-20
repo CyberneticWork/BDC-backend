@@ -5,7 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\NoPayRecord;
 use App\Models\employee;
 use App\Models\leave_master;
-use App\Models\roster;
+use App\Models\Roster;
 use App\Models\shifts;
 use App\Models\time_card;
 use App\Models\leaveCalendar;

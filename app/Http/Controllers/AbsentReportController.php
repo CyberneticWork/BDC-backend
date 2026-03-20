@@ -3,7 +3,7 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-use App\Models\roster;
+use App\Models\Roster;
 use App\Models\time_card;
 use App\Models\employee;
 use App\Models\leave_master;

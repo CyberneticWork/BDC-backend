@@ -7,7 +7,7 @@ use App\Models\absence;
 use App\Models\employee;
 use App\Models\leave_master;
 use App\Models\over_time;
-use App\Models\roster;
+use App\Models\Roster;
 use App\Models\shifts;
 use App\Models\time_card;
 use App\Services\Overtime\OvertimeCalculator;

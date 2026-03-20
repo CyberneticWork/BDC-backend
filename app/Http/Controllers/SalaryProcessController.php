@@ -18,7 +18,7 @@ use App\Imports\EmployeeDeductionsImport;
 use App\Models\loans;
 use App\Models\leave_master;
 use App\Models\time_card;
-use App\Models\roster;
+use App\Models\Roster;
 use Carbon\Carbon;
 use App\Models\EmployeeBonus;
 
