@@ -14,7 +14,7 @@ class RosterController extends Controller
     public function index()
     {
         // Eager load to avoid N+1
-        $rosters = roster::with(['company', 'department', 'subDepartment', 'employee', 'shift'])
+        $rosters = Roster::with(['company', 'department', 'subDepartment', 'employee', 'shift'])
             ->orderBy('created_at', 'desc')
             ->get();
         $data = $rosters->map(function ($r) {
@@ -50,7 +50,7 @@ class RosterController extends Controller
 
     public function show($id)
     {
-        $roster = roster::find($id);
+        $roster = Roster::find($id);
         if (!$roster) {
             return response()->json(['message' => 'Roster not found'], 404);
         }
@@ -120,13 +120,19 @@ class RosterController extends Controller
         } else {
             // No existing group -> assign roster_id if not provided
             if (!isset($data['roster_id'])) {
-                $data['roster_id'] = (int) roster::max('roster_id') + 1;
+                $data['roster_id'] = (int) Roster::max('roster_id') + 1;
             }
         }
 
-        $roster = roster::create($data);
-
-        return response()->json($roster, 201);
+        try {
+            $roster = Roster::create($data);
+            return response()->json($roster, 201);
+        } catch (\Exception $e) {
+            return response()->json([
+                'error' => 'Failed to create roster',
+                'message' => $e->getMessage(),
+            ], 500);
+        }
     }
 
     protected function isJsonArray(Request $request)
@@ -228,7 +234,7 @@ class RosterController extends Controller
 
         DB::beginTransaction();
         try {
-            roster::insert($validatedEntries);
+            Roster::insert($validatedEntries);
             DB::commit();
 
             return response()->json([
@@ -247,7 +253,7 @@ class RosterController extends Controller
 
     public function update(Request $request, $id)
     {
-        $roster = roster::find($id);
+        $roster = Roster::find($id);
         if (!$roster) {
             return response()->json(['message' => 'Roster not found'], 404);
         }
@@ -277,7 +283,7 @@ class RosterController extends Controller
     public function destroy($id)
     {
         try {
-            $roster = roster::findOrFail($id);
+            $roster = Roster::findOrFail($id);
             
             // Perform soft delete
             $roster->delete();
@@ -304,7 +310,7 @@ class RosterController extends Controller
     public function getTrashed()
     {
         try {
-            $trashedRosters = roster::onlyTrashed()
+            $trashedRosters = Roster::onlyTrashed()
                 ->with(['company', 'department', 'subDepartment', 'employee'])
                 ->get();
             
@@ -325,7 +331,7 @@ class RosterController extends Controller
     public function restore($id)
     {
         try {
-            $roster = roster::onlyTrashed()->findOrFail($id);
+            $roster = Roster::onlyTrashed()->findOrFail($id);
             $roster->restore();
             
             return response()->json([
@@ -358,7 +364,7 @@ class RosterController extends Controller
             return response()->json(['errors' => $validator->errors()], 422);
         }
 
-        $query = roster::with(['company', 'department', 'subDepartment', 'employee', 'shift'])
+        $query = Roster::with(['company', 'department', 'subDepartment', 'employee', 'shift'])
             ->orderBy('created_at', 'desc');
 
         if ($request->filled('date_from') || $request->filled('date_to')) {
@@ -469,7 +475,7 @@ class RosterController extends Controller
             return null;
         }
 
-        $query = roster::query()
+        $query = Roster::query()
             ->where('company_id', $signature['company_id'])
             ->where('department_id', $signature['department_id'])
             ->where('sub_department_id', $signature['sub_department_id'])
@@ -499,7 +505,7 @@ class RosterController extends Controller
 
         try {
             $ids = $request->input('ids');
-            $deletedCount = roster::whereIn('id', $ids)->delete();
+            $deletedCount = Roster::whereIn('id', $ids)->delete();
             
             if ($deletedCount === 0) {
                 return response()->json([
