@@ -959,7 +959,7 @@ public function getEmployeesByMonthAndCompany(Request $request)
         return response()->json(['data' => $data, 'meta' => ['count' => count($data)]]);
     }
 
-
+//
 
 
     public function storeSalaryData(Request $request)
