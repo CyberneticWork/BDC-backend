@@ -7,7 +7,7 @@ use App\Models\absence;
 use App\Models\employee;
 use App\Models\leave_master;
 use App\Models\over_time;
-use App\Models\roster;
+use App\Models\Roster;
 use App\Models\shifts;
 use App\Models\time_card;
 use App\Services\Overtime\OvertimeCalculator;
@@ -819,7 +819,7 @@ class TimeCardController extends Controller
 
         $this->saveOrUpdateOtRecord($outCard->id, [
             'employee_id' => $employee->id,
-            'date' => $targetDate, // Date එක අනිවාර්යයෙන්ම Save කරනවා
+            'date' => $targetDate, // Date 
             'shift_code' => $resolvedShift->id,
             'ot_hours' => $hours['total'],
             'morning_ot' => $hours['morning_regular'],
