@@ -1175,9 +1175,29 @@ class TimeCardController extends Controller
                     'department' => $card->employee->organizationAssignment->department->name ?? null,
                     'status' => $card->status,
                 ];
-            });
+            })->toArray();
 
-        return response()->json($cards);
+        // Absent records absences table ekenda include karanawa
+        $absentCards = absence::where('employee_id', $employee->id)
+            ->get()
+            ->map(function ($abs) use ($employee) {
+                return [
+                    'id' => 'abs_' . $abs->id,
+                    'empNo' => $employee->attendance_employee_no,
+                    'name' => $employee->full_name,
+                    'fingerprintClock' => null,
+                    'time' => null,
+                    'date' => $abs->date,
+                    'entry' => null,
+                    'inOut' => null,
+                    'department' => null,
+                    'status' => 'Absent',
+                ];
+            })->toArray();
+
+        $allRecords = array_merge($cards, $absentCards);
+
+        return response()->json($allRecords);
     }
 
     public function fetchAbsentees(Request $request)

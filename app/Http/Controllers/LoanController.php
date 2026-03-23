@@ -19,6 +19,17 @@ class LoanController extends Controller
         );
     }
 
+    public function getByEmployeeNo(string $employeeNo)
+    {
+        $employee = employee::where('attendance_employee_no', $employeeNo)->first();
+        if (!$employee) {
+            return response()->json(['message' => 'Employee not found'], 404);
+        }
+        return response()->json(
+            loans::where('employee_id', $employee->id)->orderBy('created_at', 'desc')->get()
+        );
+    }
+
     /**
      * Employee Number එකෙන් Employee ගේ නම සහ ID එක සෙවීම
      */

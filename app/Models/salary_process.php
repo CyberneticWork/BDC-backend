@@ -30,6 +30,7 @@ class salary_process extends Model
         'total_loan_amount',
         'installment_count',
         'installment_amount',
+        'loan_balance',
         'approved_no_pay_days',
         'allowances',
         'deductions',
@@ -52,7 +53,8 @@ class salary_process extends Model
         'basic_salary' => 'decimal:2',
         'total_loan_amount' => 'decimal:2',
         'installment_amount' => 'decimal:2',
-        'installment_count' => 'integer',   // ✅ add
+        'loan_balance' => 'decimal:2',
+        'installment_count' => 'integer',
         'allowances' => 'json',
         'deductions' => 'json',
         'salary_breakdown' => 'json',

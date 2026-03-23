@@ -13,10 +13,26 @@ class SalaryController extends Controller
     /**
      * Display a listing of the resource.
      */
-    public function index()
+    public function index(Request $request)
     {
-        $salary = salary_process::all();
-        return response()->json($salary, 200);
+        $query = salary_process::query();
+
+        if ($request->has('employee_no')) {
+            $query->where('employee_no', $request->employee_no);
+        }
+
+        $records = $query->orderBy('year', 'desc')->orderBy('month', 'desc')->get();
+
+        // Parse JSON fields so frontend receives objects not strings
+        $records->transform(function ($r) {
+            $r->salary_breakdown = is_string($r->salary_breakdown) ? json_decode($r->salary_breakdown, true) : $r->salary_breakdown;
+            $r->allowances  = is_string($r->allowances)  ? json_decode($r->allowances, true)  : $r->allowances;
+            $r->deductions  = is_string($r->deductions)  ? json_decode($r->deductions, true)  : $r->deductions;
+            $r->bonuses     = is_string($r->bonuses)     ? json_decode($r->bonuses, true)     : $r->bonuses;
+            return $r;
+        });
+
+        return response()->json($records, 200);
     }
 
     /**
@@ -141,9 +157,15 @@ class SalaryController extends Controller
             $morningOtFees = (float) $request->ot_morning;
             $nightOtFees = (float) $request->ot_evening;
 
+            // Loan balance calculation
+            $installmentAmount = (float)($request->installment_amount ?? 0);
+            $totalLoanAmount = (float)($request->total_loan_amount ?? 0);
+            $currentLoanBalance = (float)($salaryRecord->loan_balance ?? $totalLoanAmount);
+            $newLoanBalance = max(0, $currentLoanBalance - $installmentAmount);
+
             // Calculate gross and net salary
             $grossSalary = $epfEtfBase + $morningOtFees + $nightOtFees;
-            $totalDeductions = $totalFixedDeductions + ($request->installment_amount ?? 0) + $epfEmployeeDeduction;
+            $totalDeductions = $totalFixedDeductions + $installmentAmount + $epfEmployeeDeduction;
             $netSalary = $grossSalary - $totalDeductions - $stampValue;
 
             // Create updated salary_breakdown object
@@ -161,11 +183,12 @@ class SalaryController extends Controller
                 'epf_employer_contribution' => $epfEmployerContribution,
                 'etf_employer_contribution' => $etfEmployerContribution,
                 'total_fixed_deductions' => $totalFixedDeductions,
-                'loan_installment' => (float)($request->installment_amount ?? 0),
+                'loan_installment' => $installmentAmount,
                 'gross_salary' => $grossSalary,
                 'total_deductions' => $totalDeductions,
                 'stamp' => $stampValue,
-                'net_salary' => $netSalary
+                'net_salary' => $netSalary,
+                'loan_balance' => $newLoanBalance
             ];
 
             // Prepare updated data
@@ -184,6 +207,7 @@ class SalaryController extends Controller
                 'total_loan_amount' => $request->total_loan_amount,
                 'installment_count' => $request->installment_count,
                 'installment_amount' => $request->installment_amount,
+                'loan_balance' => $newLoanBalance,
                 'approved_no_pay_days' => $request->approved_no_pay_days,
                 'status' => $request->status,
                 'month' => $request->month,
