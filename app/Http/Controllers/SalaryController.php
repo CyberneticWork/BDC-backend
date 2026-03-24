@@ -17,8 +17,31 @@ class SalaryController extends Controller
     {
         $query = salary_process::query();
 
-        if ($request->has('employee_no')) {
+        if ($request->has('employee_no') && $request->employee_no) {
             $query->where('employee_no', $request->employee_no);
+        }
+
+        if ($request->has('month') && $request->month) {
+            $query->where('month', $request->month);
+        }
+
+        if ($request->has('year') && $request->year) {
+            $query->where('year', $request->year);
+        }
+
+        if ($request->has('company_name') && $request->company_name) {
+            $query->where('company_name', 'like', '%' . $request->company_name . '%');
+        }
+
+        if ($request->has('department_name') && $request->department_name) {
+            $query->where('department_name', 'like', '%' . $request->department_name . '%');
+        }
+
+        if ($request->has('search') && $request->search) {
+            $query->where(function($q) use ($request) {
+                $q->where('employee_no', 'like', '%' . $request->search . '%')
+                  ->orWhere('full_name', 'like', '%' . $request->search . '%');
+            });
         }
 
         $records = $query->orderBy('year', 'desc')->orderBy('month', 'desc')->get();
