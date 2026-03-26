@@ -30,6 +30,24 @@ class LoanController extends Controller
         );
     }
 
+    public function update(Request $request, $id)
+    {
+        $loan = loans::findOrFail($id);
+
+        $validated = $request->validate([
+            'loan_amount'             => 'sometimes|numeric|min:0.01',
+            'installment_amount'      => 'sometimes|numeric|min:0.01',
+            'interest_rate_per_annum' => 'sometimes|numeric|min:0',
+            'start_from'              => 'sometimes|date',
+            'deduct_from'             => 'sometimes|in:basic,bonus',
+            'status'                  => 'sometimes|in:active,completed,cancelled',
+        ]);
+
+        $loan->update($validated);
+
+        return response()->json(['message' => 'Loan updated successfully', 'loan' => $loan]);
+    }
+
     /**
      * Employee Number එකෙන් Employee ගේ නම සහ ID එක සෙවීම
      */
