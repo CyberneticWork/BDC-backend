@@ -131,9 +131,51 @@ class OvertimeController extends Controller
         //
     }
 
-    public function update(Request $request, string $id)
+   public function update(Request $request, string $id)
     {
-        //
+        $request->validate([
+            'morning_ot' => 'required|numeric|min:0',
+            'evening_ot' => 'required|numeric|min:0', // DB එකේ මේක afternoon_ot
+            'holiday_ot_hours' => 'required|numeric|min:0',
+        ]);
+
+        try {
+            // OT Record එක සහ සේවකයාගේ Rates ටික ගන්නවා
+            $overtime = over_time::with('employee.compensation')->findOrFail($id);
+
+            // අලුත් පැය ගණන් සෙට් කරනවා
+            $overtime->morning_ot = $request->morning_ot;
+            $overtime->afternoon_ot = $request->evening_ot; 
+            $overtime->holiday_ot_hours = $request->holiday_ot_hours;
+
+            // සේවකයාගේ OT Rates ටික ගන්නවා
+            $rates = $overtime->employee->compensation;
+            $mRate = (float)($rates->ot_morning_rate ?? 0);
+            $eRate = (float)($rates->ot_night_rate ?? 0);
+            $holidayRate = (float)($rates->holiday_rate ?? $eRate); // Holiday Rate එකක් නැත්නම් Night Rate එක ගන්නවා
+
+            // අලුත් ගණන් (Amounts) ටික Calculate කරනවා
+            $overtime->morning_ot_amount = $overtime->morning_ot * $mRate;
+            $overtime->evening_ot_amount = $overtime->afternoon_ot * $eRate;
+            $overtime->holiday_ot_amount = $overtime->holiday_ot_hours * $holidayRate;
+
+            // Total පැය ගණන සහ Total ගාණ හදනවා
+            $overtime->ot_hours = $overtime->morning_ot + $overtime->afternoon_ot + ($overtime->morning_ot_special ?? 0) + ($overtime->evening_ot_special ?? 0);
+            
+            $overtime->total_ot_amount = $overtime->morning_ot_amount + $overtime->evening_ot_amount + ($overtime->morning_ot_special_amount ?? 0) + ($overtime->evening_ot_special_amount ?? 0);
+
+            $overtime->save();
+
+            return response()->json([
+                'message' => 'Overtime updated successfully', 
+                'data' => $overtime
+            ], 200);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Error updating overtime: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     public function destroy(string $id)

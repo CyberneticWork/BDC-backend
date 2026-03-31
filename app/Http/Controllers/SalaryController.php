@@ -8,6 +8,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 
+use Illuminate\Support\Facades\DB;
+
 class SalaryController extends Controller
 {
     /**
@@ -65,88 +67,111 @@ class SalaryController extends Controller
         }
 
         try {
-            // Find the salary record
-            $salaryRecord = salary_process::findOrFail($id);
+            DB::beginTransaction();
 
-            // Store the original values for audit tracking
-            $originalData = $salaryRecord->toArray();
+            // 1. Salary Record එක හොයනවා.
+            // $id කියන්නේ Frontend එකෙන් එවන Employee ID එකයි.
+            $salaryRecord = salary_process::where('employee_id', $id)
+                ->where('month', $request->month)
+                ->where('year', $request->year)
+                ->first();
+
+            $originalData = [];
+
+            // 2. Record එකක් නැත්නම් Employee ටේබල් එකෙන් විස්තර අරගෙන අලුත් එකක් හදන්න (Upsert)
+            if (!$salaryRecord) {
+               // Database එකේ ඇත්තටම තියෙන Columns (attendance_employee_no සහ full_name) විතරක් Select කරනවා
+                $empDetails = \Illuminate\Support\Facades\DB::table('employees as e')
+                    ->select(
+                        'e.attendance_employee_no', 'e.full_name',
+                        'c.name as company_name',
+                        'd.name as department_name',
+                        'sd.name as sub_department_name'
+                    )
+                    ->leftJoin('organization_assignments as oa', 'e.organization_assignment_id', '=', 'oa.id')
+                    ->leftJoin('companies as c', 'oa.company_id', '=', 'c.id')
+                    ->leftJoin('departments as d', 'oa.department_id', '=', 'd.id')
+                    ->leftJoin('sub_departments as sd', 'oa.sub_department_id', '=', 'sd.id')
+                    ->where('e.id', $id)
+                    ->first();
+
+                if (!$empDetails) {
+                    return response()->json(['message' => 'Employee details not found!'], 404);
+                }
+
+                $salaryRecord = new salary_process();
+                $salaryRecord->employee_id = $id;
+                $salaryRecord->employee_no = $empDetails->attendance_employee_no ?? '-';
+                $salaryRecord->full_name = $empDetails->full_name ?? 'Unknown';
+                
+                $salaryRecord->company_name = $empDetails->company_name ?? '-';
+                $salaryRecord->department_name = $empDetails->department_name ?? '-';
+                $salaryRecord->sub_department_name = $empDetails->sub_department_name ?? null;
+            } else {
+                // 
+                $originalData = $salaryRecord->toArray();
+            }
 
             // Get the current data for calculations
             $basicSalary = (float) $request->basic_salary;
 
-            // Calculate BR allowance based on BR1 and BR2 flags
+            // Calculate BR allowance
             $brAllowance = 0;
             if ($request->br1 && $request->br2) {
-                $brAllowance = 3500; // Both BR1 and BR2
-                $brStatus = 'Both BR1 and BR2';
+                $brAllowance = 3500; $brStatus = 'Both BR1 and BR2';
             } elseif ($request->br1) {
-                $brAllowance = 1000; // BR1 Only
-                $brStatus = 'BR1 Only';
+                $brAllowance = 1000; $brStatus = 'BR1 Only';
             } elseif ($request->br2) {
-                $brAllowance = 2500; // BR2 Only
-                $brStatus = 'BR2 Only';
+                $brAllowance = 2500; $brStatus = 'BR2 Only';
             } else {
                 $brStatus = 'None';
             }
 
-            // Get working days in month (simplified - could be more complex in production)
             $year = $request->year;
             $month = $request->month;
             $totalDaysInMonth = cal_days_in_month(CAL_GREGORIAN, (int)$month, (int)$year);
-            $workingDaysInMonth = $totalDaysInMonth - 8; // Assuming ~8 non-working days per month
+            $workingDaysInMonth = $totalDaysInMonth - 8; 
 
-            // Calculate per day salary and no-pay deduction
             $perDaySalary = $basicSalary / $workingDaysInMonth;
             $noPayDeduction = $request->approved_no_pay_days * $perDaySalary;
             $adjustedBasic = $basicSalary - $noPayDeduction;
 
-            // Accept allowances as array or JSON string; normalize to array
+            // Allowances
             $allowances = $request->allowances ?? [];
             if (is_string($allowances)) {
                 $decoded = json_decode($allowances, true);
                 $allowances = is_array($decoded) ? $decoded : [];
             }
             $totalAllowances = 0;
-            if (is_array($allowances)) {
-                foreach ($allowances as $allowance) {
-                    $totalAllowances += (float)($allowance['amount'] ?? 0);
-                }
+            foreach ($allowances as $allowance) {
+                $totalAllowances += (float)($allowance['amount'] ?? 0);
             }
 
-            // Calculate EPF/ETF base
+            // EPF/ETF
             $epfEtfBase = $adjustedBasic + $totalAllowances;
-
-            // Calculate EPF/ETF contributions if enabled
             $epfEmployeeDeduction = $request->enable_epf_etf ? $epfEtfBase * 0.08 : 0;
             $epfEmployerContribution = $request->enable_epf_etf ? $epfEtfBase * 0.12 : 0;
             $etfEmployerContribution = $request->enable_epf_etf ? $epfEtfBase * 0.03 : 0;
 
-            // Process deductions from the request
+            // Deductions
             $deductions = $request->deductions ?? [];
             if (is_string($deductions)) {
                 $decoded = json_decode($deductions, true);
                 $deductions = is_array($decoded) ? $decoded : [];
             }
             $totalFixedDeductions = 0;
-            if (is_array($deductions)) {
-                foreach ($deductions as $deduction) {
-                    $totalFixedDeductions += (float)($deduction['amount'] ?? 0);
-                }
+            foreach ($deductions as $deduction) {
+                $totalFixedDeductions += (float)($deduction['amount'] ?? 0);
             }
 
-            // Handle stamp duty
             $stampValue = $request->stamp ? 25 : 0;
-
-            // Handle OT calculations - using the values from UI
             $morningOtFees = (float) $request->ot_morning;
             $nightOtFees = (float) $request->ot_evening;
-
-            // Calculate gross and net salary
+            /*
             $grossSalary = $epfEtfBase + $morningOtFees + $nightOtFees;
-            $totalDeductions = $totalFixedDeductions + ($request->installment_amount ?? 0) + $epfEmployeeDeduction;
+            $totalDeductions = $totalFixedDeductions + ((float)($request->installment_amount ?? 0)) + $epfEmployeeDeduction;
             $netSalary = $grossSalary - $totalDeductions - $stampValue;
 
-            // Create updated salary_breakdown object
             $updatedSalaryBreakdown = [
                 'basic_salary' => $basicSalary,
                 'br_allowance' => $brAllowance,
@@ -167,8 +192,56 @@ class SalaryController extends Controller
                 'stamp' => $stampValue,
                 'net_salary' => $netSalary
             ];
+           */
+            
+            $frontendBreakdown = is_string($request->salary_breakdown) 
+                ? json_decode($request->salary_breakdown, true) 
+                : ($request->salary_breakdown ?? []);
 
-            // Prepare updated data
+            // Basic ද Bonus ද කියන එක හොයාගන්නවා
+            $loanDeductFrom = $frontendBreakdown['loan_deduct_from'] ?? 'bonus';
+
+            $grossSalary = $epfEtfBase + $morningOtFees + $nightOtFees;
+            $totalDeductions = $totalFixedDeductions + ((float)($request->installment_amount ?? 0)) + $epfEmployeeDeduction;
+            $netSalary = $grossSalary - $totalDeductions - $stampValue;
+
+            // පරණ Record එකේ තිබ්බ Loan Settings ගන්නවා
+            $oldBreakdown = is_string($salaryRecord->salary_breakdown) ? json_decode($salaryRecord->salary_breakdown, true) : ($salaryRecord->salary_breakdown ?? []);
+            $loanDeductFrom = $oldBreakdown['loan_deduct_from'] ?? 'bonus';
+            $loanInterest = $oldBreakdown['loan_interest'] ?? 0;
+            $newInstallment = (float)($request->installment_amount ?? 0);
+            $newPrincipal = $newInstallment > $loanInterest ? $newInstallment - $loanInterest : $newInstallment;
+
+            $updatedSalaryBreakdown = [
+                'basic_salary' => $basicSalary,
+                'br_allowance' => $brAllowance,
+                'ot_morning_fees' => $morningOtFees,
+                'ot_night_fees' => $nightOtFees,
+                'adjusted_basic' => $adjustedBasic,
+                'per_day_salary' => $perDaySalary,
+                'no_pay_deduction' => $noPayDeduction,
+                'total_allowances' => $totalAllowances,
+                'epf_etf_base' => $epfEtfBase,
+                'epf_employee_deduction' => $epfEmployeeDeduction,
+                'epf_employer_contribution' => $epfEmployerContribution,
+                'etf_employer_contribution' => $etfEmployerContribution,
+                'total_fixed_deductions' => $totalFixedDeductions,
+                
+                // ==========================================
+                // වෙනස් කළ කොටස: Interest අයින් කළා. Frontend එකෙන් එවන 'basic' හෝ 'bonus' ගන්නවා.
+                'loan_installment' => $newInstallment,
+                'loan_principal'   => $newInstallment, // Interest නැති නිසා සම්පූර්ණ ගාණම Principal එක
+                'loan_interest'    => 0, // පොලිය අයින් කර ඇති නිසා 0 කරනවා
+                'loan_deduct_from' => $loanDeductFrom, // React  (Basic/Bonus)
+                // ==========================================
+                
+                'gross_salary' => $grossSalary,
+                'total_deductions' => $totalDeductions,
+                'stamp' => $stampValue,
+                'net_salary' => $netSalary
+            ];
+
+
             $updatedData = [
                 'basic_salary' => $request->basic_salary,
                 'increment_active' => (bool)$request->increment_active,
@@ -181,27 +254,24 @@ class SalaryController extends Controller
                 'br2' => (bool)$request->br2,
                 'br_status' => $brStatus,
                 'stamp' => (bool)$request->stamp,
-                'total_loan_amount' => $request->total_loan_amount,
-                'installment_count' => $request->installment_count,
-                'installment_amount' => $request->installment_amount,
+                'total_loan_amount' => $request->total_loan_amount ?: 0,
+                'installment_count' => $request->installment_count ?: 0,
+                'installment_amount' => $request->installment_amount ?: 0,
                 'approved_no_pay_days' => $request->approved_no_pay_days,
-                'status' => $request->status,
+                'status' => $request->status, 
                 'month' => $request->month,
                 'year' => $request->year,
                 'salary_breakdown' => $updatedSalaryBreakdown,
-                // Store arrays directly; model casts to JSON
                 'allowances' => $allowances,
                 'deductions' => $deductions,
             ];
 
-            // Update the salary record
-            $salaryRecord->update($updatedData);
+            // 3. Save කරන කොටස (Fill & Save)
+            $salaryRecord->fill($updatedData);
+            $salaryRecord->save();
 
-            // Track changes for audit log - only fields directly edited by the user
+            // 4. Audit Log
             $changes = [];
-
-
-            // Check for basic user inputs that may have changed
             $trackableFields = [
                 'basic_salary', 'increment_active', 'increment_value', 'increment_effected_date',
                 'ot_morning', 'ot_evening', 'enable_epf_etf', 'br1', 'br2', 'stamp',
@@ -209,81 +279,35 @@ class SalaryController extends Controller
                 'approved_no_pay_days', 'status', 'month', 'year'
             ];
 
-            foreach ($trackableFields as $field) {
-                // Skip if field isn't in the request
-                if (!$request->has($field)) {
-                    continue;
-                }
+            if (!empty($originalData)) {
+                foreach ($trackableFields as $field) {
+                    if (!$request->has($field)) continue;
 
-                // Convert value to comparable format (booleans need special handling)
-                $requestValue = $request->input($field);
-                if (in_array($field, ['increment_active', 'enable_epf_etf', 'br1', 'br2', 'stamp'])) {
-                    $requestValue = (bool)$requestValue;
-                    $originalValue = (bool)($originalData[$field] ?? false);
-                } else {
-                    $originalValue = $originalData[$field] ?? null;
+                    $requestValue = $request->input($field);
+                    if (in_array($field, ['increment_active', 'enable_epf_etf', 'br1', 'br2', 'stamp'])) {
+                        $requestValue = (bool)$requestValue;
+                        $originalValue = (bool)($originalData[$field] ?? false);
+                    } else {
+                        $originalValue = $originalData[$field] ?? null;
+                        if (is_numeric($requestValue) && is_numeric($originalValue)) {
+                            $requestValue = (string)$requestValue;
+                            $originalValue = (string)$originalValue;
+                        }
+                    }
 
-                    // Handle numeric conversions for proper comparison
-                    if (is_numeric($requestValue) && is_numeric($originalValue)) {
-                        $requestValue = (string)$requestValue; // Convert to string to avoid float precision issues
-                        $originalValue = (string)$originalValue;
+                    if ($originalValue != $requestValue) {
+                        $changes[$field] = ['from' => $originalValue, 'to' => $requestValue];
                     }
                 }
-
-                // Only track if value actually changed
-                if ($originalValue != $requestValue) {
-                    $changes[$field] = [
-                        'from' => $originalValue,
-                        'to' => $requestValue
-                    ];
-                }
+            } else {
+                $changes['new_record'] = ['summary' => 'Record was created via Edit form'];
             }
 
-            // Track allowances changes if present
-            if ($request->has('allowances')) {
-                // Simple change indicator for allowances to avoid deep comparison
-                $origAllowancesJson = json_encode($originalData['allowances'] ?? []);
-                $newAllowancesJson = json_encode($allowances);
-
-                if ($origAllowancesJson !== $newAllowancesJson) {
-                    $changes['allowances'] = [
-                        'changed' => true,
-                        'summary' => 'Allowances were modified'
-                    ];
-                }
-            }
-
-            // Track deductions changes if present
-            if ($request->has('deductions')) {
-                // Simple change indicator for deductions to avoid deep comparison
-                $origDeductionsJson = json_encode($originalData['deductions'] ?? []);
-                $newDeductionsJson = json_encode($deductions);
-
-                if ($origDeductionsJson !== $newDeductionsJson) {
-                    $changes['deductions'] = [
-                        'changed' => true,
-                        'summary' => 'Deductions were modified'
-                    ];
-                }
-            }
-
-            // Include net salary change for easy reference, but only if tracked fields changed
-            if (!empty($changes) &&
-                (isset($originalData['salary_breakdown']['net_salary']) || isset($updatedSalaryBreakdown['net_salary']))) {
-                $changes['net_salary'] = [
-                    'from' => $originalData['salary_breakdown']['net_salary'] ?? 0,
-                    'to' => $updatedSalaryBreakdown['net_salary']
-                ];
-            }
-
-            // In the update method, add this before creating the audit record:
             if (Auth::check()) {
                 $userId = Auth::id();
                 $userName = Auth::user()->name;
             } else if ($request->has('user_id')) {
-                // Get user info from request payload if Auth isn't available
                 $userId = $request->user_id;
-                // Look up the user name if possible
                 $user = \App\Models\User::find($userId);
                 $userName = $user ? $user->name : 'Unknown User';
             } else {
@@ -291,10 +315,9 @@ class SalaryController extends Controller
                 $userName = 'System (Not Authenticated)';
             }
 
-            // Create audit record if there were changes
             if (!empty($changes)) {
                 SalaryProcessAudit::create([
-                    'salary_process_id' => $id,
+                    'salary_process_id' => $salaryRecord->id,
                     'user_id' => $userId,
                     'user_name' => $userName,
                     'action' => 'update',
@@ -302,16 +325,20 @@ class SalaryController extends Controller
                 ]);
             }
 
+            DB::commit();
             return response()->json([
                 'message' => 'Salary record updated successfully',
                 'data' => $salaryRecord
             ], 200);
+
         } catch (\Exception $e) {
+            DB::rollBack();
             return response()->json([
                 'message' => 'Error updating salary record: ' . $e->getMessage()
             ], 500);
         }
     }
+
 
     /**
      * Remove the specified resource from storage.

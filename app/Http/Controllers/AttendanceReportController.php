@@ -287,9 +287,72 @@ class AttendanceReportController extends Controller
         return response()->json($results);
     }
 
-    /**
-     * Monthly attendance report with late policy calculation + leave details
-     */
+    //========================================
+   //doble mark finger print
+   //=========================================
+
+
+   // මැද ගමන් (Intermediate Movements) ලබා ගැනීම
+    public function getIntermediateMovements($employeeId, $date)
+    {
+        $punches = time_card::where('employee_id', $employeeId)
+            ->where('date', $date)
+            ->whereNull('deleted_at')
+            ->orderBy('time', 'asc')
+            ->get();
+
+        // IN එකයි OUT එකයි විතරක් නම් (Punches 2යි නම්) මැද ගමන් නෑ
+        if ($punches->count() <= 2) {
+            return response()->json(['data' => []]); 
+        }
+
+        // පළවෙනි එකයි අන්තිම එකයි අයින් කරලා මැද ටික විතරක් ගන්නවා
+        $middlePunches = $punches->slice(1, $punches->count() - 2)->values();
+        $movements = [];
+
+        for ($i = 0; $i < $middlePunches->count(); $i++) {
+            $current = $middlePunches[$i];
+            
+            // එළියට ගිය වෙලාවක් නම්
+            if (in_array(strtoupper($current->status), ['OUT', 'EARLY OUT'])) {
+                $next = $middlePunches[$i + 1] ?? null;
+                
+                // ඊළඟට ආපහු ඇතුළට ආපු වෙලාව
+                if ($next && in_array(strtoupper($next->status), ['IN', 'LATE COMING'])) {
+                    $durationMins = round((strtotime($next->time) - strtotime($current->time)) / 60);
+
+                    $movements[] = [
+                        'out_id' => $current->id,
+                        'in_id' => $next->id,
+                        'out_time' => $current->time,
+                        'in_time' => $next->time,
+                        'duration_mins' => $durationMins,
+                        'reason' => $current->reason,
+                        'status' => $current->break_status ?? 'Pending',
+                    ];
+                    $i++; // Pair එකක් හැදුන නිසා ඊළඟ එක Skip කරනවා
+                }
+            }
+        }
+
+        return response()->json(['data' => $movements]);
+    }
+
+    // අනුමැතිය (Approve / Reject) Save කිරීම
+    public function updateMovementStatus(Request $request)
+    {
+        $outId = $request->out_id;
+        
+        time_card::where('id', $outId)->update([
+            'break_status' => $request->status, // 'Approved' or 'Rejected'
+            'reason' => $request->reason
+        ]);
+
+        return response()->json(['message' => 'Status updated successfully!']);
+    }
+
+
+
     public function monthly(Request $request)
     {
         $month = $request->input('month');
