@@ -25,6 +25,24 @@ class EmployeeController extends Controller
     /**
      * Display a listing of the resource.
      */
+    public function getByEmploymentType(string $typeName)
+    {
+        $employees = employee::with([
+            'employmentType',
+            'organizationAssignment.company',
+            'organizationAssignment.department',
+            'organizationAssignment.designation',
+        ])
+        ->whereHas('employmentType', function ($q) use ($typeName) {
+            $q->where('name', $typeName);
+        })
+        ->where('is_active', true)
+        ->orderBy('full_name')
+        ->get();
+
+        return response()->json($employees);
+    }
+
     public function index()
     {
         $employees = employee::with([

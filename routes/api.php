@@ -84,6 +84,7 @@ Route::post('employes/post/update', [EmployeeController::class, 'update']);
 Route::get('/emp/table', [EmployeeController::class, 'getEmployeesForTable']);
 Route::get('/emp/search', [EmployeeController::class, 'search']);
 Route::get('/emp/search/empno', [EmployeeController::class, 'searchByAttendanceNo']);
+Route::get('/employees/by-employment-type/{typeName}', [EmployeeController::class, 'getByEmploymentType']);
 // ✅ Loan special routes FIRST, then resource
 Route::get('/loans/employee-by-number/{number}', [LoanController::class, 'getEmployeeByNumber']);
 Route::get('/loans/by-employee/{employeeNo}', [LoanController::class, 'getByEmployeeNo']);
