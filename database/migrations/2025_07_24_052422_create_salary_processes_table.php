@@ -28,7 +28,7 @@ return new class extends Migration {
             $table->boolean('enable_epf_etf')->default(false);
             $table->boolean('br1')->default(false);
             $table->boolean('br2')->default(false);
-            $table->string('br_status');
+            $table->string('br_status')->nullable()->default('none');
             $table->boolean('stamp')->nullable()->default(false);
             $table->decimal('total_loan_amount', 12, 2)->default(0);
             $table->integer('installment_count')->nullable();

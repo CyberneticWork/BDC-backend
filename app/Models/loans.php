@@ -20,7 +20,8 @@ class loans extends Model
         'with_interest',
         'installment_count',
         'status',
-        
+        'schedule',
+        'deduct_from',
     ];
 
 
