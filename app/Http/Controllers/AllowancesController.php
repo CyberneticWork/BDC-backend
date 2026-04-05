@@ -196,6 +196,76 @@ class AllowancesController extends Controller
     }
 
 
+    // =========================================================
+    // MONTHLY ALLOWANCES REPORT 
+    // =========================================================
+    public function getMonthlyEmployeeAllowances(Request $request)
+    {
+        $month = $request->query('month');
+        $year = $request->query('year');
+        $company_id = $request->query('company_id');
+        $department_id = $request->query('department_id');
+        $search = $request->query('search');
+
+        if (!$month || !$year) {
+            return response()->json(['message' => 'Month and Year are required'], 400);
+        }
+
+        // employee_allowances table 
+        $query = \App\Models\employee_allowances::with([
+            'employee.organizationAssignment.company',
+            'employee.organizationAssignment.department',
+            'allowance'
+        ])
+        ->where('month', $month)
+        ->where('year', $year)
+        ->where('is_active', 1);
+
+        if ($company_id || $department_id) {
+            $query->whereHas('employee.organizationAssignment', function($q) use($company_id, $department_id) {
+                if ($company_id) $q->where('company_id', $company_id);
+                if ($department_id) $q->where('department_id', $department_id);
+            });
+        }
+
+        if ($search) {
+            $query->where(function($mainQ) use($search) {
+                $mainQ->whereHas('employee', function($q) use($search) {
+                    $q->where('full_name', 'like', "%{$search}%")
+                      ->orWhere('attendance_employee_no', 'like', "%{$search}%");
+                })->orWhereHas('allowance', function($q) use($search) {
+                    $q->where('allowance_name', 'like', "%{$search}%");
+                });
+            });
+        }
+
+        $records = $query->orderBy('id', 'desc')->get();
+
+        $data = $records->map(function($record) {
+            $emp = $record->employee;
+            $org = $emp ? $emp->organizationAssignment : null;
+            $alw = $record->allowance;
+
+            return [
+                'id' => $record->id,
+                'emp_no' => $emp ? $emp->attendance_employee_no : '-',
+                'emp_name' => $emp ? $emp->full_name : '-',
+                'company' => ($org && $org->company) ? $org->company->name : '-',
+                'department' => ($org && $org->department) ? $org->department->name : '-',
+                'allowance_code' => $alw ? $alw->allowance_code : '-',
+                'allowance_name' => $alw ? $alw->allowance_name : '-',
+                'amount' => $record->custom_amount ?? ($alw ? $alw->amount : 0),
+                'month' => $record->month,
+                'year' => $record->year
+            ];
+        });
+
+        return response()->json(['data' => $data], 200);
+    }
+
+
+
+
     /*
     public function getAllowancesByCompanyOrDepartment(Request $request)
     {

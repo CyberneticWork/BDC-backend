@@ -50,6 +50,10 @@ use App\Http\Controllers\AbsentReportController;
 
 use App\Http\Controllers\SingleEntryReportController;
 
+use App\Http\Controllers\DinnerAllowanceController;
+
+use App\Http\Controllers\ReportController;
+
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -110,15 +114,28 @@ Route::apiResource('leave-calendars', LeaveCalenderController::class);
 Route::apiResource('companies', CompanyController::class);
 Route::apiResource('departments', DepartmentsController::class)->only(['store', 'update', 'destroy']);
 Route::apiResource('subdepartments', SubDepartmentsController::class);
+
+
+Route::post('/rosters/bulk', [RosterController::class, 'storeBulk']);
 Route::apiResource('rosters', RosterController::class);
 Route::apiResource('overtime', OvertimeController::class);
 Route::post('/overtime/approve/{id}', [OvertimeController::class, 'approve']);
+Route::put('/overtime/{id}', [OvertimeController::class, 'update']);
 //Route::apiResource('leave-masters', LeaveMasterController::class);
+
+
+
+Route::post('/salary-process/store', [SalaryProcessController::class, 'storeSalaryData']);
 
 
 //new
 Route::get('/leave-eligibility', [LeaveMasterController::class, 'getLeaveEligibility']);
 
+// new leaves
+//Route::get('/leave-master/supervisor-pending', [LeaveMasterController::class, 'getSupervisorPendingLeaves']);
+Route::get('/leave-master/supervisor-leaves', [LeaveMasterController::class, 'getSupervisorLeaves']);
+// new masterleave
+Route::get('/leave-master/pending', [LeaveMasterController::class, 'getPendingLeaveRecords']);
 
 Route::put('/leave-masters/{id}/status', [LeaveMasterController::class, 'updateStatus']);
 Route::get('/leave-masters/eligibility', [LeaveMasterController::class, 'getLeaveEligibility']);
@@ -139,6 +156,12 @@ Route::post('/salary/process/importExcelData', [SalaryProcessController::class, 
 Route::get('/salary/update/status', [SalaryProcessController::class, 'updateSlaryStatus']);
 // Route::apiResource('salary', SalaryController::class);
 
+// Payroll Reports Download Routes
+Route::get('/reports/bank-transfer', [ReportController::class, 'downloadBankTransfer']);
+Route::get('/reports/epf-etf', [ReportController::class, 'downloadEpfEtf']);
+
+
+Route::get('/reports/monthly-data', [ReportController::class, 'getMonthlyReportData']);
 
 // ✅ Special route FIRST (Bonuses)
 Route::get('/bonuses/by-company-or-department', [BonusesController::class, 'getBonusesByCompanyOrDepartment']);
@@ -214,6 +237,22 @@ Route::post('/attendance/import-excel', [TimeCardController::class, 'importExcel
 Route::get('/companies', [CompanyController::class, 'index']);
 Route::get('/attendance/absentees', [TimeCardController::class, 'fetchAbsentees']);
 Route::get('/attendance-template', [TimeCardController::class, 'downloadTemplate']);
+
+
+
+//  Mid-Shift Breaks Routes ---
+// =====================================================================
+Route::get('/attendance/all-movements', [TimeCardController::class, 'getAllIntermediateMovements']);
+Route::post('/attendance/movements/status', [TimeCardController::class, 'updateMovementStatus']);
+// =====================================================================
+
+
+
+// Dinner Allowance Routes
+Route::get('/dinner-allowance/daily', [DinnerAllowanceController::class, 'getEligibleEmployees']);
+Route::post('/dinner-allowance/process', [DinnerAllowanceController::class, 'processAllowance']);
+Route::get('/dinner-allowance/monthly', [DinnerAllowanceController::class, 'getMonthlyReport']);
+
 
 //get employees by month and company
 Route::get('/salaryCal/employees', [SalaryProcessController::class, 'getEmployeesByMonthAndCompany']);
@@ -391,6 +430,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
 // Supplier routes
 Route::apiResource('suppliers', SupplierController::class);
 
+//record
+Route::post('/reports/save-coinage', [App\Http\Controllers\ReportController::class, 'saveCoinageData']);
 
 // Employee Performance Evaluation endpoints (these can remain public if needed)
 Route::post('/pms/employee-performance/calculate', [PmsController::class, 'calculateEmployeePerformance']);
