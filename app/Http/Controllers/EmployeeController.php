@@ -256,16 +256,17 @@ class EmployeeController extends Controller
                 'fullName' => 'required|string|max:100',
                 'displayName' => 'required|string|max:100',
                 'maritalStatus' => 'required|in:Single,Married,Divorced,Widowed',
-                'relationshipType' => 'required|string|max:20',
-                'spouseTitle' => 'required|string|max:20',
-                'spouseName' => 'required|string|max:100',
-                'spouseAge' => 'required|numeric|min:18|max:100',
-                'spouseDob' => 'required|date',
+                'relationshipType' => 'nullable|string|max:20',
+                'spouseTitle' => 'nullable|string|max:20',
+                'spouseName' => 'nullable|string|max:100',
+                'spouseAge' => 'nullable|numeric|min:18|max:100',
+                'spouseDob' => 'nullable|date',
                 'spouseNic' => [
-                    'required',
+                    'nullable',
                     'string',
                     'max:13',
                     function ($attribute, $value, $fail) {
+                        if (empty($value)) return; //null type
                         $nic = strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $value));
                         if (!(preg_match('/^[0-9]{9}[VX]$/', $nic) || preg_match('/^[0-9]{12}$/', $nic))) {
                             $fail('The ' . $attribute . ' is not a valid Sri Lankan NIC number.');
@@ -350,7 +351,8 @@ class EmployeeController extends Controller
                 'resignationLetter' => 'nullable',
                 'resignationApproved' => 'required|boolean',
                 'currentStatus' => 'required|boolean',
-                'dayOff' => 'nullable|string'
+                'dayOff' => 'nullable|string',
+                'employeeCategory' => 'required|string|in:Executive,Non-Executive'
             ]);
             
             /*
@@ -375,7 +377,7 @@ $spouseNic = $spouseNicRaw
 if ($spouseNic && $employeeNic === $spouseNic) {
     $validator->errors()->add("personal.spouseNic", "Spouse NIC cannot be the same as employee NIC.");
 }
-           
+           /*
             // Validate Spouse DOB vs Age
             if (isset($personal['spouseDob']) && isset($personal['spouseAge'])) {
                 $spouseDob = Carbon::parse($personal['spouseDob']);
@@ -385,6 +387,25 @@ if ($spouseNic && $employeeNic === $spouseNic) {
 
                 if ($personal['spouseAge'] != $calculatedSpouseAge) {
                     $validator->errors()->add("personal.spouseAge", "Entered Spouse Age does not match Date of Birth.");
+                }
+            }
+                */
+
+
+
+
+            // Validate Spouse DOB vs Age (හිස් නැත්නම් විතරක් චෙක් කරන්න)
+            if (!empty($personal['spouseDob']) && !empty($personal['spouseAge'])) {
+                try {
+                    $spouseDob = Carbon::parse($personal['spouseDob']);
+                    $calculatedSpouseAge = (int) floor($spouseDob->diffInYears(Carbon::now()));
+
+                    if ((int)$personal['spouseAge'] !== $calculatedSpouseAge) {
+                        $validator->errors()->add("personal.spouseAge", "Entered Spouse Age does not match Date of Birth.");
+                    }
+                } catch (\Exception $e) {
+                    // Date format 
+                    $validator->errors()->add("personal.spouseDob", "Invalid Date of Birth format.");
                 }
             }
 
@@ -615,6 +636,7 @@ if ($spouseNic && $employeeNic === $spouseNic) {
                 'br1' => $compensation['budgetaryReliefAllowance2015'],
                 'br2' => $compensation['budgetaryReliefAllowance2016'],
                 'stamp' => $compensation['stamp'],
+                'employee_category' => $organization['employeeCategory'],
             ]);
 
             // Add default roster
@@ -855,7 +877,8 @@ if ($spouseNic && $employeeNic === $spouseNic) {
                 'resignationLetter' => 'nullable',
                 'resignationApproved' => 'required|boolean',
                 'currentStatus' => 'required|boolean',
-                'dayOff' => 'nullable|string'
+                'dayOff' => 'nullable|string',
+                'employeeCategory' => 'required|string|in:Executive,Non-Executive'
             ]);
             
             /*
@@ -879,7 +902,8 @@ $spouseNic = $spouseNicRaw
 if ($spouseNic && $employeeNic === $spouseNic) {
     $validator->errors()->add("personal.spouseNic", "Spouse NIC cannot be the same as employee NIC.");
 }
-
+            
+/*
             // Validate Spouse DOB vs Age
             if (isset($personal['spouseDob']) && isset($personal['spouseAge'])) {
                 $spouseDob = Carbon::parse($personal['spouseDob']);
@@ -890,6 +914,24 @@ if ($spouseNic && $employeeNic === $spouseNic) {
                     $validator->errors()->add("personal.spouseAge", "Entered Spouse Age does not match Date of Birth.");
                 }
             }
+       */
+
+         // Validate Spouse DOB vs Age 
+            if (!empty($personal['spouseDob']) && !empty($personal['spouseAge'])) {
+                try {
+                    $spouseDob = Carbon::parse($personal['spouseDob']);
+                    $calculatedSpouseAge = (int) floor($spouseDob->diffInYears(Carbon::now()));
+
+                    if ((int)$personal['spouseAge'] !== $calculatedSpouseAge) {
+                        $validator->errors()->add("personal.spouseAge", "Entered Spouse Age does not match Date of Birth.");
+                    }
+                } catch (\Exception $e) {
+                    // Date  format 
+                    $validator->errors()->add("personal.spouseDob", "Invalid Date of Birth format.");
+                }
+            }
+
+
 
             /// Validate Children DOB vs Age for each child
             if (isset($personal['children']) && is_array($personal['children'])) {
@@ -1103,6 +1145,7 @@ if ($spouseNic && $employeeNic === $spouseNic) {
                     'br1' => $compensation['budgetaryReliefAllowance2015'],
                     'br2' => $compensation['budgetaryReliefAllowance2016'],
                     'stamp' => $compensation['stamp'],
+                    'employee_category' => $organization['employeeCategory'],
                 ]);
             }
 

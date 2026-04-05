@@ -198,7 +198,7 @@ class SalaryController extends Controller
                 ? json_decode($request->salary_breakdown, true) 
                 : ($request->salary_breakdown ?? []);
 
-            // Basic ද Bonus ද කියන එක හොයාගන්නවා
+            // Basic or Bonus 
             $loanDeductFrom = $frontendBreakdown['loan_deduct_from'] ?? 'bonus';
 
             $grossSalary = $epfEtfBase + $morningOtFees + $nightOtFees;

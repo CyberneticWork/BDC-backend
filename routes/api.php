@@ -127,6 +127,11 @@ Route::post('/salary-process/store', [SalaryProcessController::class, 'storeSala
 //new
 Route::get('/leave-eligibility', [LeaveMasterController::class, 'getLeaveEligibility']);
 
+// new leaves
+//Route::get('/leave-master/supervisor-pending', [LeaveMasterController::class, 'getSupervisorPendingLeaves']);
+Route::get('/leave-master/supervisor-leaves', [LeaveMasterController::class, 'getSupervisorLeaves']);
+// new masterleave
+Route::get('/leave-master/pending', [LeaveMasterController::class, 'getPendingLeaveRecords']);
 
 Route::put('/leave-masters/{id}/status', [LeaveMasterController::class, 'updateStatus']);
 Route::get('/leave-masters/eligibility', [LeaveMasterController::class, 'getLeaveEligibility']);
@@ -423,6 +428,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
 // Supplier routes
 Route::apiResource('suppliers', SupplierController::class);
 
+//record
+Route::post('/reports/save-coinage', [App\Http\Controllers\ReportController::class, 'saveCoinageData']);
 
 // Employee Performance Evaluation endpoints (these can remain public if needed)
 Route::post('/pms/employee-performance/calculate', [PmsController::class, 'calculateEmployeePerformance']);

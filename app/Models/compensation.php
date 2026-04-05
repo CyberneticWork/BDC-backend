@@ -11,6 +11,7 @@ class compensation extends Model
 
     protected $fillable = [
         'employee_id',
+        'employee_category',
         'basic_salary',
         'increment_value',
         'increment_effected_date',

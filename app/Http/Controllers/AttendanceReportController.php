@@ -117,8 +117,9 @@ class AttendanceReportController extends Controller
         $company_id = $request->input('company_id');
         $department_id = $request->input('department_id');
         
-        // වඩාත් නිවැරදිව boolean අගය ලබා ගැනීම
+        // 
         $holiday_worked = $request->boolean('holiday_worked');
+        $employee_category = $request->input('employee_category');
 
         if (!$date) {
             return response()->json(['message' => 'Date is required'], 400);
@@ -292,7 +293,7 @@ class AttendanceReportController extends Controller
    //=========================================
 
 
-   // මැද ගමන් (Intermediate Movements) ලබා ගැනීම
+   // (Intermediate Movements) 
     public function getIntermediateMovements($employeeId, $date)
     {
         $punches = time_card::where('employee_id', $employeeId)
@@ -338,7 +339,7 @@ class AttendanceReportController extends Controller
         return response()->json(['data' => $movements]);
     }
 
-    // අනුමැතිය (Approve / Reject) Save කිරීම
+    //  (Approve / Reject) Save 
     public function updateMovementStatus(Request $request)
     {
         $outId = $request->out_id;
@@ -360,6 +361,7 @@ class AttendanceReportController extends Controller
         $search = $request->input('search');
         $company_id = $request->input('company_id');
         $department_id = $request->input('department_id');
+        $employee_category = $request->input('employee_category');
         
         // වඩාත් නිවැරදිව boolean අගය ලබා ගැනීම
         $holiday_worked = $request->boolean('holiday_worked');
@@ -383,6 +385,12 @@ class AttendanceReportController extends Controller
                 if ($department_id) {
                     $q->where('department_id', $department_id);
                 }
+            });
+        }
+        
+        if ($employee_category) {
+            $employeeQuery->whereHas('compensation', function ($q) use ($employee_category) {
+                $q->where('employee_category', $employee_category);
             });
         }
 
@@ -642,6 +650,7 @@ class AttendanceReportController extends Controller
         ]);
     }
 }
+
 
 /*
 namespace App\Http\Controllers;
