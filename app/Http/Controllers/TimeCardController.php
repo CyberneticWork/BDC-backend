@@ -899,6 +899,28 @@ class TimeCardController extends Controller
 
         return response()->json(['on_leave' => $onLeaveCount, 'present' => $presentCount]);
     }
+
+    public function getWeeklyAttendanceStats()
+    {
+        $monday = now()->startOfWeek(Carbon::MONDAY);
+        $days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+        $present = [];
+        $absent = [];
+
+        for ($i = 0; $i < 7; $i++) {
+            $date = $monday->copy()->addDays($i)->format('Y-m-d');
+            $present[] = time_card::where('date', $date)
+                ->whereIn('status', ['IN', 'Late Coming'])
+                ->distinct('employee_id')
+                ->count('employee_id');
+            $absent[] = time_card::where('date', $date)
+                ->where('status', 'Absent')
+                ->distinct('employee_id')
+                ->count('employee_id');
+        }
+
+        return response()->json(['days' => $days, 'present' => $present, 'absent' => $absent]);
+    }
 }
 
 
