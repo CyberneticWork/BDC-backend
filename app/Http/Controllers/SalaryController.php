@@ -15,10 +15,49 @@ class SalaryController extends Controller
     /**
      * Display a listing of the resource.
      */
-    public function index()
+    public function index(Request $request)
     {
-        $salary = salary_process::all();
-        return response()->json($salary, 200);
+        $query = salary_process::query();
+
+        if ($request->has('employee_no') && $request->employee_no) {
+            $query->where('employee_no', $request->employee_no);
+        }
+
+        if ($request->has('month') && $request->month) {
+            $query->where('month', $request->month);
+        }
+
+        if ($request->has('year') && $request->year) {
+            $query->where('year', $request->year);
+        }
+
+        if ($request->has('company_name') && $request->company_name) {
+            $query->where('company_name', 'like', '%' . $request->company_name . '%');
+        }
+
+        if ($request->has('department_name') && $request->department_name) {
+            $query->where('department_name', 'like', '%' . $request->department_name . '%');
+        }
+
+        if ($request->has('search') && $request->search) {
+            $query->where(function($q) use ($request) {
+                $q->where('employee_no', 'like', '%' . $request->search . '%')
+                  ->orWhere('full_name', 'like', '%' . $request->search . '%');
+            });
+        }
+
+        $records = $query->orderBy('year', 'desc')->orderBy('month', 'desc')->get();
+
+        // Parse JSON fields so frontend receives objects not strings
+        $records->transform(function ($r) {
+            $r->salary_breakdown = is_string($r->salary_breakdown) ? json_decode($r->salary_breakdown, true) : $r->salary_breakdown;
+            $r->allowances  = is_string($r->allowances)  ? json_decode($r->allowances, true)  : $r->allowances;
+            $r->deductions  = is_string($r->deductions)  ? json_decode($r->deductions, true)  : $r->deductions;
+            $r->bonuses     = is_string($r->bonuses)     ? json_decode($r->bonuses, true)     : $r->bonuses;
+            return $r;
+        });
+
+        return response()->json($records, 200);
     }
 
     /**
@@ -186,11 +225,12 @@ class SalaryController extends Controller
                 'epf_employer_contribution' => $epfEmployerContribution,
                 'etf_employer_contribution' => $etfEmployerContribution,
                 'total_fixed_deductions' => $totalFixedDeductions,
-                'loan_installment' => (float)($request->installment_amount ?? 0),
+                'loan_installment' => $installmentAmount,
                 'gross_salary' => $grossSalary,
                 'total_deductions' => $totalDeductions,
                 'stamp' => $stampValue,
-                'net_salary' => $netSalary
+                'net_salary' => $netSalary,
+                'loan_balance' => $newLoanBalance
             ];
            */
             

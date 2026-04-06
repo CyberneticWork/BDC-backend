@@ -88,6 +88,10 @@ Route::post('employes/post/update', [EmployeeController::class, 'update']);
 Route::get('/emp/table', [EmployeeController::class, 'getEmployeesForTable']);
 Route::get('/emp/search', [EmployeeController::class, 'search']);
 Route::get('/emp/search/empno', [EmployeeController::class, 'searchByAttendanceNo']);
+Route::get('/employees/by-employment-type/{typeName}', [EmployeeController::class, 'getByEmploymentType']);
+// ✅ Loan special routes FIRST, then resource
+Route::get('/loans/employee-by-number/{number}', [LoanController::class, 'getEmployeeByNumber']);
+Route::get('/loans/by-employee/{employeeNo}', [LoanController::class, 'getByEmployeeNo']);
 Route::apiResource('loans', LoanController::class);
 // ✅ Special route FIRST
 Route::get('/allowances/by-company-or-department', [AllowancesController::class, 'getAllowancesByCompanyOrDepartment']);
@@ -311,9 +315,7 @@ Route::put('/reports/time-cards/attendance/{employeeId}/{date}/approval-status',
 // ✅ special route FIRST
 //Route::get('/loans/employee-by-number/{number}', [LoanController::class, 'getEmployeeByNumber']);
 
-// ✅ resource routes
-Route::apiResource('loans', LoanController::class);
-Route::get('/loans/employee-by-number/{number}', [LoanController::class, 'getEmployeeByNumber']);
+// (loan routes already defined above)
 
 Route::post('/test', [ResignationController::class, 'testFunction']);
 
