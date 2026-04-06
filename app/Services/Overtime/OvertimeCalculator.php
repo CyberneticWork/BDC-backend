@@ -19,124 +19,115 @@ class OvertimeCalculator
         $workStart = $clockIn->copy();
         $workEnd = $clockOut->copy();
 
-        // දවස් මාරු වන Shifts (Night Shifts) සඳහා හැසිරවීම
         if ($workEnd->lessThanOrEqualTo($workStart)) {
             $workEnd->addDay();
         }
 
-        $compensation = $employee->compensation;
+        $comp = $employee->compensation;
 
-        // 🔥 පන්ච් එකට අදාළ ෂිෆ්ට් එකේ පටන් ගන්නා සහ ඉවර වෙන වෙලාවන් සකස් කිරීම
-        $shiftStart = $this->combineDateTime($workStart, $shift->start_time);
-        $shiftEnd = $this->combineShiftEnd($shiftStart, $shift->end_time);
+        // Shift වෙලාවන්
+        $shiftStart = Carbon::parse($workStart->format('Y-m-d') . ' ' . $shift->start_time);
+        $shiftEnd = Carbon::parse($workStart->format('Y-m-d') . ' ' . $shift->end_time);
+        if ($shiftEnd->lte($shiftStart)) $shiftEnd->addDay();
 
-        // Rounding logic සඳහා සම්පූර්ණ විනාඩි ගණන ගැනීම
-        $exactTotalMinutes = $workStart->diffInMinutes($workEnd);
-        $roundedTotalMinutes = round($exactTotalMinutes / 30) * 30; 
-        $totalWorkedHours = round($roundedTotalMinutes / 60, 2);
+        // OT සීමාවන් (Windows)
+        $morningOtLimit = $shift->morning_ot_start ? Carbon::parse($workStart->format('Y-m-d') . ' ' . $shift->morning_ot_start) : null;
+        $eveningOtLimit = $shift->night_ot_end ? Carbon::parse($shiftEnd->format('Y-m-d') . ' ' . $shift->night_ot_end) : null;
+        if ($eveningOtLimit && $eveningOtLimit->lte($shiftEnd)) $eveningOtLimit->addDay();
 
-        // =====================================================================
-        // 🔥 HOLIDAY LOGIC (SHIFT VS OUTSIDE SPLITTING)
-        // =====================================================================
+        // ---------------------------------------------------------
+        // 1. HOLIDAY LOGIC
+        // ---------------------------------------------------------
         if ($isHoliday) {
-            $basicSalary = (float) ($compensation?->basic_salary ?? 0);
-            $baseHourlyRate = round($basicSalary / 240, 6);
-
-            $regularOtHourlyRate = round($baseHourlyRate * 1.5, 6); // Shift ඇතුළත
-            $holidayOtHourlyRate = round($baseHourlyRate * 2.0, 6); // Shift පිටත
-
-            $shiftWorkedHours = 0.0;
-
-            // Roster එකේ Shift එක සහ පන්ච් එක සසඳා Shift ඇතුළත කාලය සෙවීම
-            if ($shiftStart && $shiftEnd) {
-                $overlapStart = $workStart->max($shiftStart);
-                $overlapEnd = $workEnd->min($shiftEnd);
-
-                if ($overlapStart->lessThan($overlapEnd)) {
-                    $exactShiftMinutes = $overlapStart->diffInMinutes($overlapEnd);
-                    $shiftWorkedHours = round((round($exactShiftMinutes / 30) * 30) / 60, 2);
-                }
-            }
-
-            // Shift එකෙන් පිට ඉතිරි කාලය (Holiday Out)
-            $outsideShiftHours = max(0, $totalWorkedHours - $shiftWorkedHours);
-
-            $shiftAmount = round($shiftWorkedHours * $regularOtHourlyRate, 2);
-            $outsideShiftAmount = round($outsideShiftHours * $holidayOtHourlyRate, 2);
-            $totalHolidayAmount = $shiftAmount + $outsideShiftAmount;
-
-            return [
-                'hours' => [
-                    'morning_regular' => 0.0,
-                    'morning_special' => 0.0,
-                    'evening_regular' => 0.0,
-                    'evening_special' => 0.0,
-                    'holiday_shift_hours' => $shiftWorkedHours,
-                    'holiday_outside_hours' => $outsideShiftHours,
-                    'holiday' => $totalWorkedHours,
-                    'total' => $totalWorkedHours,
-                ],
-                'amounts' => [
-                    'morning_regular' => 0.0,
-                    'evening_regular' => 0.0,
-                    'holiday_shift_amount' => $shiftAmount,
-                    'holiday_outside_amount' => $outsideShiftAmount,
-                    'holiday' => $totalHolidayAmount,
-                    'total' => $totalHolidayAmount,
-                ],
-                'meta' => [ 'is_holiday' => true, 'base_hourly_rate' => $baseHourlyRate ]
-            ];
+            return $this->calculateHoliday($workStart, $workEnd, $shiftStart, $shiftEnd, $morningOtLimit, $eveningOtLimit, $comp);
         }
 
-        // =====================================================================
-        // NORMAL DAY LOGIC (දිනය නිවාඩුවක් නොවේ නම් පමණක්)
-        // =====================================================================
-        $morningWindow = [$shiftStart->copy()->subHours(4), $shiftStart];
-        $eveningWindow = [$shiftEnd, $shiftEnd->copy()->addHours(6)];
+        // ---------------------------------------------------------
+        // 2. NORMAL DAY LOG)IC (මෙහිදී කෙලින්ම Compensation Rates ගනු ලැබේ)
+        // ---------------------------------------------------------
+        $morningHrs = 0.0;
+        $eveningHrs = 0.0;
 
-        $mHrs = $this->overlapHours($workStart, $workEnd, $morningWindow);
-        $eHrs = $this->overlapHours($workStart, $workEnd, $eveningWindow);
+        // Morning OT Calculation (With Limit)
+        if ($morningOtLimit && $workStart->lt($shiftStart)) {
+            $calcStart = $workStart->max($morningOtLimit);
+            if ($calcStart->lt($shiftStart)) {
+                $morningHrs = round((floor($calcStart->diffInMinutes($shiftStart) / 30) * 30) / 60, 2);
+            }
+        }
 
-        $mRate = (float) ($compensation?->ot_morning_rate ?? 0);
-        $eRate = (float) ($compensation?->ot_night_rate ?? 0);
+        // Evening OT Calculation (With Limit)
+        if ($eveningOtLimit && $workEnd->gt($shiftEnd)) {
+            $calcEnd = $workEnd->min($eveningOtLimit);
+            if ($calcEnd->gt($shiftEnd)) {
+                $eveningHrs = round((floor($shiftEnd->diffInMinutes($calcEnd) / 30) * 30) / 60, 2);
+            }
+        }
+
+        // Permissions Check
+        if (!($comp?->ot_morning)) $morningHrs = 0.0;
+        if (!($comp?->ot_evening)) $eveningHrs = 0.0;
+
+        // 🔥 මෙතැනදී කෙලින්ම රු. 200 සහ රු. 300 අගයන් ලබා ගනී
+        $mRate = (float)($comp->ot_morning_rate ?? 0); // උදා: 200
+        $eRate = (float)($comp->ot_night_rate ?? 0);   // උදා: 300
+
+        $mAmt = round($morningHrs * $mRate, 2);
+        $eAmt = round($eveningHrs * $eRate, 2);
 
         return [
             'hours' => [
-                'morning_regular' => $mHrs,
-                'morning_special' => 0.0,
-                'evening_regular' => $eHrs,
-                'evening_special' => 0.0,
-                'holiday_shift_hours' => 0.0,
-                'holiday_outside_hours' => 0.0,
-                'total' => round($mHrs + $eHrs, 2),
+                'morning_regular' => $morningHrs, 'morning_special' => 0.0,
+                'evening_regular' => $eveningHrs, 'evening_special' => 0.0,
+                'total' => round($morningHrs + $eveningHrs, 2),
             ],
             'amounts' => [
-                'morning_regular' => round($mHrs * $mRate, 2),
-                'evening_regular' => round($eHrs * $eRate, 2),
-                'total' => round(($mHrs * $mRate) + ($eHrs * $eRate), 2),
-            ],
-            'meta' => [ 'is_holiday' => false ]
+                'morning_regular' => $mAmt,
+                'evening_regular' => $eAmt,
+                'total' => round($mAmt + $eAmt, 2),
+            ]
         ];
     }
 
-    private function combineDateTime(Carbon $ref, ?string $time): ?Carbon { 
-        return $time ? Carbon::parse($ref->format('Y-m-d') . ' ' . $time) : null; 
-    }
-    
-    private function combineShiftEnd(?Carbon $start, ?string $time): ?Carbon {
-        if (!$start || !$time) return null;
-        $c = Carbon::parse($start->format('Y-m-d') . ' ' . $time);
-        if ($c->lte($start)) $c->addDay();
-        return $c;
+    private function calculateHoliday($ws, $we, $ss, $se, $mLimit, $eLimit, $comp) {
+        $finalStart = $mLimit ? $ws->max($mLimit) : $ws;
+        $finalEnd = $eLimit ? $we->min($eLimit) : $we;
+        if ($finalEnd->lte($finalStart)) return $this->zeroBreakdown();
+
+        $totalHrs = round((floor($finalStart->diffInMinutes($finalEnd) / 30) * 30) / 60, 2);
+
+        // Holiday සඳහා සාමාන්‍යයෙන් Basic එකෙන් ගණනය වේ (නැතිනම් Compensation Rate එකක් දිය හැක)
+        $baseRate = round(($comp?->basic_salary ?? 0) / 240, 6);
+
+        $shiftHrs = 0.0;
+        $overlapS = $finalStart->max($ss);
+        $overlapE = $finalEnd->min($se);
+        if ($overlapS->lt($overlapE)) {
+            $shiftHrs = round((floor($overlapS->diffInMinutes($overlapE) / 30) * 30) / 60, 2);
+        }
+
+        $outsideHrs = max(0, $totalHrs - $shiftHrs);
+
+        return [
+            'hours' => [
+                'morning_regular' => 0, 'evening_regular' => 0,
+                'holiday_shift_hours' => $shiftHrs, 'holiday_outside_hours' => $outsideHrs,
+                'total' => $totalHrs,
+            ],
+            'amounts' => [
+                'holiday_shift_amount' => round($shiftHrs * ($baseRate * 1.5), 2),
+                'holiday_outside_amount' => round($outsideHrs * ($baseRate * 2.0), 2),
+                'total' => round(($shiftHrs * $baseRate * 1.5) + ($outsideHrs * $baseRate * 2.0), 2),
+            ]
+        ];
     }
 
-    private function overlapHours(Carbon $ws, Carbon $we, array $win): float {
-        $st = $ws->max($win[0]); 
-        $en = $we->min($win[1]);
-        if ($en->lte($st)) return 0.0;
-        return round((round($st->diffInMinutes($en) / 30) * 30) / 60, 2);
+    private function zeroBreakdown() {
+        return ['hours'=>['total'=>0, 'morning_regular'=>0, 'evening_regular'=>0], 'amounts'=>['total'=>0]];
     }
 }
+
+
 /*
 namespace App\Services\Overtime;
 
