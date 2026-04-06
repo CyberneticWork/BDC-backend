@@ -32,6 +32,7 @@ class EmployeeController extends Controller
             'organizationAssignment.company',
             'organizationAssignment.department',
             'organizationAssignment.designation',
+            'compensation',
         ])
         ->whereHas('employmentType', function ($q) use ($typeName) {
             $q->where('name', $typeName);
