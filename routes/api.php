@@ -80,6 +80,7 @@ Route::middleware('auth:sanctum')->group(function () {
 Route::put('/leave-masters/{id}/status', [LeaveMasterController::class, 'updateStatus']);
 // Route::get('/test', [AuthController::class, 'test']);
 Route::get('/dashboard/stats/today', [TimeCardController::class, 'getTodayStats']);
+Route::get('/dashboard/stats/weekly', [TimeCardController::class, 'getWeeklyAttendanceStats']);
 Route::apiResource('users', UserController::class);
 Route::apiResource('shifts', ShiftController::class);
 Route::apiResource('employees', EmployeeController::class);
