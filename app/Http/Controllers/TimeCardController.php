@@ -900,9 +900,62 @@ class TimeCardController extends Controller
         return response()->json(['on_leave' => $onLeaveCount, 'present' => $presentCount]);
     }
 
+    public function searchByEmployee(Request $request)
+    {
+        $search = $request->query('q');
+        if (!$search) {
+            return response()->json(['message' => 'Search query is required'], 422);
+        }
+
+        $employee = employee::where('nic', $search)
+            ->orWhere('attendance_employee_no', $search)
+            ->first();
+
+        if (!$employee) {
+            return response()->json(['message' => 'Employee not found'], 404);
+        }
+
+        $cards = time_card::where('employee_id', $employee->id)
+            ->whereNull('deleted_at')
+            ->orderBy('date', 'desc')
+            ->orderBy('time', 'desc')
+            ->get()
+            ->map(function ($card) {
+                return [
+                    'id'            => $card->id,
+                    'empNo'         => $card->employee->attendance_employee_no ?? null,
+                    'name'          => $card->employee->full_name ?? null,
+                    'time'          => $card->time,
+                    'date'          => $card->date,
+                    'actual_date'   => $card->actual_date,
+                    'entry'         => $card->entry,
+                    'inOut'         => $card->entry == 1 ? 'IN' : ($card->entry == 2 ? 'OUT' : ($card->entry == 0 ? 'Early OUT' : null)),
+                    'working_hours' => $card->working_hours,
+                    'status'        => $card->status,
+                ];
+            })->toArray();
+
+        $absentCards = \App\Models\absence::where('employee_id', $employee->id)
+            ->get()
+            ->map(function ($abs) use ($employee) {
+                return [
+                    'id'            => 'abs_' . $abs->id,
+                    'empNo'         => $employee->attendance_employee_no,
+                    'name'          => $employee->full_name,
+                    'time'          => null,
+                    'date'          => $abs->date,
+                    'actual_date'   => null,
+                    'entry'         => null,
+                    'inOut'         => null,
+                    'working_hours' => null,
+                    'status'        => 'Absent',
+                ];
+            })->toArray();
+
+        return response()->json(array_merge($cards, $absentCards));
+    }
     public function getWeeklyAttendanceStats()
     {
-        $monday = now()->startOfWeek(Carbon::MONDAY);
         $days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
         $present = [];
         $absent = [];
