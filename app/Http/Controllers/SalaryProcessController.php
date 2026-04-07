@@ -974,7 +974,7 @@ public function getEmployeesByMonthAndCompany(Request $request)
         ]);
 
         try {
-            $month = $request->data[0]['month'];
+            $month = $request->month ?? ($request->data[0]['month'] ?? date('m'));
             $year = $request->year ?? date('Y');
             $duplicateEntries = [];
 
