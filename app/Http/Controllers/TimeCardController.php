@@ -954,8 +954,8 @@ class TimeCardController extends Controller
 
         return response()->json(array_merge($cards, $absentCards));
     }
+    public function getWeeklyAttendanceStats()
     {
-        $monday = now()->startOfWeek(Carbon::MONDAY);
         $days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
         $present = [];
         $absent = [];
