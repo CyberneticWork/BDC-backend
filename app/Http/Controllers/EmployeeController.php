@@ -34,12 +34,12 @@ class EmployeeController extends Controller
             'organizationAssignment.designation',
             'compensation',
         ])
-        ->whereHas('employmentType', function ($q) use ($typeName) {
-            $q->where('name', $typeName);
-        })
-        ->where('is_active', true)
-        ->orderBy('full_name')
-        ->get();
+            ->whereHas('employmentType', function ($q) use ($typeName) {
+                $q->where('name', $typeName);
+            })
+            ->where('is_active', true)
+            ->orderBy('full_name')
+            ->get();
 
         return response()->json($employees);
     }
@@ -132,26 +132,26 @@ class EmployeeController extends Controller
                     ->orWhere('epf', 'like', "%{$search}%")
                     ->orWhere('attendance_employee_no', 'like', "%{$search}%")
                     ->orWhere('nic', 'like', "%{$search}%")
-                    
+
                     // (PERMANENT, Contract )
                     ->orWhereHas('employmentType', function ($typeQuery) use ($search) {
                         $typeQuery->where('name', 'like', "%{$search}%");
                     })
 
-                    // 3. Company, Department Position (Designation) 
+                    // 3. Company, Department Position (Designation)
                     ->orWhereHas('organizationAssignment', function ($orgQuery) use ($search) {
                         $orgQuery->whereHas('company', function ($companyQuery) use ($search) {
                             $companyQuery->where('name', 'like', "%{$search}%");
                         })
-                        ->orWhereHas('department', function ($deptQuery) use ($search) {
-                            $deptQuery->where('name', 'like', "%{$search}%");
-                        })
-                        ->orWhereHas('designation', function ($desigQuery) use ($search) {
-                            $desigQuery->where('name', 'like', "%{$search}%");
-                        });
+                            ->orWhereHas('department', function ($deptQuery) use ($search) {
+                                $deptQuery->where('name', 'like', "%{$search}%");
+                            })
+                            ->orWhereHas('designation', function ($desigQuery) use ($search) {
+                                $desigQuery->where('name', 'like', "%{$search}%");
+                            });
                     });
 
-                // 4. Status  
+                // 4. Status
                 if (strtolower($search) === 'active') {
                     $q->orWhere('is_active', 1)->orWhere('is_active', true);
                 } elseif (strtolower($search) === 'inactive') {
@@ -373,7 +373,7 @@ class EmployeeController extends Controller
                 'dayOff' => 'nullable|string',
                 'employeeCategory' => 'required|string|in:Executive,Non-Executive'
             ]);
-            
+
             /*
             // Add custom validation for NIC uniqueness
             $employeeNic = strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $personal['nicNumber']));
@@ -386,17 +386,17 @@ class EmployeeController extends Controller
 
 
             // Add custom validation for NIC uniqueness (SAFE)
-$employeeNic = strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $personal['nicNumber'] ?? ''));
+            $employeeNic = strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $personal['nicNumber'] ?? ''));
 
-$spouseNicRaw = $personal['spouseNic'] ?? null;
-$spouseNic = $spouseNicRaw
-    ? strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $spouseNicRaw))
-    : null;
+            $spouseNicRaw = $personal['spouseNic'] ?? null;
+            $spouseNic = $spouseNicRaw
+                ? strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $spouseNicRaw))
+                : null;
 
-if ($spouseNic && $employeeNic === $spouseNic) {
-    $validator->errors()->add("personal.spouseNic", "Spouse NIC cannot be the same as employee NIC.");
-}
-           /*
+            if ($spouseNic && $employeeNic === $spouseNic) {
+                $validator->errors()->add("personal.spouseNic", "Spouse NIC cannot be the same as employee NIC.");
+            }
+            /*
             // Validate Spouse DOB vs Age
             if (isset($personal['spouseDob']) && isset($personal['spouseAge'])) {
                 $spouseDob = Carbon::parse($personal['spouseDob']);
@@ -423,7 +423,7 @@ if ($spouseNic && $employeeNic === $spouseNic) {
                         $validator->errors()->add("personal.spouseAge", "Entered Spouse Age does not match Date of Birth.");
                     }
                 } catch (\Exception $e) {
-                    // Date format 
+                    // Date format
                     $validator->errors()->add("personal.spouseDob", "Invalid Date of Birth format.");
                 }
             }
@@ -488,14 +488,19 @@ if ($spouseNic && $employeeNic === $spouseNic) {
             }
 
             // Create spouse record
-            $spouse = spouse::create([
-                'type' => $personal['relationshipType'],
-                'title' => $personal['spouseTitle'],
-                'name' => $personal['spouseName'],
-                'nic' => $personal['spouseNic'],
-                'age' => $personal['spouseAge'],
-                'dob' => $personal['spouseDob'],
-            ]);
+
+            if ($request->has('personal.relationshipType')) {
+                $spouse = spouse::create([
+                    'type' => $personal['relationshipType'],
+                    'title' => $personal['spouseTitle'],
+                    'name' => $personal['spouseName'],
+                    'nic' => $personal['spouseNic'],
+                    'age' => $personal['spouseAge'],
+                    'dob' => $personal['spouseDob'],
+                ]);
+            } else {
+                $spouse = null;
+            }
 
             // Create organization assignment
             $orgAssignment = organization_assignment::create([
@@ -537,7 +542,7 @@ if ($spouseNic && $employeeNic === $spouseNic) {
                 'is_active' => true,
                 'employment_type_id' => $personal['employmentStatus'],
                 'organization_assignment_id' => $orgAssignment->id,
-                'spouse_id' => $spouse->id,
+                'spouse_id' => $spouse ? $spouse->id : null,
                 'profile_photo_path' => $profilePicturePath,
                 'email' => $address['email'],
             ]);
@@ -659,15 +664,15 @@ if ($spouseNic && $employeeNic === $spouseNic) {
             ]);
 
             // Add default roster
-            $employee->rosters()->create([
-                'roster_id' => Carbon::now()->timestamp,
-                'shift_code' => 1,
-                'company_id' => $organization['company'],
-                'employee_id' => $employee->id,
-                'is_reccurring' => true,
-                'reccurence_pattern' => 'annualy',
-                'date_from' => $organization['dateOfJoined'],
-            ]);
+            // $employee->rosters()->create([
+            //     'roster_id' => Carbon::now()->timestamp,
+            //     'shift_code' => 1,
+            //     'company_id' => $organization['company'],
+            //     'employee_id' => $employee->id,
+            //     'is_reccurring' => true,
+            //     'reccurence_pattern' => 'annualy',
+            //     'date_from' => $organization['dateOfJoined'],
+            // ]);
 
             DB::commit();
 
@@ -675,7 +680,6 @@ if ($spouseNic && $employeeNic === $spouseNic) {
                 'message' => 'Employee created successfully',
                 'employee_id' => $employee->id
             ], 201);
-
         } catch (\Exception $e) {
             DB::rollBack();
 
@@ -729,7 +733,7 @@ if ($spouseNic && $employeeNic === $spouseNic) {
             'organizationAssignment.designation',
             'overtimes',
         ])->findOrFail($id);
-        
+
         return response()->json([
             'message' => 'Employee details fetched successfully',
             'data' => $employee
@@ -899,7 +903,7 @@ if ($spouseNic && $employeeNic === $spouseNic) {
                 'dayOff' => 'nullable|string',
                 'employeeCategory' => 'required|string|in:Executive,Non-Executive'
             ]);
-            
+
             /*
             // Add custom validation for NIC uniqueness
             $employeeNic = strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $personal['nicNumber']));
@@ -911,18 +915,18 @@ if ($spouseNic && $employeeNic === $spouseNic) {
                 */
 
             // Add custom validation for NIC uniqueness (SAFE)
-$employeeNic = strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $personal['nicNumber'] ?? ''));
+            $employeeNic = strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $personal['nicNumber'] ?? ''));
 
-$spouseNicRaw = $personal['spouseNic'] ?? null;
-$spouseNic = $spouseNicRaw
-    ? strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $spouseNicRaw))
-    : null;
+            $spouseNicRaw = $personal['spouseNic'] ?? null;
+            $spouseNic = $spouseNicRaw
+                ? strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', $spouseNicRaw))
+                : null;
 
-if ($spouseNic && $employeeNic === $spouseNic) {
-    $validator->errors()->add("personal.spouseNic", "Spouse NIC cannot be the same as employee NIC.");
-}
-            
-/*
+            if ($spouseNic && $employeeNic === $spouseNic) {
+                $validator->errors()->add("personal.spouseNic", "Spouse NIC cannot be the same as employee NIC.");
+            }
+
+            /*
             // Validate Spouse DOB vs Age
             if (isset($personal['spouseDob']) && isset($personal['spouseAge'])) {
                 $spouseDob = Carbon::parse($personal['spouseDob']);
@@ -935,7 +939,7 @@ if ($spouseNic && $employeeNic === $spouseNic) {
             }
        */
 
-         // Validate Spouse DOB vs Age 
+            // Validate Spouse DOB vs Age
             if (!empty($personal['spouseDob']) && !empty($personal['spouseAge'])) {
                 try {
                     $spouseDob = Carbon::parse($personal['spouseDob']);
@@ -945,7 +949,7 @@ if ($spouseNic && $employeeNic === $spouseNic) {
                         $validator->errors()->add("personal.spouseAge", "Entered Spouse Age does not match Date of Birth.");
                     }
                 } catch (\Exception $e) {
-                    // Date  format 
+                    // Date  format
                     $validator->errors()->add("personal.spouseDob", "Invalid Date of Birth format.");
                 }
             }
@@ -1032,7 +1036,7 @@ if ($spouseNic && $employeeNic === $spouseNic) {
                 $designationId = is_numeric($organization['designation']) ? $organization['designation'] : $employee->organizationAssignment->designation_id;
                 $deptId = !empty($organization['department']) ? (is_numeric($organization['department']) ? $organization['department'] : $employee->organizationAssignment->department_id) : null;
                 $subDeptId = !empty($organization['subDepartment']) ? (is_numeric($organization['subDepartment']) ? $organization['subDepartment'] : $employee->organizationAssignment->sub_department_id) : null;
-                
+
                 $employee->organizationAssignment()->update([
                     'company_id' => $companyId,
                     'department_id' => $deptId,
@@ -1174,7 +1178,6 @@ if ($spouseNic && $employeeNic === $spouseNic) {
                 'message' => 'Employee updated successfully',
                 'employee_id' => $employee->id
             ], 200);
-
         } catch (\Exception $e) {
             DB::rollBack();
 
@@ -1234,7 +1237,6 @@ if ($spouseNic && $employeeNic === $spouseNic) {
             return response()->json([
                 'message' => 'Employee deleted successfully'
             ], 200);
-
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json([
