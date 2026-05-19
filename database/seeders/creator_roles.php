@@ -13,13 +13,12 @@ class creator_roles extends Seeder
     public function run(): void
     {
         $creators = [
-           'Operations',
-           'Digital marketing',
-           'Human Resource',
-           'Finance',
-           'Marketing',
-           'Management',
-           'Senior Management'
+            'Operations',
+            'Human Resource',
+            'Finance',
+            'Marketing',
+            'Management',
+            'Senior Management'
         ];
 
         foreach ($creators as $creator) {
