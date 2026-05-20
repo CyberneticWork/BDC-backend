@@ -492,9 +492,9 @@ class TimeCardController extends Controller
                 ->whereIn('status', ['OUT', 'Early OUT'])
                 ->where(function ($q) use ($timeCard) {
                     $q->where('actual_date', $timeCard->date)
-                      ->orWhere(function ($sq) use ($timeCard) {
-                          $sq->whereNull('actual_date')->where('date', $timeCard->date);
-                      });
+                        ->orWhere(function ($sq) use ($timeCard) {
+                            $sq->whereNull('actual_date')->where('date', $timeCard->date);
+                        });
                 })
                 ->where('time', '>', $timeCard->time)
                 ->orderBy('time', 'asc')
@@ -615,6 +615,106 @@ class TimeCardController extends Controller
     /**
      * 🔥 පන්ච් එක වදින වෙලාවෙම Holiday OT (Shift vs Outside) වෙන් කරන කොටස
      */
+    // private function processOvertimeForOutPunch(
+    //     employee $employee,
+    //     time_card $outCard,
+    //     time_card $inCard,
+    //     ?shifts $fallbackShift = null,
+    //     ?string $referenceDate = null
+    // ): void {
+    //     if (!$inCard) return;
+
+    //     $targetDate = $referenceDate ?? $inCard->date;
+    //     [, $resolvedShift] = $this->resolveRosterAndShift($employee, $targetDate);
+    //     if (!$resolvedShift) $resolvedShift = $fallbackShift;
+    //     if (!$resolvedShift) return;
+
+    //     $comp = $employee->compensation;
+    //     if (!$comp || !$comp->ot_active) return;
+
+    //     $clockIn = Carbon::parse($inCard->date . ' ' . $inCard->time);
+    //     $clockOut = Carbon::parse($outCard->date . ' ' . $outCard->time);
+    //     if ($clockOut->lte($clockIn)) return;
+
+    //     $isHoliday = $this->isHoliday($employee, $targetDate);
+
+    //     // 1. අපි හදපු Calculator එකට දත්ත යවමු
+    //     $breakdown = $this->overtimeCalculator->calculate(
+    //         $employee,
+    //         $resolvedShift,
+    //         $clockIn,
+    //         $clockOut,
+    //         $isHoliday
+    //     );
+
+    //     if ($isHoliday) {
+    //         // 🔥 අලුත් දත්ත (Shift පැය සහ Outside පැය) Calculator එකෙන්ම ගමු
+    //         $hShiftHours = (float)($breakdown['hours']['holiday_shift_hours'] ?? 0);
+    //         $hOutsideHours = (float)($breakdown['hours']['holiday_outside_hours'] ?? 0);
+    //         $hShiftAmount = (float)($breakdown['amounts']['holiday_shift_amount'] ?? 0);
+    //         $hOutsideAmount = (float)($breakdown['amounts']['holiday_outside_amount'] ?? 0);
+
+    //         $totalHolidayAmount = $hShiftAmount + $hOutsideAmount;
+    //         $totalHolidayHours = $hShiftHours + $hOutsideHours;
+
+    //         if ($totalHolidayHours <= 0) return;
+
+    //         $this->saveOrUpdateOtRecord($outCard->id, [
+    //             'employee_id' => $employee->id,
+    //             'date' => $targetDate,
+    //             'shift_code' => $resolvedShift->id,
+    //             'ot_hours' => $totalHolidayHours,
+    //             'morning_ot' => 0.0,
+    //             'afternoon_ot' => 0.0,
+    //             'morning_ot_amount' => 0.0,
+    //             'evening_ot_amount' => 0.0,
+    //             'holiday_shift_hours' => $hShiftHours,
+    //             'holiday_outside_hours' => $hOutsideHours,
+    //             'holiday_shift_amount' => $hShiftAmount,
+    //             'holiday_outside_amount' => $hOutsideAmount,
+    //             'holiday_ot_hours' => $totalHolidayHours,
+    //             'holiday_ot_amount' => $totalHolidayAmount,
+    //             'total_ot_amount' => $totalHolidayAmount,
+    //             'status' => 'pending',
+    //         ]);
+    //     } else {
+    //         // සාමාන්‍ය දින සඳහා (Normal Days)
+    //         $hours = array_merge([
+    //             'morning_regular' => 0.0,
+    //             'evening_regular' => 0.0,
+    //             'total' => 0.0,
+    //         ], $breakdown['hours'] ?? []);
+
+    //         $amounts = array_merge([
+    //             'morning_regular' => 0.0,
+    //             'evening_regular' => 0.0,
+    //             'total' => 0.0,
+    //         ], $breakdown['amounts'] ?? []);
+
+    //         $this->saveOrUpdateOtRecord($outCard->id, [
+    //             'employee_id' => $employee->id,
+    //             'date' => $targetDate,
+    //             'shift_code' => $resolvedShift->id,
+    //             'ot_hours' => $hours['total'],
+    //             'morning_ot' => $hours['morning_regular'],
+    //             'afternoon_ot' => $hours['evening_regular'],
+    //             'morning_ot_amount' => $amounts['morning_regular'],
+    //             'evening_ot_amount' => $amounts['evening_regular'],
+    //             'holiday_ot_hours' => 0.0,
+    //             'holiday_ot_amount' => 0.0,
+    //             'total_ot_amount' => $amounts['total'],
+    //             'status' => 'pending',
+    //         ]);
+    //     }
+    // }
+
+    /**
+     * Process and record overtime data upon an OUT/Early OUT punch.
+     * * 🔥 පන්ච් එක වදින වෙලාවෙම Holiday OT (Shift vs Outside) වෙන් කරන කොටස
+     * Note: Core calculation logic and array structures are strictly preserved as per client requirements.
+     * Client Rule: OT is only credited if total OT exceeds 30 minutes (0.5 hours).
+     * If it exceeds 30 minutes, the entire duration is awarded.
+     */
     private function processOvertimeForOutPunch(
         employee $employee,
         time_card $outCard,
@@ -622,23 +722,39 @@ class TimeCardController extends Controller
         ?shifts $fallbackShift = null,
         ?string $referenceDate = null
     ): void {
-        if (!$inCard) return;
+        // 1. Guard clauses for basic prerequisites
+        if (!$inCard) {
+            return;
+        }
 
         $targetDate = $referenceDate ?? $inCard->date;
+
+        // 2. Resolve the applicable shift
         [, $resolvedShift] = $this->resolveRosterAndShift($employee, $targetDate);
-        if (!$resolvedShift) $resolvedShift = $fallbackShift;
-        if (!$resolvedShift) return;
+        $resolvedShift = $resolvedShift ?? $fallbackShift;
 
+        if (!$resolvedShift) {
+            return;
+        }
+
+        // 3. Verify if overtime tracking is active for the employee
         $comp = $employee->compensation;
-        if (!$comp || !$comp->ot_active) return;
+        if (!$comp || !$comp->ot_active) {
+            return;
+        }
 
+        // 4. Calculate timing differences and ensure valid chronological sequence
         $clockIn = Carbon::parse($inCard->date . ' ' . $inCard->time);
         $clockOut = Carbon::parse($outCard->date . ' ' . $outCard->time);
-        if ($clockOut->lte($clockIn)) return;
 
+        if ($clockOut->lte($clockIn)) {
+            return;
+        }
+
+        // 5. Execute external calculator breakdown
         $isHoliday = $this->isHoliday($employee, $targetDate);
 
-        // 1. අපි හදපු Calculator එකට දත්ත යවමු
+        // අපි හදපු Calculator එකට දත්ත යවමු
         $breakdown = $this->overtimeCalculator->calculate(
             $employee,
             $resolvedShift,
@@ -647,63 +763,72 @@ class TimeCardController extends Controller
             $isHoliday
         );
 
+        // 6. Map data and persist records based on day classification
         if ($isHoliday) {
             // 🔥 අලුත් දත්ත (Shift පැය සහ Outside පැය) Calculator එකෙන්ම ගමු
             $hShiftHours = (float)($breakdown['hours']['holiday_shift_hours'] ?? 0);
             $hOutsideHours = (float)($breakdown['hours']['holiday_outside_hours'] ?? 0);
             $hShiftAmount = (float)($breakdown['amounts']['holiday_shift_amount'] ?? 0);
             $hOutsideAmount = (float)($breakdown['amounts']['holiday_outside_amount'] ?? 0);
-            
-            $totalHolidayAmount = $hShiftAmount + $hOutsideAmount;
-            $totalHolidayHours = $hShiftHours + $hOutsideHours;
 
-            if ($totalHolidayHours <= 0) return;
+            $totalHolidayHours = $hShiftHours + $hOutsideHours;
+            $totalHolidayAmount = $hShiftAmount + $hOutsideAmount;
+
+            // Client threshold validation: Must be strictly greater than 30 minutes (0.5 hours)
+            if ($totalHolidayHours <= 0.5) {
+                return;
+            }
 
             $this->saveOrUpdateOtRecord($outCard->id, [
-                'employee_id' => $employee->id,
-                'date' => $targetDate, 
-                'shift_code' => $resolvedShift->id,
-                'ot_hours' => $totalHolidayHours,
-                'morning_ot' => 0.0,
-                'afternoon_ot' => 0.0,
-                'morning_ot_amount' => 0.0,
-                'evening_ot_amount' => 0.0,
-                'holiday_shift_hours' => $hShiftHours,
+                'employee_id'           => $employee->id,
+                'date'                  => $targetDate,
+                'shift_code'            => $resolvedShift->id,
+                'ot_hours'              => $totalHolidayHours,
+                'morning_ot'            => 0.0,
+                'afternoon_ot'          => 0.0,
+                'morning_ot_amount'     => 0.0,
+                'evening_ot_amount'     => 0.0,
+                'holiday_shift_hours'   => $hShiftHours,
                 'holiday_outside_hours' => $hOutsideHours,
-                'holiday_shift_amount' => $hShiftAmount,
+                'holiday_shift_amount'  => $hShiftAmount,
                 'holiday_outside_amount' => $hOutsideAmount,
-                'holiday_ot_hours' => $totalHolidayHours,
-                'holiday_ot_amount' => $totalHolidayAmount,
-                'total_ot_amount' => $totalHolidayAmount,
-                'status' => 'pending',
+                'holiday_ot_hours'      => $totalHolidayHours,
+                'holiday_ot_amount'     => $totalHolidayAmount,
+                'total_ot_amount'       => $totalHolidayAmount,
+                'status'                => 'pending',
             ]);
         } else {
             // සාමාන්‍ය දින සඳහා (Normal Days)
             $hours = array_merge([
                 'morning_regular' => 0.0,
                 'evening_regular' => 0.0,
-                'total' => 0.0,
+                'total'           => 0.0,
             ], $breakdown['hours'] ?? []);
 
             $amounts = array_merge([
                 'morning_regular' => 0.0,
                 'evening_regular' => 0.0,
-                'total' => 0.0,
+                'total'           => 0.0,
             ], $breakdown['amounts'] ?? []);
 
+            // Client threshold validation: Must be strictly greater than 30 minutes (0.5 hours)
+            if ($hours['total'] <= 0.5) {
+                return;
+            }
+
             $this->saveOrUpdateOtRecord($outCard->id, [
-                'employee_id' => $employee->id,
-                'date' => $targetDate, 
-                'shift_code' => $resolvedShift->id,
-                'ot_hours' => $hours['total'],
-                'morning_ot' => $hours['morning_regular'],
-                'afternoon_ot' => $hours['evening_regular'],
-                'morning_ot_amount' => $amounts['morning_regular'],
-                'evening_ot_amount' => $amounts['evening_regular'],
-                'holiday_ot_hours' => 0.0,
-                'holiday_ot_amount' => 0.0,
-                'total_ot_amount' => $amounts['total'],
-                'status' => 'pending',
+                'employee_id'           => $employee->id,
+                'date'                  => $targetDate,
+                'shift_code'            => $resolvedShift->id,
+                'ot_hours'              => $hours['total'],
+                'morning_ot'            => $hours['morning_regular'],
+                'afternoon_ot'          => $hours['evening_regular'],
+                'morning_ot_amount'     => $amounts['morning_regular'],
+                'evening_ot_amount'     => $amounts['evening_regular'],
+                'holiday_ot_hours'      => 0.0,
+                'holiday_ot_amount'     => 0.0,
+                'total_ot_amount'       => $amounts['total'],
+                'status'                => 'pending',
             ]);
         }
     }
@@ -720,13 +845,13 @@ class TimeCardController extends Controller
             ->orderBy('time', 'asc');
 
         if ($search) {
-            $query->whereHas('employee', function($q) use ($search) {
+            $query->whereHas('employee', function ($q) use ($search) {
                 $q->where('full_name', 'like', "%{$search}%")
-                  ->orWhere('attendance_employee_no', 'like', "%{$search}%");
+                    ->orWhere('attendance_employee_no', 'like', "%{$search}%");
             });
         }
         if ($company_id) {
-            $query->whereHas('employee.organizationAssignment', function($q) use ($company_id) {
+            $query->whereHas('employee.organizationAssignment', function ($q) use ($company_id) {
                 $q->where('company_id', $company_id);
             });
         }
@@ -735,7 +860,7 @@ class TimeCardController extends Controller
         $movements = [];
 
         foreach ($allPunches as $empId => $punches) {
-            if ($punches->count() <= 2) continue; 
+            if ($punches->count() <= 2) continue;
 
             $middlePunches = $punches->slice(1, $punches->count() - 2)->values();
             $emp = $punches->first()->employee;
@@ -748,14 +873,15 @@ class TimeCardController extends Controller
                 $inTime = '-';
                 $duration = 0;
 
-                if (in_array(strtoupper($current->status), ['OUT', 'EARLY OUT']) && 
-                    $next && in_array(strtoupper($next->status), ['IN', 'LATE COMING'])) {
-                    
+                if (
+                    in_array(strtoupper($current->status), ['OUT', 'EARLY OUT']) &&
+                    $next && in_array(strtoupper($next->status), ['IN', 'LATE COMING'])
+                ) {
+
                     $outTime = $current->time;
                     $inTime = $next->time;
                     $duration = round((strtotime($inTime) - strtotime($outTime)) / 60);
-                    $i++; 
-
+                    $i++;
                 } else {
                     if (in_array(strtoupper($current->status), ['IN', 'LATE COMING'])) {
                         $inTime = $current->time;
@@ -793,10 +919,11 @@ class TimeCardController extends Controller
         return response()->json(['message' => 'Status updated successfully!']);
     }
 
-    private function saveOrUpdateOtRecord($timeCardId, $data) {
+    private function saveOrUpdateOtRecord($timeCardId, $data)
+    {
         $ot = over_time::withTrashed()->where('time_cards_id', $timeCardId)->first();
         if ($ot) {
-            $ot->restore(); 
+            $ot->restore();
             $ot->update($data);
         } else {
             $data['time_cards_id'] = $timeCardId;
@@ -859,7 +986,9 @@ class TimeCardController extends Controller
 
                 try {
                     $date = is_numeric($excelDate) ? gmdate('Y-m-d', ($excelDate - 25569) * 86400) : date('Y-m-d', strtotime($excelDate));
-                } catch (\Exception $ex) { continue; }
+                } catch (\Exception $ex) {
+                    continue;
+                }
 
                 if ($date < $fromDate || ($toDate && $date > $toDate)) continue;
 
@@ -872,18 +1001,29 @@ class TimeCardController extends Controller
                 $statusUpper = strtoupper($status);
                 if (in_array($statusUpper, ['IN', 'OUT', 'EARLY OUT', 'LATE COMING'])) {
                     time_card::create([
-                        'employee_id' => $employee->id, 'time' => $rawTime, 'date' => $date, 'entry' => (int)$entry, 'status' => $statusUpper, 'actual_date' => $date
+                        'employee_id' => $employee->id,
+                        'time' => $rawTime,
+                        'date' => $date,
+                        'entry' => (int)$entry,
+                        'status' => $statusUpper,
+                        'actual_date' => $date
                     ]);
                     $results['imported']++;
                 }
             }
             DB::commit();
-        } catch (\Exception $e) { DB::rollBack(); return response()->json(['error' => $e->getMessage()], 500); }
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
 
         return response()->json($results);
     }
 
-    public function downloadTemplate() { return Excel::download(new AttendanceTemplateExport, 'attendance_template.xlsx'); }
+    public function downloadTemplate()
+    {
+        return Excel::download(new AttendanceTemplateExport, 'attendance_template.xlsx');
+    }
 
     public function getTodayStats()
     {
@@ -959,6 +1099,8 @@ class TimeCardController extends Controller
         $days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
         $present = [];
         $absent = [];
+
+        $monday = Carbon::now()->startOfWeek(Carbon::MONDAY);
 
         for ($i = 0; $i < 7; $i++) {
             $date = $monday->copy()->addDays($i)->format('Y-m-d');
@@ -1592,7 +1734,7 @@ class TimeCardController extends Controller
             : 'IN';
     }
 
-    
+
     private function processOvertimeForOutPunch(
         employee $employee,
         time_card $outCard,
@@ -1653,7 +1795,7 @@ class TimeCardController extends Controller
 
             $this->saveOrUpdateOtRecord($outCard->id, [
                 'employee_id' => $employee->id,
-                'date' => $targetDate, 
+                'date' => $targetDate,
                 'shift_code' => $resolvedShift->id,
                 'ot_hours' => $hHours,
                 'morning_ot' => 0.0,
@@ -1718,7 +1860,7 @@ class TimeCardController extends Controller
 
         $this->saveOrUpdateOtRecord($outCard->id, [
             'employee_id' => $employee->id,
-            'date' => $targetDate, 
+            'date' => $targetDate,
             'shift_code' => $resolvedShift->id,
             'ot_hours' => $hours['total'],
             'morning_ot' => $hours['morning_regular'],
@@ -1763,7 +1905,7 @@ class TimeCardController extends Controller
         $movements = [];
 
         foreach ($allPunches as $empId => $punches) {
-            if ($punches->count() <= 2) continue; 
+            if ($punches->count() <= 2) continue;
 
             $middlePunches = $punches->slice(1, $punches->count() - 2)->values();
             $emp = $punches->first()->employee;
@@ -1776,13 +1918,13 @@ class TimeCardController extends Controller
                 $inTime = '-';
                 $duration = 0;
 
-                if (in_array(strtoupper($current->status), ['OUT', 'EARLY OUT']) && 
+                if (in_array(strtoupper($current->status), ['OUT', 'EARLY OUT']) &&
                     $next && in_array(strtoupper($next->status), ['IN', 'LATE COMING'])) {
-                    
+
                     $outTime = $current->time;
                     $inTime = $next->time;
                     $duration = round((strtotime($inTime) - strtotime($outTime)) / 60);
-                    $i++; 
+                    $i++;
 
                 } else {
                     if (in_array(strtoupper($current->status), ['IN', 'LATE COMING'])) {
@@ -1824,7 +1966,7 @@ class TimeCardController extends Controller
     private function saveOrUpdateOtRecord($timeCardId, $data) {
         $ot = over_time::withTrashed()->where('time_cards_id', $timeCardId)->first();
         if ($ot) {
-            $ot->restore(); 
+            $ot->restore();
             $ot->update($data);
         } else {
             $data['time_cards_id'] = $timeCardId;
@@ -2243,7 +2385,3 @@ class TimeCardController extends Controller
     }
 }
 */
-
-
-
-
