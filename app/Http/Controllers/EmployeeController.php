@@ -480,8 +480,8 @@ class EmployeeController extends Controller
 
         DB::beginTransaction();
 
+        $profilePicturePath = null;
         try {
-            $profilePicturePath = null;
             if ($request->hasFile('profile_picture')) {
                 $profilePicturePath = $request->file('profile_picture')->store('employee/profile_pictures', 'public');
                 $personal['profile_picture_path'] = $profilePicturePath;
