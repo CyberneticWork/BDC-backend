@@ -6,8 +6,8 @@ setlocal enabledelayedexpansion
 :: ==========================================
 set "API_URL=http://127.0.0.1:8000/api/time-cards"
 set "EMPLOYEE_ID=1"
-set "START_DATE=2026-05-20"
-set "END_DATE=2026-06-19"
+set "START_DATE=2026-06-20"
+set "END_DATE=2026-07-19"
 
 :: ==========================================
 :: TIME ARRAYS (Add or modify variation profiles here)
@@ -22,8 +22,8 @@ set IN_TIMES_COUNT=5
 set OUT_TIMES[0]=17:01
 set OUT_TIMES[1]=17:30
 set OUT_TIMES[2]=18:00
-set OUT_TIMES[3]=18:45
-set OUT_TIMES[4]=18:15
+set OUT_TIMES[3]=19:45
+set OUT_TIMES[4]=19:40
 set OUT_TIMES_COUNT=5
 
 echo ======================================================

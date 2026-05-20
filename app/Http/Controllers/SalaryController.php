@@ -187,7 +187,13 @@ class SalaryController extends Controller
             }
 
             // EPF/ETF
-            $epfEtfBase = $adjustedBasic + $totalAllowances;
+            $epfEligibleAllowances = 0;
+            foreach ($allowances as $allowance) {
+                if (strtolower($allowance['category'] ?? '') !== 'dinner_allowance') {
+                    $epfEligibleAllowances += (float)($allowance['amount'] ?? 0);
+                }
+            }
+            $epfEtfBase = $adjustedBasic + $epfEligibleAllowances;
             $epfEmployeeDeduction = $request->enable_epf_etf ? $epfEtfBase * 0.08 : 0;
             $epfEmployerContribution = $request->enable_epf_etf ? $epfEtfBase * 0.12 : 0;
             $etfEmployerContribution = $request->enable_epf_etf ? $epfEtfBase * 0.03 : 0;
@@ -241,7 +247,7 @@ class SalaryController extends Controller
             // Basic or Bonus 
             $loanDeductFrom = $frontendBreakdown['loan_deduct_from'] ?? 'bonus';
 
-            $grossSalary = $epfEtfBase + $morningOtFees + $nightOtFees;
+            $grossSalary = $adjustedBasic + $totalAllowances + $morningOtFees + $nightOtFees;
             $totalDeductions = $totalFixedDeductions + ((float)($request->installment_amount ?? 0)) + $epfEmployeeDeduction;
             $netSalary = $grossSalary - $totalDeductions - $stampValue;
 
