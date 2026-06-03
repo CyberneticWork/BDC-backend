@@ -1219,6 +1219,7 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 'bank_name' => $result->bank_name ?? null,
                 'branch_name' => $result->branch_name ?? null,
                 'bank_account_no' => $result->bank_account_no ?? null,
+                'enable_epf_etf' => $result->enable_epf_etf ?? false,
             ];
 
             $allowancesArr = json_decode($result->allowances ?? '[]', true) ?: [];

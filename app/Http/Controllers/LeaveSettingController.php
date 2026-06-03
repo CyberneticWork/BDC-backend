@@ -13,7 +13,7 @@ use Illuminate\Validation\Rule;
 
 class LeaveSettingController extends Controller
 {
-    
+
     public function index(): JsonResponse
     {
         $settings = LeaveSetting::with(['quarters.leaveTypes'])
@@ -25,7 +25,7 @@ class LeaveSettingController extends Controller
         ]);
     }
 
-    
+
     public function store(Request $request): JsonResponse
     {
         $validator = Validator::make(
@@ -65,7 +65,7 @@ class LeaveSettingController extends Controller
 
         if ($validator->fails()) {
             return response()->json([
-                'message' => 'The given data was invalid.',
+                'message' => 'The given data was invalid.' . $validator->errors()->first(),
                 'errors' => $validator->errors(),
             ], 422);
         }
@@ -173,7 +173,7 @@ class LeaveSettingController extends Controller
         ], 201);
     }
 
-  
+
     public function show(LeaveSetting $leaveSetting): JsonResponse
     {
         return response()->json([
@@ -181,7 +181,7 @@ class LeaveSettingController extends Controller
         ]);
     }
 
-   
+
     public function getByType(string $type): JsonResponse
     {
         $setting = LeaveSetting::with(['quarters.leaveTypes'])
@@ -199,7 +199,7 @@ class LeaveSettingController extends Controller
         ]);
     }
 
-    
+
     public function update(Request $request, LeaveSetting $leaveSetting): JsonResponse
     {
         $validator = Validator::make(
@@ -338,7 +338,7 @@ class LeaveSettingController extends Controller
         ]);
     }
 
-    
+
     public function destroy(LeaveSetting $leaveSetting): JsonResponse
     {
         $leaveSetting->delete();
@@ -348,7 +348,7 @@ class LeaveSettingController extends Controller
         ]);
     }
 
-   
+
     public function getActiveSummary(): JsonResponse
     {
         $settings = LeaveSetting::active()
@@ -401,7 +401,7 @@ class LeaveSettingController extends Controller
         })->toArray();
     }
 
-   
+
     private function syncQuarters(LeaveSetting $leaveSetting, array $quarters): void
     {
         if (empty($quarters)) {
@@ -450,7 +450,7 @@ class LeaveSettingController extends Controller
         }
     }
 
-  
+
     private function syncQuarterLeaveTypes(LeaveSettingQuarter $quarter, array $leaveTypes): void
     {
         if (empty($leaveTypes)) {
@@ -493,7 +493,7 @@ class LeaveSettingController extends Controller
         ]);
     }
 
-   
+
     private function formatMonthRange(int $startMonth, int $endMonth): string
     {
         $months = [
@@ -532,7 +532,7 @@ use Illuminate\Validation\Rule;
 
 class LeaveSettingController extends Controller
 {
-    
+
     public function index(): JsonResponse
     {
         $settings = LeaveSetting::with(['quarters.leaveTypes'])
@@ -544,7 +544,7 @@ class LeaveSettingController extends Controller
         ]);
     }
 
-    
+
     public function store(Request $request): JsonResponse
     {
         $validator = Validator::make(
@@ -686,7 +686,7 @@ class LeaveSettingController extends Controller
         ], 201);
     }
 
-  
+
     public function show(LeaveSetting $leaveSetting): JsonResponse
     {
         return response()->json([
@@ -694,7 +694,7 @@ class LeaveSettingController extends Controller
         ]);
     }
 
-   
+
     public function getByType(string $type): JsonResponse
     {
         $setting = LeaveSetting::with(['quarters.leaveTypes'])
@@ -712,7 +712,7 @@ class LeaveSettingController extends Controller
         ]);
     }
 
-    
+
     public function update(Request $request, LeaveSetting $leaveSetting): JsonResponse
     {
         $validator = Validator::make(
@@ -847,7 +847,7 @@ class LeaveSettingController extends Controller
         ]);
     }
 
-   
+
     public function destroy(LeaveSetting $leaveSetting): JsonResponse
     {
         $leaveSetting->delete();
@@ -857,7 +857,7 @@ class LeaveSettingController extends Controller
         ]);
     }
 
-   
+
     public function getActiveSummary(): JsonResponse
     {
         $settings = LeaveSetting::active()
@@ -910,7 +910,7 @@ class LeaveSettingController extends Controller
         })->toArray();
     }
 
-   
+
     private function syncQuarters(LeaveSetting $leaveSetting, array $quarters): void
     {
         if (empty($quarters)) {
@@ -959,7 +959,7 @@ class LeaveSettingController extends Controller
         }
     }
 
-  
+
     private function syncQuarterLeaveTypes(LeaveSettingQuarter $quarter, array $leaveTypes): void
     {
         if (empty($leaveTypes)) {
@@ -1002,7 +1002,7 @@ class LeaveSettingController extends Controller
         ]);
     }
 
-   
+
     private function formatMonthRange(int $startMonth, int $endMonth): string
     {
         $months = [

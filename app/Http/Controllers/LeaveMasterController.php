@@ -394,15 +394,15 @@ class LeaveMasterController extends Controller
 
     public function getSupervisorLeaves()
     {
-        // Trainee  (Pending, Approved, Rejected) 
+        // Trainee  (Pending, Approved, Rejected)
         $leaves = leave_master::with(['employee.employmentType'])
             ->whereHas('employee.employmentType', function ($query) {
                 $query->where('name', 'LIKE', '%training%')
-                      ->orWhere('name', 'LIKE', '%trainee%');
+                    ->orWhere('name', 'LIKE', '%trainee%');
             })
             ->orderBy('created_at', 'desc')
             ->get();
-            
+
         return response()->json($leaves);
     }
 
@@ -466,7 +466,7 @@ class LeaveMasterController extends Controller
         $usedHalfDays = 0;
         foreach ($usedLeaves as $leave) {
             if ($leave->is_short_leave) {
-                $usedHalfDays += 0.5; 
+                $usedHalfDays += 0.5;
             } elseif ($leave->is_half_day) {
                 $usedHalfDays += 1;
             } else {
@@ -490,12 +490,12 @@ class LeaveMasterController extends Controller
         if ($request->leave_date) {
             $query = leave_master::where('employee_id', $employeeId)
                 ->where('status', '!=', 'Rejected')
-                ->where(function($query) use ($request) {
+                ->where(function ($query) use ($request) {
                     $query->where('leave_date', $request->leave_date)
-                          ->orWhere(function($q) use ($request) {
-                              $q->where('leave_from', '<=', $request->leave_date)
+                        ->orWhere(function ($q) use ($request) {
+                            $q->where('leave_from', '<=', $request->leave_date)
                                 ->where('leave_to', '>=', $request->leave_date);
-                          });
+                        });
                 });
 
             if ($excludeId) $query->where('id', '!=', $excludeId);
@@ -510,13 +510,13 @@ class LeaveMasterController extends Controller
         if ($request->leave_from && $request->leave_to) {
             $query = leave_master::where('employee_id', $employeeId)
                 ->where('status', '!=', 'Rejected')
-                ->where(function($query) use ($request) {
-                    $query->where(function($q) use ($request) {
+                ->where(function ($query) use ($request) {
+                    $query->where(function ($q) use ($request) {
                         $q->whereBetween('leave_date', [$request->leave_from, $request->leave_to]);
-                    })->orWhere(function($q) use ($request) {
-                        $q->where(function($subQ) use ($request) {
+                    })->orWhere(function ($q) use ($request) {
+                        $q->where(function ($subQ) use ($request) {
                             $subQ->where('leave_from', '<=', $request->leave_to)
-                                 ->where('leave_to', '>=', $request->leave_from);
+                                ->where('leave_to', '>=', $request->leave_from);
                         });
                     });
                 });
@@ -530,14 +530,14 @@ class LeaveMasterController extends Controller
             }
         }
 
-        return null; 
+        return null;
     }
 
     public function getLeaveEligibility(Request $request)
     {
         $empNumber = $request->query('emp_number');
         $employeeId = $request->query('employee_id');
-        $requestedDateStr = $request->query('date'); 
+        $requestedDateStr = $request->query('date');
 
         if (!$empNumber && !$employeeId) {
             return response()->json(['message' => 'Either emp_number or employee_id is required'], 422);
@@ -552,7 +552,7 @@ class LeaveMasterController extends Controller
         if (!$employee) return response()->json(['message' => 'Employee not found'], 404);
 
         $orgAssignment = $employee->organizationAssignment;
-        
+
         if (!$orgAssignment || !$orgAssignment->date_of_joining) {
             return response()->json([
                 'message' => 'Date of Joining is not set for this employee. Cannot calculate leaves.'
@@ -573,14 +573,13 @@ class LeaveMasterController extends Controller
 
         if ($currentYear == $joinYear) {
             $isFirstYear = true;
-            $totalAnnualLeaves = 0; 
-            
+            $totalAnnualLeaves = 0;
+
             $monthsCompleted = $joinDate->diffInMonths($targetDate);
             $totalCasualLeaves = floor($monthsCompleted / 2);
             $note = 'First Year: 1 Casual Leave per 2 completed months. No Annual Leaves.';
-
         } elseif ($currentYear == $joinYear + 1) {
-            $totalCasualLeaves = 7; 
+            $totalCasualLeaves = 7;
             $note = 'Second Year: 7 Casual Leaves. Annual leaves based on joined month.';
 
             if ($joinMonth >= 1 && $joinMonth <= 3) {
@@ -592,7 +591,6 @@ class LeaveMasterController extends Controller
             } elseif ($joinMonth >= 10 && $joinMonth <= 12) {
                 $totalAnnualLeaves = 4;
             }
-            
         } else {
             $totalCasualLeaves = 7;
             $totalAnnualLeaves = 14;
@@ -660,9 +658,6 @@ class LeaveMasterController extends Controller
         return $totalDays;
     }
 }
-
-
-
 
 
 /*
@@ -1090,7 +1085,7 @@ class LeaveMasterController extends Controller
         $usedHalfDays = 0;
         foreach ($usedLeaves as $leave) {
             if ($leave->is_short_leave) {
-                $usedHalfDays += 0.5; 
+                $usedHalfDays += 0.5;
             } elseif ($leave->is_half_day) {
                 $usedHalfDays += 1;
             } else {
@@ -1154,14 +1149,14 @@ class LeaveMasterController extends Controller
             }
         }
 
-        return null; 
+        return null;
     }
 
     public function getLeaveEligibility(Request $request)
     {
         $empNumber = $request->query('emp_number');
         $employeeId = $request->query('employee_id');
-        $requestedDateStr = $request->query('date'); 
+        $requestedDateStr = $request->query('date');
 
         if (!$empNumber && !$employeeId) {
             return response()->json(['message' => 'Either emp_number or employee_id is required'], 422);
@@ -1176,7 +1171,7 @@ class LeaveMasterController extends Controller
         if (!$employee) return response()->json(['message' => 'Employee not found'], 404);
 
         $orgAssignment = $employee->organizationAssignment;
-        
+
         if (!$orgAssignment || !$orgAssignment->date_of_joining) {
             return response()->json([
                 'message' => 'Date of Joining is not set for this employee. Cannot calculate leaves.'
@@ -1203,7 +1198,7 @@ class LeaveMasterController extends Controller
             // 1. පළමු වසර (First Year of Joining)
             $isFirstYear = true;
             $totalAnnualLeaves = 0; // පළමු වසරට Annual Leaves නැත
-            
+
             // සෑම මාස 2ක සේවයකටම දින 1ක් බැගින් Casual Leaves හිමිවේ
             $monthsCompleted = $joinDate->diffInMonths($targetDate);
             $totalCasualLeaves = floor($monthsCompleted / 2);
@@ -1224,7 +1219,7 @@ class LeaveMasterController extends Controller
             } elseif ($joinMonth >= 10 && $joinMonth <= 12) {
                 $totalAnnualLeaves = 4;
             }
-            
+
         } else {
             // 3. තුන්වන වසරේ සිට ඉදිරියට (Third Year Onwards)
             $totalCasualLeaves = 7;
@@ -1762,7 +1757,7 @@ class LeaveMasterController extends Controller
         $usedHalfDays = 0;
         foreach ($usedLeaves as $leave) {
             if ($leave->is_short_leave) {
-                $usedHalfDays += 0.5; 
+                $usedHalfDays += 0.5;
             } elseif ($leave->is_half_day) {
                 $usedHalfDays += 1;
             } else {
@@ -1826,14 +1821,14 @@ class LeaveMasterController extends Controller
             }
         }
 
-        return null; 
+        return null;
     }
 
     public function getLeaveEligibility(Request $request)
     {
         $empNumber = $request->query('emp_number');
         $employeeId = $request->query('employee_id');
-        $requestedDateStr = $request->query('date'); 
+        $requestedDateStr = $request->query('date');
 
         if (!$empNumber && !$employeeId) {
             return response()->json(['message' => 'Either emp_number or employee_id is required'], 422);
@@ -1858,7 +1853,7 @@ class LeaveMasterController extends Controller
 
         if ($isProbation && $probationEndDate) {
             if ($targetDate->startOfDay()->greaterThan(Carbon::parse($probationEndDate)->startOfDay())) {
-                $isProbation = false; 
+                $isProbation = false;
             }
         }
 
@@ -1998,7 +1993,7 @@ class LeaveMasterController extends Controller
             'employee_id' => $employee->id,
             'emp_number' => $employee->attendance_employee_no,
             'employee_name' => $employee->display_name ?? $employee->name_with_initials,
-            'is_probation' => false, 
+            'is_probation' => false,
             'join_date' => $probationStartDate,
             'probation_end_date' => $probationEndDate,
             'eligible_leaves' => $eligibleLeaves,

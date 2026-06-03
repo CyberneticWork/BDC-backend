@@ -78,6 +78,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/change-password', [AuthController::class, 'changePassword']);
 });
 Route::put('/leave-masters/{id}/status', [LeaveMasterController::class, 'updateStatus']);
+Route::get('/leave-types/{employeeId}', [LeaveMasterController::class, 'getLeaveTypes']);
 // Route::get('/test', [AuthController::class, 'test']);
 Route::get('/dashboard/stats/today', [TimeCardController::class, 'getTodayStats']);
 Route::get('/dashboard/stats/weekly', [TimeCardController::class, 'getWeeklyAttendanceStats']);
@@ -476,20 +477,20 @@ Route::apiResource('shift-overtime-rates', ShiftOvertimeRateController::class);
 
 // Dropdown route
 Route::get(
-  'shift-overtime-rates/shifts/dropdown',
-  [ShiftOvertimeRateController::class, 'getShifts']
+    'shift-overtime-rates/shifts/dropdown',
+    [ShiftOvertimeRateController::class, 'getShifts']
 );
 
 // By shift
 Route::get(
-  'shift-overtime-rates/by-shift/{shiftId}',
-  [ShiftOvertimeRateController::class, 'getByShiftId']
+    'shift-overtime-rates/by-shift/{shiftId}',
+    [ShiftOvertimeRateController::class, 'getByShiftId']
 );
 
 // Calculate
 Route::post(
-  'shift-overtime-rates/{shiftId}/calculate',
-  [ShiftOvertimeRateController::class, 'calculateRates']
+    'shift-overtime-rates/{shiftId}/calculate',
+    [ShiftOvertimeRateController::class, 'calculateRates']
 );
 
 
@@ -516,7 +517,6 @@ Route::middleware('auth:sanctum')->group(function () {
     //Center routes
     Route::apiResource('centers', CentersController::class);
     Route::apiResource('products', ProductController::class);
-
 });
 
 //  Customer routes

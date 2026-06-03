@@ -6,15 +6,15 @@ setlocal enabledelayedexpansion
 :: ==========================================
 set "API_URL=http://127.0.0.1:8000/api/time-cards"
 set "EMPLOYEE_ID=1"
-set "START_DATE=2026-06-20"
-set "END_DATE=2026-07-19"
+set "START_DATE=2026-07-10"
+set "END_DATE=2026-08-10"
 
 :: ==========================================
 :: TIME ARRAYS (Add or modify variation profiles here)
 :: ==========================================
 set IN_TIMES[0]=08:02
-set IN_TIMES[1]=08:14
-set IN_TIMES[2]=08:28
+set IN_TIMES[1]=08:03
+set IN_TIMES[2]=08:10
 set IN_TIMES[3]=07:55
 set IN_TIMES[4]=08:07
 set IN_TIMES_COUNT=5

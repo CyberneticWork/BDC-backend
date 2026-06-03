@@ -44,6 +44,12 @@ class DatabaseSeeder extends Seeder
                 'email' => 'dilan@mail.com',
                 'password' => '123456',
                 'role' => 'admin'
+            ],
+            [
+                'name' => 'Admin',
+                'email' => 'admin@mail.com',
+                'password' => '123456',
+                'role' => 'admin'
             ]
         ];
 
@@ -54,7 +60,7 @@ class DatabaseSeeder extends Seeder
         employment_type::insert([
             [
                 'id' => 1,
-                'name' => 'Permanent Basis',
+                'name' => 'Permanent',
             ],
             [
                 'id' => 2,
@@ -62,12 +68,16 @@ class DatabaseSeeder extends Seeder
             ],
             [
                 'id' => 3,
-                'name' => 'Contract Basis',
+                'name' => 'Contract',
             ],
             [
                 'id' => 4,
                 'name' => 'Daily Wages Salary',
             ],
+            [
+                'id' => 5,
+                'name' => 'Probation',
+            ]
         ]);
 
         $shifts = [
