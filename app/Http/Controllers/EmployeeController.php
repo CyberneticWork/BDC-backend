@@ -319,7 +319,7 @@ class EmployeeController extends Controller
                 'electoralDivision' => 'nullable|string|max:100',
                 'emergencyContact.relationship' => 'required|string|max:50',
                 'emergencyContact.contactName' => 'required|string|max:100',
-                'emergencyContact.contactAddress' => 'required|string|max:255',
+                // 'emergencyContact.contactAddress' => 'required|string|max:255',
                 'emergencyContact.contactTel' => 'required|string|max:20',
             ]);
 

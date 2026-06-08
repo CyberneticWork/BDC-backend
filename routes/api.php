@@ -53,7 +53,7 @@ use App\Http\Controllers\SingleEntryReportController;
 use App\Http\Controllers\DinnerAllowanceController;
 
 use App\Http\Controllers\ReportController;
-
+use App\Http\Controllers\EmergencyContactRelationshipTypesController;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -538,3 +538,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Add this new route
     Route::post('/pms/kpi-task-assignments/check-weights', [PmsController::class, 'checkAssigneeWeights']);
 });
+
+// emergency contact relationship types
+Route::apiResource('emergency-contact-relationship-types', EmergencyContactRelationshipTypesController::class);
+Route::get('emergency-contact-relationship-types/{id}', [EmergencyContactRelationshipTypesController::class, 'getOneById']);
