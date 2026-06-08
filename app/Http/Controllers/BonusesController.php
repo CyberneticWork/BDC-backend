@@ -61,7 +61,10 @@ class BonusesController extends Controller
                     return $request->bonus_type === 'variable';
                 }),
                 'after_or_equal:variable_from'
-            ]
+            ],
+            'is_annual' => 'nullable|boolean',
+            'payment_months' => 'nullable|array',
+            'payment_months.*' => 'integer|between:1,12',
         ]);
 
         if ($validator->fails()) {
@@ -76,6 +79,13 @@ class BonusesController extends Controller
         // default amount
         if (!isset($data['amount']) || $data['amount'] === null) {
             $data['amount'] = 0.00;
+        }
+
+        if (!empty($data['is_annual']) && empty($data['payment_months'])) {
+            return response()->json([
+                'message' => 'Validation failed',
+                'errors' => ['payment_months' => ['Payment months are required for annual bonuses']],
+            ], 422);
         }
 
         // dates based on type
@@ -153,7 +163,10 @@ class BonusesController extends Controller
                     return $request->bonus_type === 'variable';
                 }),
                 'after_or_equal:variable_from'
-            ]
+            ],
+            'is_annual' => 'nullable|boolean',
+            'payment_months' => 'nullable|array',
+            'payment_months.*' => 'integer|between:1,12',
         ]);
 
         if ($validator->fails()) {
@@ -164,6 +177,13 @@ class BonusesController extends Controller
         }
 
         $data = $validator->validated();
+
+        if (!empty($data['is_annual']) && empty($data['payment_months'])) {
+            return response()->json([
+                'message' => 'Validation failed',
+                'errors' => ['payment_months' => ['Payment months are required for annual bonuses']],
+            ], 422);
+        }
 
         if ($data['bonus_type'] === 'fixed') {
             $data['variable_from'] = null;

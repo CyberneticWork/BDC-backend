@@ -78,6 +78,14 @@ class EmployeeSeeder extends Seeder
             }
         }
 
+        designation::insert([
+            ['id' => 1, 'name' => 'Junior Executive', 'description' => 'Entry level', 'created_at' => now(), 'updated_at' => now()],
+            ['id' => 2, 'name' => 'Executive', 'description' => 'Mid level', 'created_at' => now(), 'updated_at' => now()],
+            ['id' => 3, 'name' => 'Senior Executive', 'description' => 'Senior level', 'created_at' => now(), 'updated_at' => now()],
+            ['id' => 4, 'name' => 'Manager', 'description' => 'Department manager', 'created_at' => now(), 'updated_at' => now()],
+            ['id' => 5, 'name' => 'Director', 'description' => 'Senior management', 'created_at' => now(), 'updated_at' => now()],
+        ]);
+
         // Common data for all employees
         $titles = ['Mr', 'Mrs', 'Ms', 'Dr'];
         $genders = ['male', 'female'];

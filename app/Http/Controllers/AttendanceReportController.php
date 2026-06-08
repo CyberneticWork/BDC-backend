@@ -354,6 +354,117 @@ class AttendanceReportController extends Controller
 
 
 
+    /**
+     * Date range attendance report (from_date to to_date)
+     */
+    public function dateRange(Request $request)
+    {
+        $fromDate = $request->input('from_date');
+        $toDate = $request->input('to_date');
+        $perPage = (int) ($request->input('per_page', 15));
+        $search = $request->input('search');
+        $company_id = $request->input('company_id');
+        $department_id = $request->input('department_id');
+        $employee_category = $request->input('employee_category');
+        $holiday_worked = $request->boolean('holiday_worked');
+
+        if (!$fromDate || !$toDate) {
+            return response()->json(['message' => 'from_date and to_date are required'], 400);
+        }
+
+        if (strtotime($fromDate) > strtotime($toDate)) {
+            return response()->json(['message' => 'from_date must be before or equal to to_date'], 400);
+        }
+
+        $employeeQuery = employee::query();
+
+        if ($company_id || $department_id) {
+            $employeeQuery->whereHas('organizationAssignment', function ($q) use ($company_id, $department_id) {
+                if ($company_id) {
+                    $q->where('company_id', $company_id);
+                }
+                if ($department_id) {
+                    $q->where('department_id', $department_id);
+                }
+            });
+        }
+
+        if ($employee_category) {
+            $employeeQuery->whereHas('compensation', function ($q) use ($employee_category) {
+                $q->where('employee_category', $employee_category);
+            });
+        }
+
+        if ($search) {
+            $employeeQuery->where(function ($q) use ($search) {
+                $q->where('full_name', 'like', "%{$search}%")
+                    ->orWhere('nic', 'like', "%{$search}%")
+                    ->orWhere('attendance_employee_no', 'like', "%{$search}%");
+            });
+        }
+
+        $filteredEmployeeIds = $employeeQuery->pluck('id')->toArray();
+
+        if (empty($filteredEmployeeIds)) {
+            return response()->json([
+                'data' => [], 'current_page' => 1, 'last_page' => 1, 'per_page' => $perPage, 'total' => 0,
+            ]);
+        }
+
+        $statuses = ['IN', 'Late Coming', 'OUT', 'Early OUT'];
+
+        $query = time_card::with([
+            'employee.organizationAssignment.company',
+            'employee.organizationAssignment.department',
+            'employee.organizationAssignment.subDepartment',
+        ])
+            ->select(
+                'employee_id',
+                'date',
+                DB::raw('MIN(CASE WHEN status IN ("IN", "Late Coming") THEN time END) as in_time'),
+                DB::raw('MAX(CASE WHEN status IN ("OUT", "Early OUT") THEN time END) as out_time'),
+                DB::raw('MAX(approval_status) as approval_status'),
+                DB::raw('GROUP_CONCAT(DISTINCT status ORDER BY time ASC SEPARATOR ", ") as entries'),
+                DB::raw('SUBSTRING_INDEX(GROUP_CONCAT(CASE WHEN status IN ("IN", "Late Coming") THEN status ELSE NULL END ORDER BY time ASC SEPARATOR ","),",",1) as first_in_status'),
+                DB::raw('SUBSTRING_INDEX(GROUP_CONCAT(CASE WHEN status IN ("OUT", "Early OUT") THEN status ELSE NULL END ORDER BY time DESC SEPARATOR ","),",",1) as last_out_status')
+            )
+            ->whereBetween('date', [$fromDate, $toDate])
+            ->whereIn('status', $statuses)
+            ->whereNull('deleted_at')
+            ->whereIn('employee_id', $filteredEmployeeIds)
+            ->groupBy('employee_id', 'date')
+            ->orderBy('date', 'desc')
+            ->orderBy('employee_id');
+
+        $results = $query->paginate($perPage);
+
+        $results->getCollection()->transform(function ($record) {
+            $employee = $record->employee;
+            $org = $employee?->organizationAssignment;
+            $isLate = ($record->first_in_status ?? null) === 'Late Coming';
+
+            return [
+                'id' => $record->employee_id . '-' . $record->date,
+                'employee_id' => $record->employee_id,
+                'empNo' => $employee->attendance_employee_no ?? null,
+                'name' => $employee->full_name ?? null,
+                'company' => $org->company->name ?? null,
+                'department' => $org->department->name ?? null,
+                'sub_department' => $org->subDepartment->name ?? null,
+                'date' => $record->date,
+                'in_time' => $record->in_time ?? '-',
+                'out_time' => $record->out_time ?? '-',
+                'status' => 'Present',
+                'in_label' => $isLate ? 'Late Coming' : null,
+                'out_label' => ($record->last_out_status ?? null) === 'Early OUT' ? 'Early OUT' : null,
+                'approval_status' => $record->approval_status ?? 'Pending',
+                'entries' => $record->entries,
+            ];
+        });
+
+        return response()->json($results);
+    }
+
     public function monthly(Request $request)
     {
         $month = $request->input('month');

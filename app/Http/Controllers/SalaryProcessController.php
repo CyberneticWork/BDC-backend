@@ -259,36 +259,80 @@ class SalaryProcessController extends Controller
     {
         $employeeIDs = $request->selectedEmployees;
         $type = $request->bulkActionType;
-        $amount = $request->amount;
+        $amount = $request->bulkActionAmount;
+        $typeId = $request->bulkActionId;
+        $month = $request->month;
+        $year = $request->year;
 
-        if (empty($employeeIDs) || !$type || !is_numeric($amount)) {
-            return response()->json(['message' => 'Invalid bulk upload payload values supplied.'], 422);
+        if (!is_array($employeeIDs) || empty($employeeIDs)) {
+            return response()->json(['error' => 'No employees selected'], 400);
+        }
+
+        if (!$month || !$year) {
+            return response()->json(['error' => 'Month and Year are required for bulk actions'], 400);
+        }
+
+        if (!$type || !$typeId) {
+            return response()->json(['error' => 'Action type and item are required'], 400);
         }
 
         try {
             DB::beginTransaction();
 
-            foreach ($employeeIDs as $empId) {
-                // Determine category structure or look up existing assignment matching target models
-                employee_allowances::updateOrCreate(
-                    [
-                        'employee_id'   => $empId,
-                        'allowance_id'  => $type
-                    ],
-                    [
-                        'amount'        => (float)$amount,
-                        'updated_by'    => Auth::id() ?? null,
-                        'status'        => 'active'
-                    ]
-                );
+            foreach ($employeeIDs as $employeeId) {
+                if ($type === 'allowance') {
+                    employee_allowances::updateOrCreate(
+                        [
+                            'employee_id' => $employeeId,
+                            'allowance_id' => $typeId,
+                            'month' => $month,
+                            'year' => $year,
+                        ],
+                        [
+                            'custom_amount' => $amount,
+                            'is_active' => 1,
+                        ]
+                    );
+                } elseif ($type === 'deduction') {
+                    employee_deductions::updateOrCreate(
+                        [
+                            'employee_id' => $employeeId,
+                            'deduction_id' => $typeId,
+                            'month' => $month,
+                            'year' => $year,
+                        ],
+                        [
+                            'custom_amount' => $amount,
+                            'is_active' => 1,
+                        ]
+                    );
+                } else {
+                    EmployeeBonus::updateOrCreate(
+                        [
+                            'employee_id' => $employeeId,
+                            'bonus_id' => $typeId,
+                            'month' => $month,
+                            'year' => $year,
+                        ],
+                        [
+                            'custom_amount' => $amount,
+                            'is_active' => 1,
+                        ]
+                    );
+                }
             }
 
             DB::commit();
-            return response()->json(['message' => 'Employee bulk allowances updated successfully.'], 200);
+
+            return response()->json([
+                'message' => 'Bulk update successful for the selected month.',
+                'type' => $type,
+                'affected_employees' => count($employeeIDs),
+            ]);
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json([
-                'message' => 'Error performing structural allowance update: ' . $e->getMessage()
+                'message' => 'Error performing bulk update: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -1065,6 +1109,10 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 d.name AS department_name,
                 sd.name AS sub_department_name,
                 comp.basic_salary,
+                comp.monthly_bonus,
+                comp.sports_fund_percentage,
+                comp.staff_fund_amount,
+                c.default_sports_fund_percentage,
                 oa.probationary_period,
                 oa.date_of_joining,
                 e.epf,
@@ -1100,22 +1148,13 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 COALESCE(SUM(CASE WHEN npr.type = 'EARLY_OUT' THEN COALESCE(npr.no_pay_count, 0) ELSE 0 END), 0) AS early_out_nopays,
                 COALESCE(SUM(CASE WHEN npr.type = 'LATE_IN' THEN COALESCE(npr.no_pay_count, 0) ELSE 0 END), 0) AS major_late_nopays,
 
-                -- =========================================================================
-                -- ALLOWANCES SUBQUERY (Fixed overlapping variable criteria)
-                -- =========================================================================
+                -- Employee-wise allowances (monthly bonus uses category bonus/monthly_bonus)
                 (
                     SELECT COALESCE(CONCAT('[', GROUP_CONCAT(
-                        CONCAT('{\"id\":', a.id, ',\"name\":\"', REPLACE(IFNULL(a.allowance_name, ''), '\"', '\\\\\"'), '\",\"amount\":', COALESCE(a.amount, 0), ',\"is_custom\":0,\"code\":\"', REPLACE(IFNULL(a.allowance_code, ''), '\"', '\\\\\"'), '\",\"category\":\"', REPLACE(IFNULL(a.category, ''), '\"', '\\\\\"'), '\"}')
+                        CONCAT('{\"id\":', a.id, ',\"name\":\"', REPLACE(IFNULL(a.allowance_name, ''), '\"', '\\\\\"'), '\",\"amount\":', COALESCE(ea.custom_amount, a.amount, 0), ',\"is_custom\":1,\"code\":\"', REPLACE(IFNULL(a.allowance_code, ''), '\"', '\\\\\"'), '\",\"category\":\"', REPLACE(IFNULL(a.category, ''), '\"', '\\\\\"'), '\"}')
                     SEPARATOR ','), ']'), '[]')
-                    FROM allowances a
-                    WHERE a.company_id = oa.company_id
-                      AND (a.department_id IS NULL OR a.department_id = oa.department_id)
-                      AND a.status = 'active'
-                      AND (
-                          (a.allowance_type = 'fixed' AND MONTH(a.fixed_date) = ? AND YEAR(a.fixed_date) = ?)
-                          OR
-                          (a.allowance_type = 'variable' AND a.variable_from <= ? AND a.variable_to >= ?)
-                      )
+                    FROM employee_allowances ea JOIN allowances a ON a.id = ea.allowance_id
+                    WHERE ea.employee_id = e.id AND ea.is_active = 1 AND a.status = 'active' AND (ea.month = ? AND ea.year = ?)
                 ) AS allowances,
 
                 (
@@ -1124,39 +1163,25 @@ public function getEmployeesByMonthAndCompany(Request $request)
                     WHERE da.employee_id = e.id AND da.status = 'Approved' AND MONTH(da.date) = ? AND YEAR(da.date) = ?
                 ) AS total_dinner_allowance,
 
-                -- =========================================================================
-                -- DEDUCTIONS SUBQUERY (Fixed overlapping variable criteria)
-                -- =========================================================================
+                -- Employee-wise deductions
                 (
                     SELECT COALESCE(CONCAT('[', GROUP_CONCAT(
-                        CONCAT('{\"id\":', dd.id, ',\"name\":\"', REPLACE(IFNULL(dd.deduction_name, ''), '\"', '\\\\\"'), '\",\"amount\":', COALESCE(dd.amount, 0), ',\"is_custom\":0,\"code\":\"', REPLACE(IFNULL(dd.deduction_code, ''), '\"', '\\\\\"'), '\",\"category\":\"', REPLACE(IFNULL(dd.category, ''), '\"', '\\\\\"'), '\"}')
+                        CONCAT('{\"id\":', dd.id, ',\"name\":\"', REPLACE(IFNULL(dd.deduction_name, ''), '\"', '\\\\\"'), '\",\"amount\":', COALESCE(ed.custom_amount, dd.amount, 0), ',\"is_custom\":', CASE WHEN ed.id IS NOT NULL THEN 1 ELSE 0 END, ',\"code\":\"', REPLACE(IFNULL(dd.deduction_code, ''), '\"', '\\\\\"'), '\",\"category\":\"', REPLACE(IFNULL(dd.category, ''), '\"', '\\\\\"'), '\"}')
                     SEPARATOR ','), ']'), '[]')
-                    FROM deductions dd
-                    WHERE dd.company_id = oa.company_id
-                      AND (dd.department_id IS NULL OR dd.department_id = oa.department_id)
-                      AND dd.status = 'active'
-                      AND (
-                          (dd.deduction_type = 'fixed' AND MONTH(dd.startDate) = ? AND YEAR(dd.startDate) = ?)
-                          OR
-                          (dd.deduction_type = 'variable' AND dd.startDate <= ? AND dd.endDate >= ?)
-                      )
+                    FROM deductions dd LEFT JOIN employee_deductions ed ON dd.id = ed.deduction_id AND ed.employee_id = e.id AND ed.is_active = 1 AND (ed.month = ? AND ed.year = ?)
+                    WHERE dd.company_id = c.id AND (dd.department_id IS NULL OR dd.department_id = oa.department_id) AND dd.status = 'active'
                 ) AS deductions,
 
-                -- =========================================================================
-                -- BONUSES SUBQUERY (Fixed overlapping variable criteria)
-                -- =========================================================================
+                -- Employee-wise bonuses (annual + monthly assignments)
                 (
                     SELECT COALESCE(CONCAT('[', GROUP_CONCAT(
-                        CONCAT('{\"id\":', b.id, ',\"name\":\"', REPLACE(IFNULL(b.bonus_name, ''), '\"', '\\\\\"'), '\",\"amount\":', COALESCE(b.amount, 0), ',\"is_custom\":0,\"code\":\"', REPLACE(IFNULL(b.bonus_code, ''), '\"', '\\\\\"'), '\",\"category\":\"', REPLACE(IFNULL(b.bonus_type, ''), '\"', '\\\\\"'), '\"}')
+                        CONCAT('{\"id\":', b.id, ',\"name\":\"', REPLACE(IFNULL(b.bonus_name, ''), '\"', '\\\\\"'), '\",\"amount\":', COALESCE(eb.custom_amount, b.amount, 0), ',\"is_custom\":1,\"code\":\"', REPLACE(IFNULL(b.bonus_code, ''), '\"', '\\\\\"'), '\",\"category\":\"', REPLACE(IFNULL(b.bonus_type, ''), '\"', '\\\\\"'), '\",\"is_annual\":', COALESCE(b.is_annual, 0), ',\"payment_months\":', COALESCE(b.payment_months, '[]'), '}')
                     SEPARATOR ','), ']'), '[]')
-                    FROM bonuses b
-                    WHERE b.company_id = oa.company_id
-                      AND (b.department_id IS NULL OR b.department_id = oa.department_id)
-                      AND b.status = 'active'
+                    FROM employee_bonuses eb JOIN bonuses b ON b.id = eb.bonus_id
+                    WHERE eb.employee_id = e.id AND eb.is_active = 1 AND b.status = 'active'
                       AND (
-                          (b.bonus_type = 'fixed' AND MONTH(b.fixed_date) = ? AND YEAR(b.fixed_date) = ?)
-                          OR
-                          (b.bonus_type = 'variable' AND b.variable_from <= ? AND b.variable_to >= ?)
+                          b.is_annual = 1
+                          OR (COALESCE(b.is_annual, 0) = 0 AND eb.month = ? AND eb.year = ?)
                       )
                 ) AS bonuses
 
@@ -1173,24 +1198,17 @@ public function getEmployeesByMonthAndCompany(Request $request)
             WHERE e.is_active = '1'
         ";
 
-        // Structured mapping parameter sequence to account for corrected overlapping range math
         $params = [
             $month,
-            $year,
-            $endDate,
-            $startDate, // Allowances Subquery (Fixed check: from <= endDate AND to >= startDate)
+            $year, // Allowances
             $month,
-            $year,                       // Dinner Allowance Subquery
+            $year, // Dinner Allowance
             $month,
-            $year,
-            $endDate,
-            $startDate, // Deductions Subquery (Fixed check: start <= endDate AND end >= startDate)
+            $year, // Deductions
             $month,
-            $year,
-            $endDate,
-            $startDate, // Bonuses Subquery (Fixed check: from <= endDate AND to >= startDate)
+            $year, // Non-annual Bonuses
             $startDate,
-            $endDate                 // No Pay Records Join Range
+            $endDate, // No Pay Records
         ];
 
         if ($company_id) {
@@ -1207,10 +1225,11 @@ public function getEmployeesByMonthAndCompany(Request $request)
             $params[] = "%{$search}%";
         }
 
-        $query .= " GROUP BY e.id, e.attendance_employee_no, e.full_name, e.nic, c.name, d.name, sd.name, comp.basic_salary, comp.br1, comp.br2, comp.increment_active, comp.increment_value, comp.increment_effected_date, comp.ot_morning, comp.ot_evening, comp.enable_epf_etf, comp.stamp, comp.bank_name, comp.branch_name, comp.bank_account_no, c.id, oa.department_id, oa.probationary_period, oa.date_of_joining, e.epf, cd.permanent_address, cd.mobile_line, cd.emg_name, cd.emg_relationship, cd.emg_tel";
+        $query .= " GROUP BY e.id, e.attendance_employee_no, e.full_name, e.nic, c.name, d.name, sd.name, comp.basic_salary, comp.monthly_bonus, comp.sports_fund_percentage, comp.staff_fund_amount, c.default_sports_fund_percentage, comp.br1, comp.br2, comp.increment_active, comp.increment_value, comp.increment_effected_date, comp.ot_morning, comp.ot_evening, comp.enable_epf_etf, comp.stamp, comp.bank_name, comp.branch_name, comp.bank_account_no, c.id, oa.department_id, oa.probationary_period, oa.date_of_joining, e.epf, cd.permanent_address, cd.mobile_line, cd.emg_name, cd.emg_relationship, cd.emg_tel";
 
         $results = DB::select($query, $params);
         $data = [];
+        $currentMonthInt = (int) $month;
 
         foreach ($results as $result) {
             $employeeData = (array)$result;
@@ -1220,11 +1239,26 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 'branch_name' => $result->branch_name ?? null,
                 'bank_account_no' => $result->bank_account_no ?? null,
                 'enable_epf_etf' => $result->enable_epf_etf ?? false,
+                'monthly_bonus' => (float) ($result->monthly_bonus ?? 0),
+                'sports_fund_percentage' => $result->sports_fund_percentage,
+                'staff_fund_amount' => (float) ($result->staff_fund_amount ?? 0),
             ];
 
             $allowancesArr = json_decode($result->allowances ?? '[]', true) ?: [];
             $deductionsArr = json_decode($result->deductions ?? '[]', true) ?: [];
             $bonusesArr = json_decode($result->bonuses ?? '[]', true) ?: [];
+
+            // Annual bonuses: only include when current month is a payment month
+            $bonusesArr = array_values(array_filter($bonusesArr, function ($bonus) use ($currentMonthInt) {
+                if (empty($bonus['is_annual'])) {
+                    return true;
+                }
+                $paymentMonths = $bonus['payment_months'] ?? [];
+                if (is_string($paymentMonths)) {
+                    $paymentMonths = json_decode($paymentMonths, true) ?: [];
+                }
+                return in_array($currentMonthInt, array_map('intval', $paymentMonths), true);
+            }));
 
             $dinnerAllowanceValue = (float)($employeeData['total_dinner_allowance'] ?? 0);
             if ($dinnerAllowanceValue > 0) {
@@ -1353,21 +1387,60 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 }
             }
 
-            $employeeData['allowances'] = $allowancesArr;
+            // Split allowances: monthly bonus categories go to bonus payslip
+            $monthlyBonusCategories = ['bonus', 'monthly_bonus'];
+            $basicAllowancesArr = [];
+            $monthlyBonusFromAllowances = 0.0;
+            foreach ($allowancesArr as $item) {
+                $cat = strtolower($item['category'] ?? '');
+                if (in_array($cat, $monthlyBonusCategories, true)) {
+                    $monthlyBonusFromAllowances += (float) ($item['amount'] ?? 0);
+                } else {
+                    $basicAllowancesArr[] = $item;
+                }
+            }
+
+            $compMonthlyBonus = (float) ($employeeData['monthly_bonus'] ?? 0);
+            $monthlyBonusTotal = $compMonthlyBonus + $monthlyBonusFromAllowances;
+
+            if ($compMonthlyBonus > 0) {
+                $bonusesArr[] = [
+                    'id' => 'comp_monthly_bonus',
+                    'name' => 'Monthly Bonus',
+                    'amount' => $compMonthlyBonus,
+                    'category' => 'monthly_bonus',
+                ];
+            }
+
+            $employeeData['allowances'] = $basicAllowancesArr;
             $employeeData['deductions'] = $deductionsArr;
             $employeeData['bonuses'] = $bonusesArr;
 
-            $totalAllowances = array_reduce($allowancesArr, fn($c, $i) => $c + (float)($i['amount'] ?? 0), 0);
+            $totalAllowances = array_reduce($basicAllowancesArr, fn($c, $i) => $c + (float)($i['amount'] ?? 0), 0);
             $totalBonuses = array_reduce($bonusesArr, fn($c, $i) => $c + (float)($i['amount'] ?? 0), 0);
 
-            $totalFixedDeductions = array_reduce($deductionsArr, fn($c, $i) => $c + (float)($i['amount'] ?? 0), 0);
+            $epfEtfDeductions = 0.0;
+            $bonusFixedDeductions = 0.0;
+            foreach ($deductionsArr as $deduction) {
+                $cat = strtoupper($deduction['category'] ?? '');
+                $amount = (float) ($deduction['amount'] ?? 0);
+                if (in_array($cat, ['EPF', 'ETF'], true)) {
+                    $epfEtfDeductions += $amount;
+                } else {
+                    $bonusFixedDeductions += $amount;
+                }
+            }
 
-            $epfEligibleAllowances = array_reduce($allowancesArr, function ($carry, $item) {
-                $cat = strtolower($item['category'] ?? '');
-                return in_array($cat, ['kpi_bonus', 'dinner_allowance']) ? $carry : $carry + (float)($item['amount'] ?? 0);
-            }, 0);
-            $epfEtfBase = $basicSalary + $epfEligibleAllowances;
+            // EPF/ETF calculated from basic salary only
+            $epfEtfBase = $basicSalary;
             $epfEmployeeDeduction = !empty($employeeData['enable_epf_etf']) ? ($epfEtfBase * 0.08) : 0;
+
+            // Sports fund: percentage of (basic + monthly bonus)
+            $sportsFundPct = $employeeData['sports_fund_percentage'] ?? $employeeData['default_sports_fund_percentage'] ?? 0;
+            $sportsFundDeduction = round(($basicSalary + $monthlyBonusTotal) * ((float) $sportsFundPct / 100), 2);
+
+            // Staff fund: fixed amount from monthly bonus
+            $staffFundDeduction = round((float) ($employeeData['staff_fund_amount'] ?? 0), 2);
 
             // Overtime
             $otRows = \App\Models\over_time::with('timeCard:id,date,time,actual_date')->where('employee_id', $employeeData['id'])->whereRaw('LOWER(status) = ?', ['approved'])->whereHas('timeCard', function ($q) use ($startDate, $endDate) {
@@ -1381,8 +1454,8 @@ public function getEmployeesByMonthAndCompany(Request $request)
             $basicGross = $basicSalary + $totalAllowances;
             $bonusGross = $totalBonuses;
 
-            $basicDeductionsTotal = $epfEmployeeDeduction + $fullDayNoPayDeduction + $probationDeduction;
-            $bonusDeductionsTotal = $saturdayNoPayBonusDeduction + $earlyOutNoPayDeduction + $shortLeaveDeduction + $halfDayDeduction + $majorLateDeduction + $totalFixedDeductions;
+            $basicDeductionsTotal = $epfEmployeeDeduction + $epfEtfDeductions + $fullDayNoPayDeduction + $probationDeduction;
+            $bonusDeductionsTotal = $saturdayNoPayBonusDeduction + $earlyOutNoPayDeduction + $shortLeaveDeduction + $halfDayDeduction + $majorLateDeduction + $bonusFixedDeductions + $sportsFundDeduction + $staffFundDeduction;
 
             if ($loanDeductFrom === 'basic') {
                 $basicDeductionsTotal += $loanPrincipal;
@@ -1399,6 +1472,7 @@ public function getEmployeesByMonthAndCompany(Request $request)
 
             $employeeData['salary_breakdown'] = [
                 'basic_salary' => round($basicSalary, 2),
+                'monthly_bonus' => round($monthlyBonusTotal, 2),
                 'per_day_salary' => round($perDaySalary, 3),
                 'ot_morning_fees' => round($morning_ot_fees, 2),
                 'ot_night_fees' => round($night_ot_fees, 2),
@@ -1414,6 +1488,9 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 'half_day_deduction' => round($halfDayDeduction, 2),
                 'major_late_deduction' => round($majorLateDeduction, 2),
                 'epf_employee_deduction' => round($epfEmployeeDeduction, 2),
+                'epf_etf_fixed_deductions' => round($epfEtfDeductions, 2),
+                'sports_fund_deduction' => $sportsFundDeduction,
+                'staff_fund_deduction' => $staffFundDeduction,
                 'probation_deduction' => round($probationDeduction, 2),
                 'stamp_duty' => $stampValue,
 
@@ -1421,7 +1498,7 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 'loan_interest' => round($loanInterest, 2),
                 'loan_deduct_from' => $loanDeductFrom,
 
-                'total_fixed_deductions' => round($totalFixedDeductions, 2),
+                'total_fixed_deductions' => round($bonusFixedDeductions + $epfEtfDeductions, 2),
 
                 'net_salary' => round($netSalary, 2),
                 'gross_salary' => round($grossSalary, 2),

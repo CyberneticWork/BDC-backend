@@ -14,6 +14,8 @@ class bonuses extends Model
         'bonus_name',
         'status',
         'bonus_type',
+        'is_annual',
+        'payment_months',
         'amount',
         'company_id',
         'department_id',
@@ -25,7 +27,9 @@ class bonuses extends Model
     protected $casts = [
         'fixed_date' => 'date',
         'variable_from' => 'date',
-        'variable_to' => 'date'
+        'variable_to' => 'date',
+        'is_annual' => 'boolean',
+        'payment_months' => 'array',
     ];
 
     public function company()

@@ -129,6 +129,68 @@ class LoanController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Detailed loan report for export (all loans or single employee)
+     */
+    public function report(Request $request)
+    {
+        $employeeNo = $request->query('employee_no');
+
+        $query = loans::with(['employee:id,full_name,attendance_employee_no,nic'])
+            ->orderBy('created_at', 'desc');
+
+        if ($employeeNo) {
+            $employee = employee::where('attendance_employee_no', $employeeNo)->first();
+            if (!$employee) {
+                return response()->json(['message' => 'Employee not found'], 404);
+            }
+            $query->where('employee_id', $employee->id);
+        }
+
+        $loans = $query->get();
+
+        $data = $loans->map(function ($loan) {
+            $schedule = is_array($loan->schedule) ? $loan->schedule : (json_decode($loan->schedule, true) ?: []);
+            $monthlyInterest = 0.0;
+            if ($loan->with_interest && $loan->interest_rate_per_annum > 0) {
+                $monthlyInterest = round(($loan->loan_amount * ($loan->interest_rate_per_annum / 100)) / 12, 2);
+            }
+
+            $scheduleSummary = collect($schedule)->map(function ($row, $index) use ($loan, $monthlyInterest) {
+                $installment = (float) ($row['installment_amount'] ?? $row['installmentAmount'] ?? $loan->installment_amount);
+                $interest = $loan->with_interest ? min($monthlyInterest, $installment) : 0;
+                return [
+                    'installment_no' => $index + 1,
+                    'due_date' => $row['due_date'] ?? $row['dueDate'] ?? null,
+                    'installment_amount' => $installment,
+                    'interest_deduction' => round($interest, 2),
+                    'principal_deduction' => round($installment - $interest, 2),
+                    'status' => $row['status'] ?? 'pending',
+                ];
+            });
+
+            return [
+                'loan_id' => $loan->loan_id,
+                'employee_no' => $loan->employee?->attendance_employee_no,
+                'employee_name' => $loan->employee?->full_name,
+                'loan_amount' => (float) $loan->loan_amount,
+                'interest_rate_per_annum' => (float) $loan->interest_rate_per_annum,
+                'with_interest' => (bool) $loan->with_interest,
+                'installment_amount' => (float) $loan->installment_amount,
+                'installment_count' => (int) $loan->installment_count,
+                'monthly_interest_deduction' => $monthlyInterest,
+                'deduct_from' => $loan->deduct_from,
+                'start_from' => $loan->start_from?->format('Y-m-d'),
+                'status' => $loan->status,
+                'schedule' => $scheduleSummary,
+                'total_interest_payable' => round($scheduleSummary->sum('interest_deduction'), 2),
+                'total_principal_payable' => round($scheduleSummary->sum('principal_deduction'), 2),
+            ];
+        });
+
+        return response()->json(['data' => $data]);
+    }
 }
 
 

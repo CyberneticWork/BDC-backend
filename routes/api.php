@@ -43,6 +43,7 @@ use App\Http\Controllers\CentersController;
 use App\Http\Controllers\ShiftOvertimeRateController;
 
 use App\Http\Controllers\BonusesController;
+use App\Http\Controllers\EmployeeBonusController;
 use App\Http\Controllers\LeaveSettingController;
 
 use App\Http\Controllers\AttendanceReportController;
@@ -88,12 +89,14 @@ Route::apiResource('employees', EmployeeController::class);
 Route::post('/employees/change-password', [EmployeeController::class, 'changePassword'])->middleware('auth:sanctum');
 Route::post('employes/post/update', [EmployeeController::class, 'update']);
 Route::get('/emp/table', [EmployeeController::class, 'getEmployeesForTable']);
+Route::get('/employees/export/data', [EmployeeController::class, 'export']);
 Route::get('/emp/search', [EmployeeController::class, 'search']);
 Route::get('/emp/search/empno', [EmployeeController::class, 'searchByAttendanceNo']);
 Route::get('/employees/by-employment-type/{typeName}', [EmployeeController::class, 'getByEmploymentType']);
 // ✅ Loan special routes FIRST, then resource
 Route::get('/loans/employee-by-number/{number}', [LoanController::class, 'getEmployeeByNumber']);
 Route::get('/loans/by-employee/{employeeNo}', [LoanController::class, 'getByEmployeeNo']);
+Route::get('/loans/report/export', [LoanController::class, 'report']);
 Route::apiResource('loans', LoanController::class);
 // ✅ Special route FIRST
 Route::get('/allowances/by-company-or-department', [AllowancesController::class, 'getAllowancesByCompanyOrDepartment']);
@@ -173,6 +176,9 @@ Route::apiResource('bonuses', BonusesController::class);
 // Bonuses import/export routes
 Route::get('/bonuses/template/download', [BonusesController::class, 'downloadTemplate']);
 Route::post('/bonuses/import', [BonusesController::class, 'import']);
+Route::get('/employee-bonuses', [EmployeeBonusController::class, 'index']);
+Route::post('/employee-bonuses', [EmployeeBonusController::class, 'store']);
+Route::delete('/employee-bonuses/{id}', [EmployeeBonusController::class, 'destroy']);
 
 
 // Route::get('salary/{id}/audit', [SalaryController::class, 'getAuditLogs']);
@@ -312,6 +318,7 @@ Route::delete('/leave-settings/{leaveSetting}', [LeaveSettingController::class, 
 Route::get('/reports/time-cards/attendance', [AttendanceReportController::class, 'index']);
 
 Route::get('/reports/time-cards/attendance/monthly', [AttendanceReportController::class, 'monthly']);
+Route::get('/reports/time-cards/attendance/range', [AttendanceReportController::class, 'dateRange']);
 
 Route::put('/reports/time-cards/attendance/{employeeId}/{date}/approval-status', [AttendanceReportController::class, 'updateApprovalStatus']);
 // ✅ special route FIRST

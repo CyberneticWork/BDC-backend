@@ -661,6 +661,9 @@ class EmployeeController extends Controller
                 'br2' => $compensation['budgetaryReliefAllowance2016'],
                 'stamp' => $compensation['stamp'],
                 'employee_category' => $organization['employeeCategory'],
+                'monthly_bonus' => $compensation['monthlyBonus'] ?? 0,
+                'sports_fund_percentage' => $compensation['sportsFundPercentage'] ?? null,
+                'staff_fund_amount' => $compensation['staffFundAmount'] ?? 0,
             ]);
 
             // Add default roster
@@ -738,6 +741,79 @@ class EmployeeController extends Controller
             'message' => 'Employee details fetched successfully',
             'data' => $employee
         ], 200);
+    }
+
+    /**
+     * Export employee data as structured JSON for PDF/CSV generation
+     */
+    public function export(Request $request)
+    {
+        $employeeId = $request->query('employee_id');
+
+        $relations = [
+            'employmentType',
+            'spouse',
+            'children',
+            'contactDetail',
+            'compensation',
+            'documents',
+            'organizationAssignment.company',
+            'organizationAssignment.department',
+            'organizationAssignment.subDepartment',
+            'organizationAssignment.designation',
+        ];
+
+        if ($employeeId) {
+            $employee = employee::with($relations)->findOrFail($employeeId);
+            return response()->json(['data' => [$this->formatEmployeeExport($employee)]]);
+        }
+
+        $employees = employee::with($relations)->where('is_active', true)->orderBy('full_name')->get();
+
+        return response()->json([
+            'data' => $employees->map(fn ($emp) => $this->formatEmployeeExport($emp)),
+        ]);
+    }
+
+    private function formatEmployeeExport(employee $employee): array
+    {
+        $org = $employee->organizationAssignment;
+        $contact = $employee->contactDetail;
+        $comp = $employee->compensation;
+
+        return [
+            'id' => $employee->id,
+            'employee_no' => $employee->attendance_employee_no,
+            'epf_no' => $employee->epf,
+            'nic' => $employee->nic,
+            'full_name' => $employee->full_name,
+            'name_with_initials' => $employee->name_with_initials,
+            'title' => $employee->title,
+            'gender' => $employee->gender,
+            'dob' => $employee->dob,
+            'marital_status' => $employee->marital_status,
+            'email' => $employee->email ?? $contact?->email,
+            'mobile' => $contact?->mobile_line,
+            'permanent_address' => $contact?->permanent_address,
+            'employment_type' => $employee->employmentType?->name,
+            'company' => $org?->company?->name,
+            'department' => $org?->department?->name,
+            'sub_department' => $org?->subDepartment?->name,
+            'designation' => $org?->designation?->name,
+            'date_of_joining' => $org?->date_of_joining,
+            'basic_salary' => $comp?->basic_salary,
+            'monthly_bonus' => $comp?->monthly_bonus,
+            'sports_fund_percentage' => $comp?->sports_fund_percentage,
+            'staff_fund_amount' => $comp?->staff_fund_amount,
+            'bank_name' => $comp?->bank_name,
+            'bank_account_no' => $comp?->bank_account_no,
+            'enable_epf_etf' => $comp?->enable_epf_etf,
+            'spouse_name' => $employee->spouse?->name,
+            'children_count' => $employee->children?->count() ?? 0,
+            'emergency_contact' => $contact?->emg_name,
+            'emergency_phone' => $contact?->emg_tel,
+            'status' => $employee->is_active ? 'Active' : 'Inactive',
+        ];
     }
 
     /**
@@ -1169,6 +1245,9 @@ class EmployeeController extends Controller
                     'br2' => $compensation['budgetaryReliefAllowance2016'],
                     'stamp' => $compensation['stamp'],
                     'employee_category' => $organization['employeeCategory'],
+                    'monthly_bonus' => $compensation['monthlyBonus'] ?? 0,
+                    'sports_fund_percentage' => $compensation['sportsFundPercentage'] ?? null,
+                    'staff_fund_amount' => $compensation['staffFundAmount'] ?? 0,
                 ]);
             }
 
