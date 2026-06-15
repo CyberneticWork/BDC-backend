@@ -55,6 +55,8 @@ use App\Http\Controllers\DinnerAllowanceController;
 
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\EmergencyContactRelationshipTypesController;
+use App\Http\Controllers\EmployeeWiseAllowanceController;
+use App\Models\EmployeeWiseAllowance;
 
 Route::get('/user', function (Request $request) {
     return $request->user();
@@ -545,6 +547,12 @@ Route::middleware('auth:sanctum')->group(function () {
     // Add this new route
     Route::post('/pms/kpi-task-assignments/check-weights', [PmsController::class, 'checkAssigneeWeights']);
 });
+
+Route::get('employee-wise-allowance', [EmployeeWiseAllowanceController::class, 'index']);
+Route::get('employee-wise-allowance/{id}', [EmployeeWiseAllowanceController::class, 'getOneById']);
+Route::post('employee-wise-allowance', [EmployeeWiseAllowanceController::class, 'store']);
+Route::put('employee-wise-allowance/{id}', [EmployeeWiseAllowanceController::class, 'update']);
+Route::delete('employee-wise-allowance/{id}', [EmployeeWiseAllowanceController::class, 'destroy']);
 
 // emergency contact relationship types
 Route::apiResource('emergency-contact-relationship-types', EmergencyContactRelationshipTypesController::class);

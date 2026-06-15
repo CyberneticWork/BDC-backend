@@ -95,4 +95,9 @@ class employee extends Model
     {
         return $this->hasMany(over_time::class, 'employee_id');
     }
+
+    public function employeeWiseAllowance()
+    {
+        return $this->hasMany(EmployeeWiseAllowance::class);
+    }
 }
