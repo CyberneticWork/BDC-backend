@@ -10,7 +10,7 @@ class EmployeeWiseAllowanceService
     public function getAll(): Collection
     {
         return EmployeeWiseAllowance::with('employee')->get()->map(function ($allowance) {
-            $allowance->employee_name = $allowance->employee?->display_name ?? 'N/A';
+            $allowance->employee_name = $allowance->employee?->full_name ?? 'N/A';
             $allowance->makeHidden('employee');
 
             return $allowance;

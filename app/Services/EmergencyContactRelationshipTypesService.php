@@ -30,7 +30,7 @@ class EmergencyContactRelationshipTypesService
      */
     public function getTypeById(int $id): EmergencyContactRelationshipType
     {
-        return EmergencyContactRelationshipType::findOrFaile($id);
+        return EmergencyContactRelationshipType::findOrFail($id);
     }
 
     /**

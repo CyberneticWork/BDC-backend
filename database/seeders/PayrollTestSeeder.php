@@ -4,10 +4,11 @@ namespace Database\Seeders;
 
 use App\Models\allowances;
 use App\Models\bonuses;
-use App\Models\compensation;
 use App\Models\employee;
 use App\Models\employee_allowances;
 use App\Models\EmployeeBonus;
+use App\Models\EmployeeWiseBonus;
+use App\Models\EmployeeWiseDeduction;
 use App\Models\loans;
 use Illuminate\Database\Seeder;
 
@@ -18,22 +19,22 @@ class PayrollTestSeeder extends Seeder
         $month = (int) date('n');
         $year = (int) date('Y');
 
-        // Monthly bonus allowance master (employee-wise amounts assigned below)
-        $monthlyBonusAllowance = allowances::updateOrCreate(
-            ['allowance_code' => 'MB-001'],
+        // Regular allowance (not monthly bonus — that lives on compensation)
+        $travelAllowance = allowances::updateOrCreate(
+            ['allowance_code' => 'TA-001'],
             [
-                'allowance_name' => 'Monthly Bonus',
+                'allowance_name' => 'Travel Allowance',
                 'company_id' => 1,
                 'department_id' => null,
-                'amount' => 15000,
-                'category' => 'monthly_bonus',
+                'amount' => 5000,
+                'category' => 'travel',
                 'status' => 'active',
                 'allowance_type' => 'fixed',
                 'fixed_date' => now()->toDateString(),
             ]
         );
 
-        // Annual bonus — paid in April and December
+        // Annual bonus master — paid in April and December
         $annualBonus = bonuses::updateOrCreate(
             ['bonus_code' => 'AB-001'],
             [
@@ -73,12 +74,12 @@ class PayrollTestSeeder extends Seeder
             employee_allowances::updateOrCreate(
                 [
                     'employee_id' => $emp->id,
-                    'allowance_id' => $monthlyBonusAllowance->id,
+                    'allowance_id' => $travelAllowance->id,
                     'month' => $month,
                     'year' => $year,
                 ],
                 [
-                    'custom_amount' => $monthlyBonus,
+                    'custom_amount' => 5000 + ($index * 500),
                     'is_active' => true,
                 ]
             );
@@ -96,7 +97,33 @@ class PayrollTestSeeder extends Seeder
                 ]
             );
 
-            // Sample loan for first 3 employees
+            EmployeeWiseBonus::updateOrCreate(
+                ['bonus_code' => 'EWB-' . $emp->attendance_employee_no],
+                [
+                    'bonus_name' => 'Special Bonus',
+                    'bonus_description' => 'Employee-wise bonus sample',
+                    'employee_id' => $emp->id,
+                    'amount' => 3000 + ($index * 500),
+                    'date' => now()->startOfMonth()->toDateString(),
+                    'is_annual' => false,
+                    'status' => 'active',
+                ]
+            );
+
+            if ($index < 3) {
+                EmployeeWiseDeduction::updateOrCreate(
+                    ['deduction_code' => 'EWD-' . $emp->attendance_employee_no],
+                    [
+                        'deduction_name' => 'Union Fee',
+                        'deduction_description' => 'Employee-wise deduction sample',
+                        'employee_id' => $emp->id,
+                        'amount' => 200 + ($index * 50),
+                        'date' => now()->startOfMonth()->toDateString(),
+                        'status' => 'active',
+                    ]
+                );
+            }
+
             if ($index < 3 && !loans::where('employee_id', $emp->id)->exists()) {
                 loans::create([
                     'loan_id' => 'LOAN-TEST-' . $emp->attendance_employee_no,
@@ -115,7 +142,7 @@ class PayrollTestSeeder extends Seeder
         }
 
         $this->command->info('Payroll test data seeded for ' . $employees->count() . ' employees.');
-        $this->command->info('Monthly bonus allowance: ' . $monthlyBonusAllowance->allowance_code);
+        $this->command->info('Monthly bonus: set on compensation (salary split)');
         $this->command->info('Annual bonus: ' . $annualBonus->bonus_code . ' (paid in Apr & Dec)');
         $this->command->info('Login: admin@mail.com / 123456');
     }

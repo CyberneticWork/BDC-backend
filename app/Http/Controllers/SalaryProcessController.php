@@ -1148,14 +1148,26 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 COALESCE(SUM(CASE WHEN npr.type = 'EARLY_OUT' THEN COALESCE(npr.no_pay_count, 0) ELSE 0 END), 0) AS early_out_nopays,
                 COALESCE(SUM(CASE WHEN npr.type = 'LATE_IN' THEN COALESCE(npr.no_pay_count, 0) ELSE 0 END), 0) AS major_late_nopays,
 
-                -- Employee-wise allowances (monthly bonus uses category bonus/monthly_bonus)
+                -- Employee-wise allowances (company/month assignments)
                 (
                     SELECT COALESCE(CONCAT('[', GROUP_CONCAT(
                         CONCAT('{\"id\":', a.id, ',\"name\":\"', REPLACE(IFNULL(a.allowance_name, ''), '\"', '\\\\\"'), '\",\"amount\":', COALESCE(ea.custom_amount, a.amount, 0), ',\"is_custom\":1,\"code\":\"', REPLACE(IFNULL(a.allowance_code, ''), '\"', '\\\\\"'), '\",\"category\":\"', REPLACE(IFNULL(a.category, ''), '\"', '\\\\\"'), '\"}')
                     SEPARATOR ','), ']'), '[]')
                     FROM employee_allowances ea JOIN allowances a ON a.id = ea.allowance_id
-                    WHERE ea.employee_id = e.id AND ea.is_active = 1 AND a.status = 'active' AND (ea.month = ? AND ea.year = ?)
+                    WHERE ea.employee_id = e.id AND ea.is_active = 1 AND a.status = 'active'
+                      AND LOWER(IFNULL(a.category, '')) NOT IN ('bonus', 'monthly_bonus')
+                      AND (ea.month = ? AND ea.year = ?)
                 ) AS allowances,
+
+                -- Employee-wise allowance records (dated entries)
+                (
+                    SELECT COALESCE(CONCAT('[', GROUP_CONCAT(
+                        CONCAT('{\"id\":', ewa.id, ',\"name\":\"', REPLACE(IFNULL(ewa.allowance_name, ''), '\"', '\\\\\"'), '\",\"amount\":', COALESCE(ewa.amount, 0), ',\"is_custom\":1,\"code\":\"', REPLACE(IFNULL(ewa.allowance_code, ''), '\"', '\\\\\"'), '\",\"category\":\"other\"}')
+                    SEPARATOR ','), ']'), '[]')
+                    FROM employee_wise_allowances ewa
+                    WHERE ewa.employee_id = e.id AND ewa.status = 'active'
+                      AND MONTH(ewa.date) = ? AND YEAR(ewa.date) = ?
+                ) AS employee_wise_allowances,
 
                 (
                     SELECT COALESCE(SUM(da.amount), 0)
@@ -1163,16 +1175,27 @@ public function getEmployeesByMonthAndCompany(Request $request)
                     WHERE da.employee_id = e.id AND da.status = 'Approved' AND MONTH(da.date) = ? AND YEAR(da.date) = ?
                 ) AS total_dinner_allowance,
 
-                -- Employee-wise deductions
+                -- Employee-wise deductions (assigned per employee per month)
                 (
                     SELECT COALESCE(CONCAT('[', GROUP_CONCAT(
-                        CONCAT('{\"id\":', dd.id, ',\"name\":\"', REPLACE(IFNULL(dd.deduction_name, ''), '\"', '\\\\\"'), '\",\"amount\":', COALESCE(ed.custom_amount, dd.amount, 0), ',\"is_custom\":', CASE WHEN ed.id IS NOT NULL THEN 1 ELSE 0 END, ',\"code\":\"', REPLACE(IFNULL(dd.deduction_code, ''), '\"', '\\\\\"'), '\",\"category\":\"', REPLACE(IFNULL(dd.category, ''), '\"', '\\\\\"'), '\"}')
+                        CONCAT('{\"id\":', dd.id, ',\"name\":\"', REPLACE(IFNULL(dd.deduction_name, ''), '\"', '\\\\\"'), '\",\"amount\":', COALESCE(ed.custom_amount, dd.amount, 0), ',\"is_custom\":1,\"code\":\"', REPLACE(IFNULL(dd.deduction_code, ''), '\"', '\\\\\"'), '\",\"category\":\"', REPLACE(IFNULL(dd.category, ''), '\"', '\\\\\"'), '\"}')
                     SEPARATOR ','), ']'), '[]')
-                    FROM deductions dd LEFT JOIN employee_deductions ed ON dd.id = ed.deduction_id AND ed.employee_id = e.id AND ed.is_active = 1 AND (ed.month = ? AND ed.year = ?)
-                    WHERE dd.company_id = c.id AND (dd.department_id IS NULL OR dd.department_id = oa.department_id) AND dd.status = 'active'
+                    FROM employee_deductions ed JOIN deductions dd ON dd.id = ed.deduction_id
+                    WHERE ed.employee_id = e.id AND ed.is_active = 1 AND dd.status = 'active'
+                      AND (ed.month = ? AND ed.year = ?)
                 ) AS deductions,
 
-                -- Employee-wise bonuses (annual + monthly assignments)
+                -- Employee-wise deduction records (dated entries)
+                (
+                    SELECT COALESCE(CONCAT('[', GROUP_CONCAT(
+                        CONCAT('{\"id\":', ewd.id, ',\"name\":\"', REPLACE(IFNULL(ewd.deduction_name, ''), '\"', '\\\\\"'), '\",\"amount\":', COALESCE(ewd.amount, 0), ',\"is_custom\":1,\"code\":\"', REPLACE(IFNULL(ewd.deduction_code, ''), '\"', '\\\\\"'), '\",\"category\":\"other\"}')
+                    SEPARATOR ','), ']'), '[]')
+                    FROM employee_wise_deductions ewd
+                    WHERE ewd.employee_id = e.id AND ewd.status = 'active'
+                      AND MONTH(ewd.date) = ? AND YEAR(ewd.date) = ?
+                ) AS employee_wise_deductions,
+
+                -- Employee-wise bonuses (company master + month assignments)
                 (
                     SELECT COALESCE(CONCAT('[', GROUP_CONCAT(
                         CONCAT('{\"id\":', b.id, ',\"name\":\"', REPLACE(IFNULL(b.bonus_name, ''), '\"', '\\\\\"'), '\",\"amount\":', COALESCE(eb.custom_amount, b.amount, 0), ',\"is_custom\":1,\"code\":\"', REPLACE(IFNULL(b.bonus_code, ''), '\"', '\\\\\"'), '\",\"category\":\"', REPLACE(IFNULL(b.bonus_type, ''), '\"', '\\\\\"'), '\",\"is_annual\":', COALESCE(b.is_annual, 0), ',\"payment_months\":', COALESCE(b.payment_months, '[]'), '}')
@@ -1183,7 +1206,20 @@ public function getEmployeesByMonthAndCompany(Request $request)
                           b.is_annual = 1
                           OR (COALESCE(b.is_annual, 0) = 0 AND eb.month = ? AND eb.year = ?)
                       )
-                ) AS bonuses
+                ) AS bonuses,
+
+                -- Employee-wise bonus records (dated entries)
+                (
+                    SELECT COALESCE(CONCAT('[', GROUP_CONCAT(
+                        CONCAT('{\"id\":', ewb.id, ',\"name\":\"', REPLACE(IFNULL(ewb.bonus_name, ''), '\"', '\\\\\"'), '\",\"amount\":', COALESCE(ewb.amount, 0), ',\"is_custom\":1,\"code\":\"', REPLACE(IFNULL(ewb.bonus_code, ''), '\"', '\\\\\"'), '\",\"category\":\"other\",\"is_annual\":', COALESCE(ewb.is_annual, 0), ',\"payment_months\":', COALESCE(ewb.payment_months, '[]'), '}')
+                    SEPARATOR ','), ']'), '[]')
+                    FROM employee_wise_bonuses ewb
+                    WHERE ewb.employee_id = e.id AND ewb.status = 'active'
+                      AND (
+                          ewb.is_annual = 1
+                          OR (COALESCE(ewb.is_annual, 0) = 0 AND MONTH(ewb.date) = ? AND YEAR(ewb.date) = ?)
+                      )
+                ) AS employee_wise_bonuses
 
             FROM employees e
             JOIN organization_assignments oa ON e.organization_assignment_id = oa.id
@@ -1200,13 +1236,19 @@ public function getEmployeesByMonthAndCompany(Request $request)
 
         $params = [
             $month,
-            $year, // Allowances
+            $year, // employee_allowances
+            $month,
+            $year, // employee_wise_allowances
             $month,
             $year, // Dinner Allowance
             $month,
-            $year, // Deductions
+            $year, // employee_deductions
             $month,
-            $year, // Non-annual Bonuses
+            $year, // employee_wise_deductions
+            $month,
+            $year, // Non-annual Bonuses (master)
+            $month,
+            $year, // employee_wise_bonuses (non-annual date match)
             $startDate,
             $endDate, // No Pay Records
         ];
@@ -1245,8 +1287,15 @@ public function getEmployeesByMonthAndCompany(Request $request)
             ];
 
             $allowancesArr = json_decode($result->allowances ?? '[]', true) ?: [];
+            $employeeWiseAllowances = json_decode($result->employee_wise_allowances ?? '[]', true) ?: [];
             $deductionsArr = json_decode($result->deductions ?? '[]', true) ?: [];
+            $employeeWiseDeductions = json_decode($result->employee_wise_deductions ?? '[]', true) ?: [];
             $bonusesArr = json_decode($result->bonuses ?? '[]', true) ?: [];
+            $employeeWiseBonuses = json_decode($result->employee_wise_bonuses ?? '[]', true) ?: [];
+
+            $allowancesArr = array_merge($allowancesArr, $employeeWiseAllowances);
+            $deductionsArr = array_merge($deductionsArr, $employeeWiseDeductions);
+            $bonusesArr = array_merge($bonusesArr, $employeeWiseBonuses);
 
             // Annual bonuses: only include when current month is a payment month
             $bonusesArr = array_values(array_filter($bonusesArr, function ($bonus) use ($currentMonthInt) {
@@ -1387,21 +1436,9 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 }
             }
 
-            // Split allowances: monthly bonus categories go to bonus payslip
-            $monthlyBonusCategories = ['bonus', 'monthly_bonus'];
-            $basicAllowancesArr = [];
-            $monthlyBonusFromAllowances = 0.0;
-            foreach ($allowancesArr as $item) {
-                $cat = strtolower($item['category'] ?? '');
-                if (in_array($cat, $monthlyBonusCategories, true)) {
-                    $monthlyBonusFromAllowances += (float) ($item['amount'] ?? 0);
-                } else {
-                    $basicAllowancesArr[] = $item;
-                }
-            }
-
+            // Monthly bonus is part of salary split — from compensation only (set at employee creation)
             $compMonthlyBonus = (float) ($employeeData['monthly_bonus'] ?? 0);
-            $monthlyBonusTotal = $compMonthlyBonus + $monthlyBonusFromAllowances;
+            $monthlyBonusTotal = $compMonthlyBonus;
 
             if ($compMonthlyBonus > 0) {
                 $bonusesArr[] = [
@@ -1412,11 +1449,11 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 ];
             }
 
-            $employeeData['allowances'] = $basicAllowancesArr;
+            $employeeData['allowances'] = $allowancesArr;
             $employeeData['deductions'] = $deductionsArr;
             $employeeData['bonuses'] = $bonusesArr;
 
-            $totalAllowances = array_reduce($basicAllowancesArr, fn($c, $i) => $c + (float)($i['amount'] ?? 0), 0);
+            $totalAllowances = array_reduce($allowancesArr, fn($c, $i) => $c + (float)($i['amount'] ?? 0), 0);
             $totalBonuses = array_reduce($bonusesArr, fn($c, $i) => $c + (float)($i['amount'] ?? 0), 0);
 
             $epfEtfDeductions = 0.0;

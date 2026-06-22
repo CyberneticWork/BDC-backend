@@ -59,6 +59,7 @@ class DatabaseSeeder extends Seeder
         $this->call([
             EmployeeSeeder::class,
             creator_roles::class,
+            EmergencyContactRelationshipTypesSeeder::class,
             PayrollTestSeeder::class,
         ]);
     }

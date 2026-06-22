@@ -56,6 +56,8 @@ use App\Http\Controllers\DinnerAllowanceController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\EmergencyContactRelationshipTypesController;
 use App\Http\Controllers\EmployeeWiseAllowanceController;
+use App\Http\Controllers\EmployeeWiseDeductionController;
+use App\Http\Controllers\EmployeeWiseBonusController;
 use App\Models\EmployeeWiseAllowance;
 
 Route::get('/user', function (Request $request) {
@@ -92,6 +94,7 @@ Route::post('/employees/change-password', [EmployeeController::class, 'changePas
 Route::post('employes/post/update', [EmployeeController::class, 'update']);
 Route::get('/emp/table', [EmployeeController::class, 'getEmployeesForTable']);
 Route::get('/employees/export/data', [EmployeeController::class, 'export']);
+Route::get('/employees/report/export', [EmployeeController::class, 'report']);
 Route::get('/emp/search', [EmployeeController::class, 'search']);
 Route::get('/emp/search/empno', [EmployeeController::class, 'searchByAttendanceNo']);
 Route::get('/employees/by-employment-type/{typeName}', [EmployeeController::class, 'getByEmploymentType']);
@@ -554,6 +557,21 @@ Route::post('employee-wise-allowance', [EmployeeWiseAllowanceController::class, 
 Route::put('employee-wise-allowance/{id}', [EmployeeWiseAllowanceController::class, 'update']);
 Route::delete('employee-wise-allowance/{id}', [EmployeeWiseAllowanceController::class, 'destroy']);
 
+Route::get('employee-wise-deduction', [EmployeeWiseDeductionController::class, 'index']);
+Route::get('employee-wise-deduction/{id}', [EmployeeWiseDeductionController::class, 'getOneById']);
+Route::post('employee-wise-deduction', [EmployeeWiseDeductionController::class, 'store']);
+Route::put('employee-wise-deduction/{id}', [EmployeeWiseDeductionController::class, 'update']);
+Route::delete('employee-wise-deduction/{id}', [EmployeeWiseDeductionController::class, 'destroy']);
+
+Route::get('employee-wise-bonus', [EmployeeWiseBonusController::class, 'index']);
+Route::get('employee-wise-bonus/{id}', [EmployeeWiseBonusController::class, 'getOneById']);
+Route::post('employee-wise-bonus', [EmployeeWiseBonusController::class, 'store']);
+Route::put('employee-wise-bonus/{id}', [EmployeeWiseBonusController::class, 'update']);
+Route::delete('employee-wise-bonus/{id}', [EmployeeWiseBonusController::class, 'destroy']);
+
 // emergency contact relationship types
-Route::apiResource('emergency-contact-relationship-types', EmergencyContactRelationshipTypesController::class);
+Route::get('emergency-contact-relationship-types', [EmergencyContactRelationshipTypesController::class, 'index']);
+Route::post('emergency-contact-relationship-types', [EmergencyContactRelationshipTypesController::class, 'store']);
 Route::get('emergency-contact-relationship-types/{id}', [EmergencyContactRelationshipTypesController::class, 'getOneById']);
+Route::put('emergency-contact-relationship-types/{id}', [EmergencyContactRelationshipTypesController::class, 'update']);
+Route::delete('emergency-contact-relationship-types/{id}', [EmergencyContactRelationshipTypesController::class, 'destroy']);

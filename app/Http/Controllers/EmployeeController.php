@@ -17,11 +17,16 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
 use App\Mail\EmployeePasswordSendEmail;
 use App\Models\organization_assignment;
+use App\Services\EmployeeReportService;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 
 class EmployeeController extends Controller
 {
+    public function __construct(protected EmployeeReportService $employeeReportService)
+    {
+    }
+
     /**
      * Display a listing of the resource.
      */
@@ -773,6 +778,40 @@ class EmployeeController extends Controller
         return response()->json([
             'data' => $employees->map(fn ($emp) => $this->formatEmployeeExport($emp)),
         ]);
+    }
+
+    /**
+     * Comprehensive employee report (personal, org, compensation, allowances, deductions, loans, etc.)
+     */
+    public function report(Request $request)
+    {
+        $employeeId = $request->query('employee_id') ? (int) $request->query('employee_id') : null;
+        $employeeNo = $request->query('employee_no');
+        $companyId = $request->query('company_id') ? (int) $request->query('company_id') : null;
+        $departmentId = $request->query('department_id') ? (int) $request->query('department_id') : null;
+        $activeOnly = filter_var($request->query('active_only', false), FILTER_VALIDATE_BOOLEAN);
+
+        if ($employeeNo && !$employeeId) {
+            $found = employee::where('attendance_employee_no', $employeeNo)->first();
+            if (!$found) {
+                return response()->json(['message' => 'Employee not found'], 404);
+            }
+            $employeeId = $found->id;
+        }
+
+        if ($employeeId && !employee::find($employeeId)) {
+            return response()->json(['message' => 'Employee not found'], 404);
+        }
+
+        $report = $this->employeeReportService->buildReport(
+            $employeeId,
+            $employeeNo,
+            $companyId,
+            $departmentId,
+            $activeOnly
+        );
+
+        return response()->json($report);
     }
 
     private function formatEmployeeExport(employee $employee): array
