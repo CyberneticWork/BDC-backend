@@ -10,16 +10,19 @@ class CompanyController extends Controller
 {
     public function index()
     {
-        $companies = Company::select('id', 'name')->get();
+        $companies = Company::select('id', 'company_code', 'name', 'location', 'established')->get();
         return response()->json($companies);
     }
 
     public function store(Request $request)
     {
         $validator = Validator::make($request->all(), [
+            'company_code' => 'required|string|max:50',
             'name' => 'required|string|max:255',
             'location' => 'nullable|string|max:255',
             'established' => 'nullable|digits:4|integer|min:1900|max:' . (date('Y')),
+        ], [
+            'company_code.required' => 'Company ID is required. Please enter a unique code (e.g. SPM-S, SPM-C).',
         ]);
 
         if ($validator->fails()) {
@@ -31,15 +34,29 @@ class CompanyController extends Controller
 
         $validated = $validator->validated();
 
-        // Check for duplicate company name (not soft-deleted)
-        $exists = company::where('name', $validated['name'])
+        // Enforce unique company_code (excluding soft-deleted)
+        $codeExists = company::where('company_code', $validated['company_code'])
             ->whereNull('deleted_at')
             ->exists();
 
-        if ($exists) {
+        if ($codeExists) {
             return response()->json([
-                'message' => 'Company with this name already exists.',
-                'errors' => ['name' => ['This company name is already in use.']]
+                'message' => 'Company ID already exists.',
+                'errors' => ['company_code' => ['This Company ID is already in use. Please enter a unique code.']]
+            ], 409);
+        }
+
+        // Same name is allowed across multiple companies (differentiated by company_code)
+        // but keep a duplicate check that considers company_code so exact duplicates are blocked.
+        $duplicate = company::where('name', $validated['name'])
+            ->where('company_code', $validated['company_code'])
+            ->whereNull('deleted_at')
+            ->exists();
+
+        if ($duplicate) {
+            return response()->json([
+                'message' => 'This Company ID and Name combination already exists.',
+                'errors' => ['name' => ['Duplicate company record.']]
             ], 409);
         }
 
@@ -52,9 +69,12 @@ class CompanyController extends Controller
         $company = company::findOrFail($id);
 
         $validator = Validator::make($request->all(), [
+            'company_code' => 'required|string|max:50',
             'name' => 'required|string|max:255',
             'location' => 'nullable|string|max:255',
             'established' => 'nullable|digits:4|integer|min:1900|max:' . (date('Y')),
+        ], [
+            'company_code.required' => 'Company ID is required.',
         ]);
 
         if ($validator->fails()) {
@@ -66,16 +86,16 @@ class CompanyController extends Controller
 
         $validated = $validator->validated();
 
-        // Check for duplicate company name (not soft-deleted, not current company)
-        $exists = company::where('name', $validated['name'])
+        // Check company_code uniqueness excluding current company
+        $codeExists = company::where('company_code', $validated['company_code'])
             ->where('id', '!=', $company->id)
             ->whereNull('deleted_at')
             ->exists();
 
-        if ($exists) {
+        if ($codeExists) {
             return response()->json([
-                'message' => 'Company with this name already exists.',
-                'errors' => ['name' => ['This company name is already in use.']]
+                'message' => 'Company ID already exists.',
+                'errors' => ['company_code' => ['This Company ID is already in use. Please enter a unique code.']]
             ], 409);
         }
 

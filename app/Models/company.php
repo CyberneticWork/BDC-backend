@@ -10,6 +10,7 @@ class company extends Model
     use SoftDeletes;
 
     protected $fillable = [
+        'company_code',
         'name',
         'location',
         'established',

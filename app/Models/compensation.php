@@ -23,6 +23,7 @@ class compensation extends Model
         'bank_code',
         'branch_code',
         'bank_account_no',
+        'account_holder_name',
         'comments',
         'secondary_emp',
         'primary_emp_basic',
