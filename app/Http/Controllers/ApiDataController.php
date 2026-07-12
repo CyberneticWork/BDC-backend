@@ -18,10 +18,14 @@ class ApiDataController extends Controller
     public function companies()
     {
         $companies = company::withCount('employees')->get()->map(function ($company) {
+            $displayName = trim(($company->company_code ? $company->company_code : '') . ($company->company_code && $company->name ? ' - ' : '') . ($company->name ?: ''));
+
             return [
                 'id' => $company->id,
                 'name' => $company->name,
-                // 'code' => null,
+                'company_code' => $company->company_code,
+                'company_label' => $displayName ?: $company->name,
+                'display_name' => $displayName ?: $company->name,
                 'location' => $company->location,
                 'employees' => $company->employees_count,
                 'established' => $company->established,

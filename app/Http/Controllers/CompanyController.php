@@ -33,6 +33,9 @@ class CompanyController extends Controller
         }
 
         $validated = $validator->validated();
+        $validated['company_code'] = strtoupper(trim($validated['company_code']));
+        $validated['name'] = trim($validated['name']);
+        $validated['location'] = isset($validated['location']) ? trim($validated['location']) : null;
 
         // Enforce unique company_code (excluding soft-deleted)
         $codeExists = company::where('company_code', $validated['company_code'])
@@ -85,6 +88,9 @@ class CompanyController extends Controller
         }
 
         $validated = $validator->validated();
+        $validated['company_code'] = strtoupper(trim($validated['company_code']));
+        $validated['name'] = trim($validated['name']);
+        $validated['location'] = isset($validated['location']) ? trim($validated['location']) : null;
 
         // Check company_code uniqueness excluding current company
         $codeExists = company::where('company_code', $validated['company_code'])
