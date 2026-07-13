@@ -1472,11 +1472,11 @@ public function getEmployeesByMonthAndCompany(Request $request)
             $epfEtfBase = $basicSalary;
             $epfEmployeeDeduction = !empty($employeeData['enable_epf_etf']) ? ($epfEtfBase * 0.08) : 0;
 
-            // Sports fund: percentage of (basic + monthly bonus)
+            // Sports fund: percentage of monthly bonus
             $sportsFundPct = $employeeData['sports_fund_percentage'] ?? $employeeData['default_sports_fund_percentage'] ?? 0;
-            $sportsFundDeduction = round(($basicSalary + $monthlyBonusTotal) * ((float) $sportsFundPct / 100), 2);
+            $sportsFundDeduction = round($monthlyBonusTotal * ((float) $sportsFundPct / 100), 2);
 
-            // Staff fund: fixed amount from monthly bonus
+            // Staff fund: fixed amount entered by user
             $staffFundDeduction = round((float) ($employeeData['staff_fund_amount'] ?? 0), 2);
 
             // Overtime
