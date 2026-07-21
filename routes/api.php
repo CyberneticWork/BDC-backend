@@ -15,6 +15,7 @@ use App\Http\Controllers\CompanyController;
 use App\Http\Controllers\EmployeeController;
 use App\Http\Controllers\OvertimeController;
 use App\Http\Controllers\TimeCardController;
+use App\Http\Controllers\HikvisionController;
 use App\Http\Controllers\DeductionController;
 use App\Http\Controllers\AllowancesController;
 use App\Http\Controllers\DepartmentsController;
@@ -172,6 +173,7 @@ Route::get('/reports/epf-etf', [ReportController::class, 'downloadEpfEtf']);
 
 
 Route::get('/reports/monthly-data', [ReportController::class, 'getMonthlyReportData']);
+Route::get('/reports/schedule-data', [ReportController::class, 'getScheduleReportData']);
 
 // ✅ Special route FIRST (Bonuses)
 Route::get('/bonuses/by-company-or-department', [BonusesController::class, 'getBonusesByCompanyOrDepartment']);
@@ -250,6 +252,18 @@ Route::post('/attendance/import-excel', [TimeCardController::class, 'importExcel
 Route::get('/companies', [CompanyController::class, 'index']);
 Route::get('/attendance/absentees', [TimeCardController::class, 'fetchAbsentees']);
 Route::get('/attendance-template', [TimeCardController::class, 'downloadTemplate']);
+
+// Hikvision fingerprint terminal integration (DS-K1T320 / iVMS-4200 / Hik-Connect)
+Route::post('/hikvision/webhook/{token}', [HikvisionController::class, 'webhook']);
+Route::get('/hikvision/devices', [HikvisionController::class, 'index']);
+Route::post('/hikvision/devices', [HikvisionController::class, 'store']);
+Route::put('/hikvision/devices/{id}', [HikvisionController::class, 'update']);
+Route::delete('/hikvision/devices/{id}', [HikvisionController::class, 'destroy']);
+Route::post('/hikvision/devices/{id}/test', [HikvisionController::class, 'testConnection']);
+Route::post('/hikvision/devices/{id}/sync', [HikvisionController::class, 'syncNow']);
+Route::post('/hikvision/devices/{id}/configure-webhook', [HikvisionController::class, 'configureWebhook']);
+Route::get('/hikvision/devices/{id}/logs', [HikvisionController::class, 'eventLogs']);
+Route::post('/attendance/import-hikvision-excel', [HikvisionController::class, 'importExcel']);
 
 
 

@@ -30,10 +30,10 @@ class EmployeeSeeder extends Seeder
     {
         // Create companies
         company::insert([
-            ['id' => 1, 'name' => 'ABC Pvt Ltd'],
-            ['id' => 2, 'name' => 'XYZ Pvt Ltd'],
-            ['id' => 3, 'name' => 'Tech Solutions Inc'],
-            ['id' => 4, 'name' => 'Global Enterprises'],
+            ['id' => 1, 'company_code' => 'ABC-001', 'name' => 'ABC Pvt Ltd'],
+            ['id' => 2, 'company_code' => 'XYZ-001', 'name' => 'XYZ Pvt Ltd'],
+            ['id' => 3, 'company_code' => 'TEC-001', 'name' => 'Tech Solutions Inc'],
+            ['id' => 4, 'company_code' => 'GLB-001', 'name' => 'Global Enterprises'],
         ]);
 
         // Departments for all companies
@@ -224,6 +224,9 @@ class EmployeeSeeder extends Seeder
             compensation::create([
                 'employee_id' => $employee->id,
                 'basic_salary' => $baseSalary,
+                'monthly_bonus' => round($baseSalary * 0.15, 2),
+                'sports_fund_percentage' => 2.0,
+                'staff_fund_amount' => 500,
                 'increment_value' => $isEligibleForIncrement ? rand(5, 15) : null,
                 'increment_effected_date' => $isEligibleForIncrement ? date('Y-m-d', strtotime('-' . rand(1, 11) . ' months')) : null,
                 'enable_epf_etf' => rand(0, 1),
