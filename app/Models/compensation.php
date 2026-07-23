@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use App\Services\CompensationCalculationService;
 
 class compensation extends Model
 {
@@ -46,6 +47,12 @@ class compensation extends Model
         'br2',
         'stamp',
     ];
+
+    protected $appends = [
+        'total_salary',
+        'sports_fund_amount',
+        'remaining_total_salary',
+    ];
     public function employee()
     {
         return $this->belongsTo(employee::class);
@@ -54,5 +61,30 @@ class compensation extends Model
     public function salaryProcesses()
     {
         return $this->hasMany(salary_process::class, 'employee_id');
+    }
+
+    public function getCompensationSummary(): array
+    {
+        return app(CompensationCalculationService::class)->calculateCompensationSummary(
+            (float) ($this->basic_salary ?? 0),
+            (float) ($this->monthly_bonus ?? 0),
+            (float) ($this->sports_fund_percentage ?? 0),
+            (float) ($this->staff_fund_amount ?? 0),
+        );
+    }
+
+    public function getTotalSalaryAttribute(): float
+    {
+        return $this->getCompensationSummary()['total_salary'];
+    }
+
+    public function getSportsFundAmountAttribute(): float
+    {
+        return $this->getCompensationSummary()['sports_fund_amount'];
+    }
+
+    public function getRemainingTotalSalaryAttribute(): float
+    {
+        return $this->getCompensationSummary()['remaining_total_salary'];
     }
 }

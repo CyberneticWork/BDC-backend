@@ -285,9 +285,7 @@ class EmployeeExcelImportService
                 'basicSalary' => $basicSalary,
                 'monthlyBonus' => $monthlyBonus,
                 'sportsFundPercentage' => $sportsFundPct,
-                'staffFundAmount' => $staffFundAmount > 0
-                    ? $staffFundAmount
-                    : round($basicSalary * ($sportsFundPct / 100), 2),
+                'staffFundAmount' => $staffFundAmount,
                 'bankName' => $this->cell($column, 'bank_name') ?: null,
                 'branchName' => $this->cell($column, 'branch_name') ?: null,
                 'bankAccountNo' => $this->cell($column, 'bank_account_no') ?: null,
