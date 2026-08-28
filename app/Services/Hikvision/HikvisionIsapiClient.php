@@ -3,6 +3,7 @@
 namespace App\Services\Hikvision;
 
 use App\Models\HikvisionDevice;
+use Carbon\Carbon;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -11,6 +12,10 @@ class HikvisionIsapiClient
 {
     public function testConnection(HikvisionDevice $device): array
     {
+        if ($this->shouldUseCloudBridge($device)) {
+            return $this->cloudBridgeNotice($device, 'test');
+        }
+
         $response = $this->request($device, 'GET', '/ISAPI/System/deviceInfo');
 
         if (!$response['ok']) {
@@ -29,22 +34,46 @@ class HikvisionIsapiClient
             }
         }
 
+        $model = $info['model'] ?? null;
+        $serial = $info['serialNumber'] ?? null;
+
+        if ($model || $serial) {
+            $device->fill(array_filter([
+                'model' => $model ?: $device->model,
+                'serial_number' => $serial ?: $device->serial_number,
+            ]))->save();
+        }
+
         return [
             'ok' => true,
+            'mode' => 'lan',
+            'lan_mode' => true,
             'device_info' => $info,
-            'message' => 'Connected successfully',
+            'message' => 'Connected successfully on office LAN'
+                . ($model ? " · {$model}" : '')
+                . ($serial ? " · SN {$serial}" : ''),
         ];
     }
 
-    public function fetchAccessEvents(HikvisionDevice $device, string $startTime, string $endTime, int $position = 0, int $maxResults = 100): array
-    {
+    /**
+     * Pull AcsEvent rows using Solar-proven major/minor combinations + TZ-aware window.
+     */
+    public function fetchAccessEvents(
+        HikvisionDevice $device,
+        string $startTime,
+        string $endTime,
+        int $position = 0,
+        int $maxResults = 30,
+        ?int $major = null,
+        ?int $minor = null,
+    ): array {
         $payload = [
             'AcsEventCond' => [
-                'searchID' => 'hr-sync-' . $device->id . '-' . time(),
+                'searchID' => 'hr-sync-' . $device->id . '-' . $major . '-' . $minor . '-' . time() . '-' . $position,
                 'searchResultPosition' => $position,
                 'maxResults' => $maxResults,
-                'major' => config('hikvision.access_major_code', 5),
-                'minor' => 0,
+                'major' => $major ?? (int) config('hikvision.access_major_code', 5),
+                'minor' => $minor ?? 0,
                 'startTime' => $startTime,
                 'endTime' => $endTime,
                 'timeReverseOrder' => false,
@@ -58,16 +87,100 @@ class HikvisionIsapiClient
         }
 
         $body = $response['body'];
-        $events = $body['AcsEvent']['InfoList'] ?? [];
+        $acs = is_array($body) ? ($body['AcsEvent'] ?? []) : [];
+        $events = $acs['InfoList'] ?? [];
 
-        if (isset($events['major']) || isset($events['employeeNoString'])) {
+        if (isset($events['major']) || isset($events['employeeNoString']) || isset($events['employeeNo'])) {
             $events = [$events];
         }
 
         return [
             'ok' => true,
-            'events' => is_array($events) ? $events : [],
-            'total_matches' => (int) ($body['AcsEvent']['totalMatches'] ?? count($events)),
+            'events' => is_array($events) ? array_values($events) : [],
+            'num_of_matches' => (int) ($acs['numOfMatches'] ?? count($events)),
+            'total_matches' => (int) ($acs['totalMatches'] ?? count($events)),
+            'response_status' => $acs['responseStatusStrg'] ?? null,
+        ];
+    }
+
+    /**
+     * Multi-query pull like Solar DS-K1T320 (fingerprint minor 38, card, face, catch-all).
+     */
+    public function fetchAllAccessEvents(HikvisionDevice $device, Carbon $from, Carbon $to): array
+    {
+        if ($this->shouldUseCloudBridge($device)) {
+            return $this->cloudBridgeNotice($device, 'sync');
+        }
+
+        $queries = config('hikvision.acs_event_queries', [
+            ['major' => 5, 'minor' => 38],
+            ['major' => 5, 'minor' => 1],
+            ['major' => 5, 'minor' => 75],
+            ['major' => 5, 'minor' => 76],
+            ['major' => 0, 'minor' => 0],
+        ]);
+
+        $startTime = $this->isoLocal($from);
+        $endTime = $this->isoLocal($to->copy()->addMinutes(15));
+
+        $events = [];
+        $seen = [];
+        $errors = [];
+
+        foreach ($queries as $q) {
+            $position = 0;
+            for ($page = 0; $page < 20; $page++) {
+                $result = $this->fetchAccessEvents(
+                    $device,
+                    $startTime,
+                    $endTime,
+                    $position,
+                    30,
+                    (int) $q['major'],
+                    (int) $q['minor']
+                );
+
+                if (!$result['ok']) {
+                    $errors[] = $result['message'] ?? 'AcsEvent query failed';
+                    break;
+                }
+
+                $rows = $result['events'] ?? [];
+                foreach ($rows as $ev) {
+                    if (!is_array($ev)) {
+                        continue;
+                    }
+                    $key = ($ev['serialNo'] ?? 'x') . '|' . ($ev['time'] ?? $ev['dateTime'] ?? '') . '|'
+                        . ($ev['employeeNoString'] ?? $ev['employeeNo'] ?? '');
+                    if (isset($seen[$key])) {
+                        continue;
+                    }
+                    $seen[$key] = true;
+                    $events[] = $ev;
+                }
+
+                $num = (int) ($result['num_of_matches'] ?? count($rows));
+                $total = (int) ($result['total_matches'] ?? 0);
+                if (!$rows || ($result['response_status'] ?? '') === 'NO MATCH' || ($position + $num) >= $total) {
+                    break;
+                }
+                $position += max($num, 1);
+            }
+        }
+
+        usort($events, function ($a, $b) {
+            $ta = strtotime($a['time'] ?? $a['dateTime'] ?? '0') ?: 0;
+            $tb = strtotime($b['time'] ?? $b['dateTime'] ?? '0') ?: 0;
+            return $ta <=> $tb;
+        });
+
+        return [
+            'ok' => true,
+            'mode' => 'lan',
+            'lan_mode' => true,
+            'events' => $events,
+            'raw_events' => count($events),
+            'errors' => array_values(array_unique($errors)),
         ];
     }
 
@@ -119,6 +232,117 @@ class HikvisionIsapiClient
         return $response;
     }
 
+    public function shouldUseCloudBridge(HikvisionDevice $device): bool
+    {
+        if ((string) config('hikvision.force_lan_mode') === '1') {
+            return false;
+        }
+        if ((string) config('hikvision.force_cloud_bridge') === '1') {
+            return true;
+        }
+
+        $ip = (string) $device->ip_address;
+        if (!$this->isPrivateLanIp($ip)) {
+            return false;
+        }
+
+        return !$this->backendSharesOfficeLan($ip);
+    }
+
+    public function backendSharesOfficeLan(string $deviceIp): bool
+    {
+        if ((string) config('hikvision.force_lan_mode') === '1') {
+            return true;
+        }
+        if (!$this->isPrivateLanIp($deviceIp)) {
+            return false;
+        }
+
+        foreach ($this->localIpv4s() as $local) {
+            if ($this->sameOfficeNetwork($local, $deviceIp)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public function cloudBridgeNotice(HikvisionDevice $device, string $action): array
+    {
+        $stored = $device->eventLogs()->where('status', 'imported')->count();
+        $last = $device->last_event_at
+            ? ' Last punch: ' . $device->last_event_at->toDateTimeString() . '.'
+            : '';
+
+        $message = $action === 'sync'
+            ? ($stored > 0
+                ? "Time Card refreshed. {$stored} punch(es) already saved from the office bridge.{$last} Cloud ERP cannot read {$device->ip_address} directly — keep hikvision-bridge running."
+                : "No punches yet. Cloud ERP cannot reach {$device->ip_address}. Run scripts/hikvision-bridge on an office PC.")
+            : "Cloud ERP cannot ping {$device->ip_address}. That is normal. Fingerprints arrive via the office bridge.{$last}";
+
+        return [
+            'ok' => true,
+            'mode' => 'cloud-bridge',
+            'lan_mode' => false,
+            'imported' => 0,
+            'skipped' => 0,
+            'stored' => $stored,
+            'message' => $message,
+            'punches_url' => $device->punchesUrl(),
+            'webhook_url' => $device->webhookUrl(),
+            'events' => [],
+            'raw_events' => 0,
+            'errors' => [],
+        ];
+    }
+
+    /** Hikvision event windows need timezone offset (e.g. +05:30). */
+    public function isoLocal(Carbon $d): string
+    {
+        return $d->format('Y-m-d\TH:i:sP');
+    }
+
+    private function isPrivateLanIp(string $ip): bool
+    {
+        $p = trim($ip);
+        return (bool) preg_match('/^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[0-1])\.|127\.0\.0\.1$|localhost$)/i', $p);
+    }
+
+    private function localIpv4s(): array
+    {
+        $out = [];
+        foreach (gethostbynamel(gethostname()) ?: [] as $ip) {
+            if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 | FILTER_FLAG_NO_RES_RANGE)) {
+                $out[] = $ip;
+            }
+        }
+        // Also scan common Windows/Linux interfaces via hostname resolution only —
+        // SERVER_ADDR / REQUEST may be public when reverse-proxied.
+        if (!empty($_SERVER['SERVER_ADDR']) && filter_var($_SERVER['SERVER_ADDR'], FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            $out[] = $_SERVER['SERVER_ADDR'];
+        }
+        return array_values(array_unique($out));
+    }
+
+    private function sameOfficeNetwork(string $localIp, string $deviceIp): bool
+    {
+        $a = array_map('intval', explode('.', $localIp));
+        $b = array_map('intval', explode('.', $deviceIp));
+        if (count($a) !== 4 || count($b) !== 4) {
+            return false;
+        }
+        if ($a[0] === 192 && $a[1] === 168 && $b[0] === 192 && $b[1] === 168) {
+            return true;
+        }
+        if ($a[0] === 10 && $b[0] === 10) {
+            return $a[1] === $b[1];
+        }
+        if ($a[0] === 172 && $b[0] === 172 && $a[1] >= 16 && $a[1] <= 31 && $b[1] >= 16 && $b[1] <= 31) {
+            return $a[1] === $b[1];
+        }
+        return false;
+    }
+
     private function buildHttpHostXml(int $hostId, string $url): string
     {
         $parsed = parse_url($url);
@@ -151,7 +375,7 @@ XML;
         }
 
         try {
-            $pending = Http::timeout(15)
+            $pending = Http::timeout(20)
                 ->withOptions(['verify' => false])
                 ->withDigestAuth($device->username, $password);
 

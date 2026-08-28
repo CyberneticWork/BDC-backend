@@ -28,8 +28,29 @@ class TimeCardController extends Controller
 
     public function index(Request $request)
     {
-        $cards = time_card::with(['employee.organizationAssignment.department'])
-            ->whereNull('deleted_at')
+        $request->validate([
+            'date' => 'nullable|date',
+            'from_date' => 'nullable|date',
+            'to_date' => 'nullable|date|after_or_equal:from_date',
+        ]);
+
+        $query = time_card::with(['employee.organizationAssignment.department'])
+            ->whereNull('deleted_at');
+
+        if ($request->filled('date')) {
+            $query->whereDate('date', $request->date);
+        } else {
+            if ($request->filled('from_date')) {
+                $query->whereDate('date', '>=', $request->from_date);
+            }
+            if ($request->filled('to_date')) {
+                $query->whereDate('date', '<=', $request->to_date);
+            }
+        }
+
+        $cards = $query
+            ->orderBy('date', 'desc')
+            ->orderBy('time', 'asc')
             ->get()
             ->map(function ($card) {
                 return [
@@ -45,6 +66,7 @@ class TimeCardController extends Controller
                         : ($card->entry == 2 ? 'OUT' : ($card->entry == 0 ? 'Early OUT' : null)),
                     'department' => $card->employee->organizationAssignment->department->name ?? null,
                     'status' => $card->status,
+                    'nic' => $card->employee->nic ?? null,
                 ];
             });
 
@@ -195,6 +217,8 @@ class TimeCardController extends Controller
 
         $fingerprintClock = now();
 
+        $needsApproval = in_array($status, ['Late Coming', 'Early OUT'], true);
+
         $timeCard = time_card::create([
             'employee_id' => $employee->id,
             'time' => $storeTime,
@@ -202,6 +226,7 @@ class TimeCardController extends Controller
             'working_hours' => $working_hours,
             'entry' => $entryType,
             'status' => $status,
+            'approval_status' => $needsApproval ? 'Pending' : 'Active',
             'fingerprint_clock' => $fingerprintClock,
             'actual_date' => $actual_date,
         ]);
@@ -327,6 +352,8 @@ class TimeCardController extends Controller
 
         $fingerprintClock = now();
 
+        $needsApproval = in_array($status, ['Late Coming', 'Early OUT'], true);
+
         $timeCard = time_card::create([
             'employee_id' => $employee->id,
             'time' => $storeTime,
@@ -334,6 +361,7 @@ class TimeCardController extends Controller
             'working_hours' => $working_hours,
             'entry' => $entryType,
             'status' => $status,
+            'approval_status' => $needsApproval ? 'Pending' : 'Active',
             'fingerprint_clock' => $fingerprintClock,
             'actual_date' => $actual_date,
         ]);
@@ -535,20 +563,34 @@ class TimeCardController extends Controller
             return [null, null];
         }
 
-        $roster = roster::where('employee_id', $employee->id)
-            ->whereNull('deleted_at')
+        $applyActiveStatus = function ($query) {
+            if (\Illuminate\Support\Facades\Schema::hasColumn('rosters', 'status')) {
+                $query->where(function ($q) {
+                    $q->whereNull('status')->orWhere('status', 'Active');
+                });
+            }
+            return $query;
+        };
+
+        $rosterQuery = roster::where('employee_id', $employee->id)
+            ->whereNull('deleted_at');
+        $applyActiveStatus($rosterQuery);
+        $roster = $rosterQuery
             ->where(function ($q) use ($date) {
                 $q->whereNull('date_from')->orWhere('date_from', '<=', $date);
             })
             ->where(function ($q) use ($date) {
                 $q->whereNull('date_to')->orWhere('date_to', '>=', $date);
             })
+            ->orderByDesc('id')
             ->first();
 
         if (!$roster && $org->sub_department_id) {
-            $roster = roster::where('sub_department_id', $org->sub_department_id)
+            $rosterQuery = roster::where('sub_department_id', $org->sub_department_id)
                 ->whereNull('employee_id')
-                ->whereNull('deleted_at')
+                ->whereNull('deleted_at');
+            $applyActiveStatus($rosterQuery);
+            $roster = $rosterQuery
                 ->where(function ($q) use ($date) {
                     $q->where(function ($nested) use ($date) {
                         $nested->whereNull('date_from')->orWhere('date_from', '<=', $date);
@@ -557,14 +599,17 @@ class TimeCardController extends Controller
                         $nested->whereNull('date_to')->orWhere('date_to', '>=', $date);
                     });
                 })
+                ->orderByDesc('id')
                 ->first();
         }
 
         if (!$roster && $org->department_id) {
-            $roster = roster::where('department_id', $org->department_id)
+            $rosterQuery = roster::where('department_id', $org->department_id)
                 ->whereNull('employee_id')
                 ->whereNull('sub_department_id')
-                ->whereNull('deleted_at')
+                ->whereNull('deleted_at');
+            $applyActiveStatus($rosterQuery);
+            $roster = $rosterQuery
                 ->where(function ($q) use ($date) {
                     $q->where(function ($nested) use ($date) {
                         $nested->whereNull('date_from')->orWhere('date_from', '<=', $date);
@@ -573,15 +618,18 @@ class TimeCardController extends Controller
                         $nested->whereNull('date_to')->orWhere('date_to', '>=', $date);
                     });
                 })
+                ->orderByDesc('id')
                 ->first();
         }
 
         if (!$roster && $org->company_id) {
-            $roster = roster::where('company_id', $org->company_id)
+            $rosterQuery = roster::where('company_id', $org->company_id)
                 ->whereNull('employee_id')
                 ->whereNull('sub_department_id')
                 ->whereNull('department_id')
-                ->whereNull('deleted_at')
+                ->whereNull('deleted_at');
+            $applyActiveStatus($rosterQuery);
+            $roster = $rosterQuery
                 ->where(function ($q) use ($date) {
                     $q->where(function ($nested) use ($date) {
                         $nested->whereNull('date_from')->orWhere('date_from', '<=', $date);
@@ -590,6 +638,7 @@ class TimeCardController extends Controller
                         $nested->whereNull('date_to')->orWhere('date_to', '>=', $date);
                     });
                 })
+                ->orderByDesc('id')
                 ->first();
         }
 
@@ -1116,6 +1165,150 @@ class TimeCardController extends Controller
 
         return response()->json(['days' => $days, 'present' => $present, 'absent' => $absent]);
     }
+
+    /**
+     * Recalculate IN/Late Coming and OUT/Early OUT using the current active roster shift.
+     * Use after roster cancel/replace so old punch statuses match the new shift times.
+     */
+    public function recalculateAttendance(Request $request)
+    {
+        $validated = $request->validate([
+            'from_date' => 'required|date',
+            'to_date' => 'required|date|after_or_equal:from_date',
+            'employee_id' => 'nullable|exists:employees,id',
+            'company_id' => 'nullable|exists:companies,id',
+            'department_id' => 'nullable|exists:departments,id',
+        ]);
+
+        $from = $validated['from_date'];
+        $to = $validated['to_date'];
+
+        $cardsQuery = time_card::with('employee.organizationAssignment')
+            ->whereNull('deleted_at')
+            ->whereBetween('date', [$from, $to])
+            ->whereIn('status', ['IN', 'Late Coming', 'OUT', 'Early OUT']);
+
+        if (!empty($validated['employee_id'])) {
+            $cardsQuery->where('employee_id', $validated['employee_id']);
+        }
+
+        if (!empty($validated['company_id']) || !empty($validated['department_id'])) {
+            $cardsQuery->whereHas('employee.organizationAssignment', function ($q) use ($validated) {
+                if (!empty($validated['company_id'])) {
+                    $q->where('company_id', $validated['company_id']);
+                }
+                if (!empty($validated['department_id'])) {
+                    $q->where('department_id', $validated['department_id']);
+                }
+            });
+        }
+
+        $cards = $cardsQuery->orderBy('employee_id')->orderBy('date')->orderBy('time')->get();
+
+        $updated = 0;
+        $skipped = 0;
+        $errors = [];
+        $byStatus = [
+            'IN' => 0,
+            'Late Coming' => 0,
+            'OUT' => 0,
+            'Early OUT' => 0,
+        ];
+
+        DB::beginTransaction();
+        try {
+            foreach ($cards as $card) {
+                $employee = $card->employee;
+                if (!$employee) {
+                    $skipped++;
+                    continue;
+                }
+
+                [$roster, $shift] = $this->resolveRosterAndShift($employee, $card->date);
+                if (!$shift) {
+                    $skipped++;
+                    $errors[] = "No active roster for employee {$employee->id} on {$card->date}";
+                    continue;
+                }
+
+                $oldStatus = $card->status;
+                $oldEntry = $card->entry;
+                $newStatus = $oldStatus;
+                $newEntry = $oldEntry;
+                $storeTime = is_string($card->time) ? $card->time : Carbon::parse($card->time)->format('H:i:s');
+
+                if (in_array($oldStatus, ['IN', 'Late Coming'], true)) {
+                    $newStatus = $this->resolveInStatus($card->date, $storeTime, $shift);
+                    $newEntry = 1;
+                } elseif (in_array($oldStatus, ['OUT', 'Early OUT'], true)) {
+                    $pairedIn = time_card::where('employee_id', $card->employee_id)
+                        ->whereNull('deleted_at')
+                        ->whereIn('status', ['IN', 'Late Coming'])
+                        ->where(function ($q) use ($card) {
+                            $q->where('date', '<', $card->date)
+                                ->orWhere(function ($q2) use ($card) {
+                                    $q2->where('date', $card->date)->where('time', '<=', $card->time);
+                                });
+                        })
+                        ->orderBy('date', 'desc')
+                        ->orderBy('time', 'desc')
+                        ->first();
+
+                    $inDate = $pairedIn ? $pairedIn->date : $card->date;
+                    $shiftStartDT = Carbon::parse($inDate . ' ' . $shift->start_time);
+                    $shiftEndDT = Carbon::parse($inDate . ' ' . $shift->end_time);
+                    if ($shiftEndDT->lte($shiftStartDT)) {
+                        $shiftEndDT->addDay();
+                    }
+
+                    $outDateTime = Carbon::parse($card->date . ' ' . $storeTime);
+                    if ($outDateTime->lt($shiftEndDT)) {
+                        $newStatus = 'Early OUT';
+                        $newEntry = 0;
+                    } else {
+                        $newStatus = 'OUT';
+                        $newEntry = 2;
+                    }
+                }
+
+                if ($newStatus !== $oldStatus || (string) $newEntry !== (string) $oldEntry) {
+                    $needsApproval = in_array($newStatus, ['Late Coming', 'Early OUT'], true);
+                    $card->status = $newStatus;
+                    $card->entry = $newEntry;
+                    if (\Illuminate\Support\Facades\Schema::hasColumn('time_cards', 'approval_status')) {
+                        $card->approval_status = $needsApproval ? 'Pending' : 'Active';
+                    }
+                    $card->save();
+                    $updated++;
+                } else {
+                    $skipped++;
+                }
+
+                if (isset($byStatus[$newStatus])) {
+                    $byStatus[$newStatus]++;
+                }
+            }
+
+            DB::commit();
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json([
+                'message' => 'Recalculation failed',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+
+        return response()->json([
+            'message' => 'Attendance recalculated from current active rosters',
+            'from_date' => $from,
+            'to_date' => $to,
+            'processed' => $cards->count(),
+            'updated' => $updated,
+            'unchanged_or_skipped' => $skipped,
+            'status_counts' => $byStatus,
+            'sample_errors' => array_slice(array_unique($errors), 0, 10),
+        ]);
+    }
 }
 
 
@@ -1150,8 +1343,29 @@ class TimeCardController extends Controller
 
     public function index(Request $request)
     {
-        $cards = time_card::with(['employee.organizationAssignment.department'])
-            ->whereNull('deleted_at')
+        $request->validate([
+            'date' => 'nullable|date',
+            'from_date' => 'nullable|date',
+            'to_date' => 'nullable|date|after_or_equal:from_date',
+        ]);
+
+        $query = time_card::with(['employee.organizationAssignment.department'])
+            ->whereNull('deleted_at');
+
+        if ($request->filled('date')) {
+            $query->whereDate('date', $request->date);
+        } else {
+            if ($request->filled('from_date')) {
+                $query->whereDate('date', '>=', $request->from_date);
+            }
+            if ($request->filled('to_date')) {
+                $query->whereDate('date', '<=', $request->to_date);
+            }
+        }
+
+        $cards = $query
+            ->orderBy('date', 'desc')
+            ->orderBy('time', 'asc')
             ->get()
             ->map(function ($card) {
                 return [
@@ -1167,6 +1381,7 @@ class TimeCardController extends Controller
                         : ($card->entry == 2 ? 'OUT' : ($card->entry == 0 ? 'Early OUT' : null)),
                     'department' => $card->employee->organizationAssignment->department->name ?? null,
                     'status' => $card->status,
+                    'nic' => $card->employee->nic ?? null,
                 ];
             });
 

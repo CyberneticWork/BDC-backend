@@ -48,6 +48,9 @@ class NopayController extends Controller
             });
         }
 
+        // Exclude NoPay before joining date — those days do not need to be filled
+        $this->applyJoiningDateFilter($query);
+
         // Search Filter (දැන් Employee ID, Name සහ NIC වලින් සර්ච් කළ හැක)
         if ($request->filled('search')) {
             $search = $request->search;
@@ -97,6 +100,11 @@ class NopayController extends Controller
 
         if ($validator->fails()) {
             return response()->json($validator->errors(), 422);
+        }
+
+        $joinCheck = $this->assertDateOnOrAfterJoining((int) $request->employee_id, $request->date);
+        if ($joinCheck !== null) {
+            return response()->json($joinCheck, 422);
         }
 
         $record = NoPayRecord::create([
@@ -241,17 +249,15 @@ class NopayController extends Controller
                 continue;
             }
 
-            // සේවකයා වැඩට බැඳුණු දිනයට කලින් දවස් වලට No Pay හදන්නේ නෑ
-            if ($org->date_of_joining) {
-                $joinDate = Carbon::parse($org->date_of_joining)->startOfDay();
-                if (Carbon::parse($date)->lt($joinDate)) {
-                    $skipped[] = [
-                        'employee_id' => $employee->id, 
-                        'attendance_employee_no' => $employee->attendance_employee_no, 
-                        'reason' => 'Before date of joining'
-                    ];
-                    continue;
-                }
+            // සේවකයා වැඩට බැඳුණු දිනයට කලින් දවස් වලට No Pay හදන්නේ නෑ (fill කරන්නත් ඕනේ නෑ)
+            if ($this->isBeforeJoiningDate($employee, $date)) {
+                NoPayRecord::where('employee_id', $employee->id)->where('date', $date)->delete();
+                $skipped[] = [
+                    'employee_id' => $employee->id,
+                    'attendance_employee_no' => $employee->attendance_employee_no,
+                    'reason' => 'Before date of joining'
+                ];
+                continue;
             }
 
             if ($employee->compensation && $employee->compensation->active_nopay === false) {
@@ -384,13 +390,11 @@ class NopayController extends Controller
                     continue;
                 }
 
-                // සේවකයා වැඩට බැඳුණු දිනයට කලින් දවස් වලට No Pay හදන්නේ නෑ
-                if ($org->date_of_joining) {
-                    $joinDate = Carbon::parse($org->date_of_joining)->startOfDay();
-                    if ($date->lt($joinDate)) {
-                        $allSkipped[] = ['date' => $dateString, 'employee_id' => $employee->id, 'reason' => 'Before date of joining'];
-                        continue;
-                    }
+                // සේවකයා වැඩට බැඳුණු දිනයට කලින් දවස් — No Pay නෑ, fill කරන්නත් ඕනේ නෑ
+                if ($this->isBeforeJoiningDate($employee, $dateString)) {
+                    NoPayRecord::where('employee_id', $employee->id)->where('date', $dateString)->delete();
+                    $allSkipped[] = ['date' => $dateString, 'employee_id' => $employee->id, 'reason' => 'Before date of joining'];
+                    continue;
                 }
 
                 if ($employee->compensation && $employee->compensation->active_nopay === false) {
@@ -487,6 +491,9 @@ class NopayController extends Controller
                     });
             });
         }
+
+        // Exclude before-joining dates from stats (no need to fill)
+        $this->applyJoiningDateFilter($query);
 
         $records = $query->get()
             ->groupBy(function ($record) {
@@ -974,6 +981,67 @@ class NopayController extends Controller
         }
 
         return (string) $record->no_pay_count;
+    }
+
+    /**
+     * Joining date of employee (organization assignment), or null if not set.
+     */
+    protected function getEmployeeJoinDate($employee): ?Carbon
+    {
+        $org = $employee->organizationAssignment ?? null;
+        if (!$org || empty($org->date_of_joining)) {
+            return null;
+        }
+
+        return Carbon::parse($org->date_of_joining)->startOfDay();
+    }
+
+    /**
+     * True when the given date is strictly before joining date.
+     */
+    protected function isBeforeJoiningDate($employee, $date): bool
+    {
+        $joinDate = $this->getEmployeeJoinDate($employee);
+        if (!$joinDate) {
+            return false;
+        }
+
+        return Carbon::parse($date)->startOfDay()->lt($joinDate);
+    }
+
+    /**
+     * Block manual create when date is before joining.
+     */
+    protected function assertDateOnOrAfterJoining(int $employeeId, $date): ?array
+    {
+        $employee = employee::with('organizationAssignment')->find($employeeId);
+        if (!$employee) {
+            return ['message' => 'Employee not found.'];
+        }
+
+        if ($this->isBeforeJoiningDate($employee, $date)) {
+            $join = $this->getEmployeeJoinDate($employee)->toDateString();
+            return [
+                'message' => "Cannot add NoPay before joining date ({$join}). Days before joining do not need to be filled.",
+                'date' => ['NoPay is only allowed on or after the employee joining date.'],
+            ];
+        }
+
+        return null;
+    }
+
+    /**
+     * Keep list/stats free of before-joining NoPay rows.
+     */
+    protected function applyJoiningDateFilter($query): void
+    {
+        $query->where(function ($q) {
+            $q->whereDoesntHave('employee.organizationAssignment')
+                ->orWhereHas('employee.organizationAssignment', function ($org) {
+                    $org->whereNull('date_of_joining')
+                        ->orWhereRaw('DATE(organization_assignments.date_of_joining) <= DATE(no_pay_records.date)');
+                });
+        });
     }
 }
 

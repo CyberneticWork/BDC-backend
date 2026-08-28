@@ -481,7 +481,17 @@ class AttendanceReportController extends Controller
             return response()->json(['message' => 'Month is required'], 400);
         }
 
-        [$year, $monthNumber] = explode('-', $month);
+        // Accept Y-m or separate year + month / bare month number
+        if (str_contains((string) $month, '-')) {
+            [$year, $monthNumber] = array_pad(explode('-', (string) $month, 2), 2, null);
+        } else {
+            $year = $request->input('year', date('Y'));
+            $monthNumber = str_pad((string) $month, 2, '0', STR_PAD_LEFT);
+        }
+        if (!$year || !$monthNumber) {
+            return response()->json(['message' => 'Month must be in Y-m format'], 422);
+        }
+        $monthNumber = str_pad((string) $monthNumber, 2, '0', STR_PAD_LEFT);
         $startDate = "{$year}-{$monthNumber}-01";
         $endDate = date('Y-m-t', strtotime($startDate));
 

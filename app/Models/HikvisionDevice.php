@@ -92,4 +92,9 @@ class HikvisionDevice extends Model
     {
         return rtrim(config('app.url'), '/') . '/api/hikvision/webhook/' . $this->webhook_token;
     }
+
+    public function punchesUrl(): string
+    {
+        return rtrim(config('app.url'), '/') . '/api/hikvision/punches/' . $this->webhook_token;
+    }
 }

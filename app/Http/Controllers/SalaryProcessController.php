@@ -21,6 +21,7 @@ use App\Models\time_card;
 use App\Models\Roster;
 use Carbon\Carbon;
 use App\Models\EmployeeBonus;
+use App\Models\SalaryProcessAudit;
 
 class SalaryProcessController extends Controller
 {
@@ -1156,7 +1157,10 @@ public function getEmployeesByMonthAndCompany(Request $request)
                     FROM employee_allowances ea JOIN allowances a ON a.id = ea.allowance_id
                     WHERE ea.employee_id = e.id AND ea.is_active = 1 AND a.status = 'active'
                       AND LOWER(IFNULL(a.category, '')) NOT IN ('bonus', 'monthly_bonus')
-                      AND (ea.month = ? AND ea.year = ?)
+                      AND (
+                          (ea.month = ? AND ea.year = ?)
+                          OR (ea.month IS NULL AND ea.year IS NULL)
+                      )
                 ) AS allowances,
 
                 -- Employee-wise allowance records (dated entries)
@@ -1182,7 +1186,10 @@ public function getEmployeesByMonthAndCompany(Request $request)
                     SEPARATOR ','), ']'), '[]')
                     FROM employee_deductions ed JOIN deductions dd ON dd.id = ed.deduction_id
                     WHERE ed.employee_id = e.id AND ed.is_active = 1 AND dd.status = 'active'
-                      AND (ed.month = ? AND ed.year = ?)
+                      AND (
+                          (ed.month = ? AND ed.year = ?)
+                          OR (ed.month IS NULL AND ed.year IS NULL)
+                      )
                 ) AS deductions,
 
                 -- Employee-wise deduction records (dated entries)
@@ -1510,7 +1517,11 @@ public function getEmployeesByMonthAndCompany(Request $request)
 
             $employeeData['salary_breakdown'] = [
                 'basic_salary' => round($basicSalary, 2),
+                'br_allowance' => round($brAllowance, 2),
                 'monthly_bonus' => round($monthlyBonusTotal, 2),
+                'total_allowances' => round($totalAllowances, 2),
+                'total_bonuses' => round($totalBonuses, 2),
+                'total_dinner_allowance' => round($dinnerAllowanceValue, 2),
                 'per_day_salary' => round($perDaySalary, 3),
                 'ot_morning_fees' => round($morning_ot_fees, 2),
                 'ot_night_fees' => round($night_ot_fees, 2),
@@ -1536,6 +1547,8 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 'loan_interest' => round($loanInterest, 2),
                 'loan_deduct_from' => $loanDeductFrom,
 
+                'basic_deductions_total' => round($basicDeductionsTotal, 2),
+                'bonus_deductions_total' => round($bonusDeductionsTotal, 2),
                 'total_fixed_deductions' => round($bonusFixedDeductions + $epfEtfDeductions, 2),
 
                 'net_salary' => round($netSalary, 2),
@@ -1574,11 +1587,88 @@ public function getEmployeesByMonthAndCompany(Request $request)
             $data[] = $employeeData;
         }
 
+        // Attach existing salary process status for this month/year (for revise UI)
+        $empNos = collect($data)->pluck('emp_no')->filter()->values()->all();
+        $monthKeys = [str_pad((string)(int)$month, 2, '0', STR_PAD_LEFT), (string)(int)$month, (int)$month];
+        $existingByNo = salary_process::whereIn('employee_no', $empNos)
+            ->whereIn('month', $monthKeys)
+            ->where('year', $year)
+            ->get()
+            ->keyBy('employee_no');
+
+        foreach ($data as &$row) {
+            $existing = $existingByNo->get($row['emp_no'] ?? null);
+            $row['process_status'] = $existing?->status ?? 'unprocessed';
+            $row['salary_process_id'] = $existing?->id;
+        }
+        unset($row);
+
         return response()->json(['data' => $data, 'meta' => ['count' => count($data)]]);
     }
 
-    //
+    /**
+     * Build the payload fields used for create/update of a salary_process row.
+     */
+    private function buildSalaryProcessPayload(array $employeeData, $month, $year): array
+    {
+        return [
+            'employee_id' => $employeeData['id'] ?? $employeeData['employee_id'] ?? null,
+            'employee_no' => $employeeData['emp_no'],
+            'full_name' => $employeeData['full_name'],
+            'company_name' => $employeeData['company_name'] ?? null,
+            'department_name' => $employeeData['department_name'] ?? null,
+            'sub_department_name' => $employeeData['sub_department_name'] ?? null,
+            'basic_salary' => $employeeData['basic_salary'] ?? 0,
+            'increment_active' => $employeeData['increment_active'] ?? false,
+            'increment_value' => $employeeData['increment_value'] ?? null,
+            'increment_effected_date' => $employeeData['increment_effected_date'] ?? null,
+            'ot_morning' => $employeeData['ot_morning'] ?? 0,
+            'ot_evening' => $employeeData['ot_evening'] ?? 0,
+            'enable_epf_etf' => $employeeData['enable_epf_etf'] ?? false,
+            'br1' => $employeeData['br1'] ?? false,
+            'br2' => $employeeData['br2'] ?? false,
+            'br_status' => $employeeData['br_status'] ?? '',
+            'stamp' => $employeeData['stamp'] ?? false,
+            'total_loan_amount' => $employeeData['total_loan_amount'] ?? 0,
+            'installment_count' => $employeeData['installment_count'] ?? null,
+            'installment_amount' => $employeeData['installment_amount'] ?? null,
+            'approved_no_pay_days' => $employeeData['approved_no_pay_days'] ?? 0,
+            'allowances' => $employeeData['allowances'] ?? [],
+            'deductions' => $employeeData['deductions'] ?? [],
+            'bonuses' => $employeeData['bonuses'] ?? [],
+            'salary_breakdown' => $employeeData['salary_breakdown'] ?? [],
+            'month' => $month,
+            'year' => $year,
+            'status' => 'processed',
+        ];
+    }
 
+    private function findExistingSalaryProcess(string $empNo, $month, $year): ?salary_process
+    {
+        $monthKeys = [str_pad((string)(int)$month, 2, '0', STR_PAD_LEFT), (string)(int)$month, (int)$month];
+        return salary_process::where('employee_no', $empNo)
+            ->whereIn('month', $monthKeys)
+            ->where('year', $year)
+            ->first();
+    }
+
+    private function writeSalaryAudit(?salary_process $record, string $action, array $changes = []): void
+    {
+        if (!$record) {
+            return;
+        }
+        try {
+            SalaryProcessAudit::create([
+                'salary_process_id' => $record->id,
+                'user_id' => Auth::id(),
+                'user_name' => Auth::user()?->name ?? 'System',
+                'action' => $action,
+                'changes' => $changes,
+            ]);
+        } catch (\Throwable $e) {
+            // audit must not block payroll
+        }
+    }
 
     public function storeSalaryData(Request $request)
     {
@@ -1588,60 +1678,243 @@ public function getEmployeesByMonthAndCompany(Request $request)
             'data.*.full_name' => 'required|string',
             'month' => 'sometimes|integer|between:1,12',
             'year' => 'sometimes|integer',
+            'reprocess' => 'sometimes|boolean',
         ]);
 
         try {
-            $month = $request->month ?? ($request->data[0]['month'] ?? date('m'));
-            $year = $request->year ?? date('Y');
-            $duplicateEntries = [];
+            $month = (int) ($request->month ?? ($request->data[0]['month'] ?? date('n')));
+            $year = (int) ($request->year ?? date('Y'));
+            $reprocess = filter_var($request->input('reprocess', false), FILTER_VALIDATE_BOOLEAN);
+
+            $created = [];
+            $updated = [];
+            $skipped = [];
+            $blockedIssued = [];
+
+            DB::beginTransaction();
 
             foreach ($request->data as $employeeData) {
-                $existingRecord = salary_process::where('employee_no', $employeeData['emp_no'])
-                    ->where('month', $month)
-                    ->where('year', $year)
-                    ->first();
+                $empNo = (string) $employeeData['emp_no'];
+                $existingRecord = $this->findExistingSalaryProcess($empNo, $month, $year);
+                $payload = $this->buildSalaryProcessPayload($employeeData, $month, $year);
 
-                if ($existingRecord) {
-                    $duplicateEntries[] = $employeeData['emp_no'];
+                if (!$existingRecord) {
+                    $row = salary_process::create($payload);
+                    $this->writeSalaryAudit($row, 'process', ['month' => $month, 'year' => $year]);
+                    $created[] = $empNo;
                     continue;
                 }
 
-                salary_process::create([
-                    'employee_id' => $employeeData['id'],
-                    'employee_no' => $employeeData['emp_no'],
-                    'full_name' => $employeeData['full_name'],
-                    'company_name' => $employeeData['company_name'],
-                    'department_name' => $employeeData['department_name'],
-                    'sub_department_name' => $employeeData['sub_department_name'] ?? null,
-                    'basic_salary' => $employeeData['basic_salary'],
-                    'increment_active' => $employeeData['increment_active'] ?? false,
-                    'increment_value' => $employeeData['increment_value'] ?? null,
-                    'increment_effected_date' => $employeeData['increment_effected_date'] ?? null,
-                    'ot_morning' => $employeeData['ot_morning'] ?? 0,
-                    'ot_evening' => $employeeData['ot_evening'] ?? 0,
-                    'enable_epf_etf' => $employeeData['enable_epf_etf'] ?? false,
-                    'br1' => $employeeData['br1'] ?? false,
-                    'br2' => $employeeData['br2'] ?? false,
-                    'br_status' => $employeeData['br_status'] ?? '',
-                    'total_loan_amount' => $employeeData['total_loan_amount'] ?? 0,
-                    'installment_count' => $employeeData['installment_count'] ?? null,
-                    'installment_amount' => $employeeData['installment_amount'] ?? null,
-                    'approved_no_pay_days' => $employeeData['approved_no_pay_days'] ?? 0,
-                    'allowances' => json_encode($employeeData['allowances'] ?? []),
-                    'deductions' => json_encode($employeeData['deductions'] ?? []),
-                    'bonuses' => json_encode($employeeData['bonuses'] ?? []),
-                    'salary_breakdown' => json_encode($employeeData['salary_breakdown'] ?? []),
+                $status = strtolower((string) $existingRecord->status);
+
+                if ($status === 'issued') {
+                    $blockedIssued[] = $empNo;
+                    continue;
+                }
+
+                if (!$reprocess && in_array($status, ['processed', 'pending', 'hold'], true)) {
+                    $skipped[] = $empNo;
+                    continue;
+                }
+
+                // Revise / reprocess: overwrite calculated fields and set processed
+                $before = [
+                    'basic_salary' => $existingRecord->basic_salary,
+                    'status' => $existingRecord->status,
+                    'net_salary' => data_get(
+                        is_string($existingRecord->salary_breakdown)
+                            ? json_decode($existingRecord->salary_breakdown, true)
+                            : ($existingRecord->salary_breakdown ?? []),
+                        'net_salary'
+                    ),
+                ];
+
+                $existingRecord->fill($payload);
+                $existingRecord->status = 'processed';
+                $existingRecord->save();
+
+                $this->writeSalaryAudit($existingRecord, 'reprocess', [
+                    'before' => $before,
                     'month' => $month,
                     'year' => $year,
-                    'status' => 'processed',
                 ]);
+                $updated[] = $empNo;
             }
 
-            return response()->json(['message' => 'Salary data saved successfully'], 201);
+            DB::commit();
+
+            $message = 'Salary data saved successfully';
+            if ($reprocess) {
+                $message = 'Salary revised and reprocessed successfully';
+            }
+
+            return response()->json([
+                'message' => $message,
+                'created' => $created,
+                'updated' => $updated,
+                'skipped' => $skipped,
+                'blocked_issued' => $blockedIssued,
+                'summary' => [
+                    'created' => count($created),
+                    'updated' => count($updated),
+                    'skipped' => count($skipped),
+                    'blocked_issued' => count($blockedIssued),
+                ],
+            ], 201);
         } catch (\Exception $e) {
+            DB::rollBack();
             return response()->json(['message' => 'Error saving salary data: ' . $e->getMessage()], 500);
         }
     }
+
+    /**
+     * Unlock processed/hold salaries for a month so admin can revise & reprocess.
+     * Issued records are blocked unless force_unissue=true (admin privileged).
+     */
+    public function unlockForRevision(Request $request)
+    {
+        $validated = $request->validate([
+            'month' => 'required|integer|between:1,12',
+            'year' => 'required|integer',
+            'employee_nos' => 'sometimes|array',
+            'employee_nos.*' => 'string',
+            'force_unissue' => 'sometimes|boolean',
+        ]);
+
+        $month = (int) $validated['month'];
+        $year = (int) $validated['year'];
+        $forceUnissue = filter_var($request->input('force_unissue', false), FILTER_VALIDATE_BOOLEAN);
+        $monthKeys = [str_pad((string)$month, 2, '0', STR_PAD_LEFT), (string)$month, $month];
+
+        $query = salary_process::whereIn('month', $monthKeys)->where('year', $year);
+        if (!empty($validated['employee_nos'])) {
+            $query->whereIn('employee_no', $validated['employee_nos']);
+        }
+
+        $rows = $query->get();
+        if ($rows->isEmpty()) {
+            return response()->json(['message' => 'No salary records found for this period.', 'unlocked' => []], 404);
+        }
+
+        $unlocked = [];
+        $blocked = [];
+
+        DB::beginTransaction();
+        try {
+            foreach ($rows as $row) {
+                $status = strtolower((string) $row->status);
+                if ($status === 'issued' && !$forceUnissue) {
+                    $blocked[] = $row->employee_no;
+                    continue;
+                }
+                if (!in_array($status, ['processed', 'hold', 'pending', 'issued'], true)) {
+                    continue;
+                }
+
+                $prev = $row->status;
+                $row->status = 'pending';
+                $row->save();
+                $this->writeSalaryAudit($row, 'unlock', [
+                    'from' => $prev,
+                    'to' => 'pending',
+                    'month' => $month,
+                    'year' => $year,
+                ]);
+                $unlocked[] = $row->employee_no;
+            }
+            DB::commit();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['message' => 'Unlock failed: ' . $e->getMessage()], 500);
+        }
+
+        return response()->json([
+            'message' => count($unlocked)
+                ? 'Salary records unlocked for revision. Recalculate and process again.'
+                : 'No records were unlocked.',
+            'unlocked' => $unlocked,
+            'blocked_issued' => $blocked,
+        ]);
+    }
+
+    public function markAsIssued(Request $request)
+    {
+        $validated = $request->validate([
+            'month' => 'required|integer|between:1,12',
+            'year' => 'required|integer',
+            'employee_ids' => 'sometimes|array',
+            'employee_nos' => 'sometimes|array',
+        ]);
+
+        $month = (int) $validated['month'];
+        $year = (int) $validated['year'];
+        $monthKeys = [str_pad((string)$month, 2, '0', STR_PAD_LEFT), (string)$month, $month];
+
+        $query = salary_process::whereIn('month', $monthKeys)
+            ->where('year', $year)
+            ->where('status', 'processed');
+
+        if (!empty($validated['employee_nos'])) {
+            $query->whereIn('employee_no', $validated['employee_nos']);
+        }
+        if (!empty($validated['employee_ids'])) {
+            $query->whereIn('employee_id', $validated['employee_ids']);
+        }
+
+        $salaryProcesses = $query->get();
+        if ($salaryProcesses->isEmpty()) {
+            return response()->json(['message' => 'No processed salaries found for this period.'], 404);
+        }
+
+        DB::beginTransaction();
+        try {
+            foreach ($salaryProcesses as $process) {
+                $installmentCount = $process->installment_count;
+                if ($installmentCount !== null) {
+                    $loan = loans::where('employee_id', $process->employee_id)
+                        ->where('status', 'active')
+                        ->first();
+
+                    if ($loan) {
+                        $prevCount = (int) ($loan->installment_count ?? 0);
+                        $newInstallmentCount = max(0, $prevCount - 1);
+                        $loan->installment_count = $newInstallmentCount;
+                        $loan->status = $newInstallmentCount == 0 ? 'completed' : 'active';
+                        $loan->save();
+
+                        if ($newInstallmentCount == 0) {
+                            DB::table('completed_loans')->insert([
+                                'employee_id' => $loan->employee_id,
+                                'loan_id' => $loan->id,
+                                'loan_amount' => $loan->loan_amount,
+                                'interest_rate_per_annum' => $loan->interest_rate_per_annum,
+                                'with_interest' => $loan->with_interest,
+                                'installment_count' => $prevCount,
+                                'end_date' => now()->toDateString(),
+                                'created_at' => now(),
+                                'updated_at' => now(),
+                            ]);
+                        }
+                    }
+                }
+
+                $process->status = 'issued';
+                $process->save();
+                $this->writeSalaryAudit($process, 'issue', ['month' => $month, 'year' => $year]);
+            }
+            DB::commit();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['message' => 'Error marking issued: ' . $e->getMessage()], 500);
+        }
+
+        return response()->json([
+            'message' => 'Salaries marked as issued for the selected period.',
+            'count' => $salaryProcesses->count(),
+        ]);
+    }
+
+    // LEGACY helpers above; CSV download follows
 
     public function downloadSalaryCSV(Request $request)
     {

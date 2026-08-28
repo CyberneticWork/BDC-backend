@@ -99,12 +99,12 @@ class HikvisionController extends Controller
         $device = HikvisionDevice::findOrFail($id);
         $result = $this->isapiClient->testConnection($device);
 
-        if (!$result['ok']) {
+        if (!($result['ok'] ?? false)) {
             $device->update(['last_error' => $result['message'] ?? 'Connection failed']);
             return response()->json($result, 422);
         }
 
-        $device->update(['last_error' => null]);
+        $device->update(['last_error' => null, 'last_sync_at' => now()]);
 
         return response()->json($result);
     }
@@ -116,15 +116,20 @@ class HikvisionController extends Controller
         $validated = $request->validate([
             'from_date' => 'nullable|date',
             'to_date' => 'nullable|date',
+            'lookback_minutes' => 'nullable|integer|min:30|max:43200',
         ]);
 
-        $from = isset($validated['from_date']) ? \Carbon\Carbon::parse($validated['from_date'])->startOfDay() : null;
-        $to = isset($validated['to_date']) ? \Carbon\Carbon::parse($validated['to_date'])->endOfDay() : null;
+        $from = isset($validated['from_date'])
+            ? \Carbon\Carbon::parse($validated['from_date'])->startOfDay()
+            : now()->subMinutes((int) ($validated['lookback_minutes'] ?? (60 * 24 * 7)));
+        $to = isset($validated['to_date'])
+            ? \Carbon\Carbon::parse($validated['to_date'])->endOfDay()
+            : now();
 
         $result = $this->attendanceService->syncDevice($device, $from, $to);
 
         return response()->json([
-            'message' => 'Sync completed',
+            'message' => $result['message'] ?? 'Sync completed',
             'data' => $result,
         ]);
     }
@@ -134,10 +139,11 @@ class HikvisionController extends Controller
         $device = HikvisionDevice::findOrFail($id);
         $result = $this->isapiClient->configureWebhook($device);
 
-        if (!$result['ok']) {
+        if (!($result['ok'] ?? false)) {
             return response()->json([
                 'message' => $result['message'] ?? 'Failed to configure webhook on device',
                 'webhook_url' => $device->webhookUrl(),
+                'punches_url' => $device->punchesUrl(),
                 'manual_setup_required' => true,
             ], 422);
         }
@@ -145,6 +151,7 @@ class HikvisionController extends Controller
         return response()->json([
             'message' => 'Webhook configured on device',
             'webhook_url' => $device->webhookUrl(),
+            'punches_url' => $device->punchesUrl(),
         ]);
     }
 
@@ -164,6 +171,106 @@ class HikvisionController extends Controller
         $result = $this->attendanceService->handleWebhook($device, $request);
 
         return response()->json(['message' => 'OK', 'data' => $result]);
+    }
+
+    /** Office PC bridge posts punches here (Solar parity). */
+    public function punches(Request $request, string $token)
+    {
+        $device = HikvisionDevice::where('webhook_token', $token)->first();
+
+        if (!$device) {
+            return response()->json(['message' => 'Unknown device'], 404);
+        }
+
+        if (!$device->is_active) {
+            return response()->json(['message' => 'Device inactive'], 403);
+        }
+
+        $secret = config('hikvision.webhook_secret');
+        if ($secret && $request->header('X-Hikvision-Secret') !== $secret) {
+            return response()->json(['message' => 'Unauthorized'], 401);
+        }
+
+        $result = $this->attendanceService->handleAgentPunches($device, $request);
+
+        return response()->json(['message' => 'OK', 'data' => $result]);
+    }
+
+    public function agentConfig(int $id)
+    {
+        $device = HikvisionDevice::findOrFail($id);
+
+        return response()->json([
+            'data' => [
+                'device' => [
+                    'name' => $device->name,
+                    'ip' => $device->ip_address,
+                    'port' => $device->port,
+                    'username' => $device->username,
+                    'password' => $device->password,
+                ],
+                'cloud' => [
+                    'public_api_url' => rtrim(config('app.url'), '/'),
+                    'punches_url' => $device->punchesUrl(),
+                    'webhook_url' => $device->webhookUrl(),
+                    'poll_interval_seconds' => (int) config('hikvision.poll_interval_minutes', 5) * 60,
+                    'secret_header' => config('hikvision.webhook_secret'),
+                ],
+                'instructions' => [
+                    'Install Node.js 18+ on an office PC that can ping the device IP.',
+                    'Copy scripts/hikvision-bridge from this backend repo to that PC.',
+                    'Create .env from .env.example using the values below (Punches URL + device password).',
+                    'Run: npm install && npm start (or install-autostart.bat on Windows).',
+                    'Device user ID must equal HR Attendance Employee No.',
+                ],
+                'lan_mode' => $this->isapiClient->backendSharesOfficeLan((string) $device->ip_address),
+            ],
+        ]);
+    }
+
+    public function setupGuide()
+    {
+        return response()->json([
+            'data' => [
+                'summary' => 'If HR runs on the same office LAN as the device, use Test / Sync Now. If HR is in the cloud, run the on-site hikvision-bridge.',
+                'steps' => [
+                    [
+                        'step' => 1,
+                        'title' => 'Match employee IDs on the device',
+                        'detail' => 'On the Hikvision terminal, set each user ID = Employee Attendance No in HR.',
+                    ],
+                    [
+                        'step' => 2,
+                        'title' => 'Register the device in HR',
+                        'detail' => 'Time Card → Hikvision panel → Add Device (name, LAN IP, port 80, admin password).',
+                    ],
+                    [
+                        'step' => 3,
+                        'title' => 'LAN sync (office server)',
+                        'detail' => 'Click Test Connection, then Sync Now. Fingerprint events (major 5 / minor 38) import to Time Card.',
+                    ],
+                    [
+                        'step' => 4,
+                        'title' => 'Cloud ERP — office bridge',
+                        'detail' => 'Click Agent config, copy Punches URL into scripts/hikvision-bridge/.env on an office PC, then npm start / install-autostart.bat.',
+                    ],
+                    [
+                        'step' => 5,
+                        'title' => 'Test a punch',
+                        'detail' => 'Finger on device → Sync Now (LAN) or wait ~1 minute (bridge) → refresh Time Card.',
+                    ],
+                ],
+                'public_api_url' => rtrim(config('app.url'), '/'),
+            ],
+        ]);
+    }
+
+    public function cloudBase()
+    {
+        return response()->json([
+            'public_api_url' => rtrim(config('app.url'), '/'),
+            'updated_at' => now()->toIso8601String(),
+        ]);
     }
 
     public function eventLogs(int $id, Request $request)
@@ -203,6 +310,8 @@ class HikvisionController extends Controller
 
     private function formatDevice(HikvisionDevice $device): array
     {
+        $lanMode = $this->isapiClient->backendSharesOfficeLan((string) $device->ip_address);
+
         return [
             'id' => $device->id,
             'name' => $device->name,
@@ -217,6 +326,11 @@ class HikvisionController extends Controller
             'webhook_enabled' => $device->webhook_enabled,
             'polling_enabled' => $device->polling_enabled,
             'webhook_url' => $device->webhookUrl(),
+            'punches_url' => $device->punchesUrl(),
+            'lan_mode' => $lanMode,
+            'cloud_note' => $lanMode
+                ? 'HR backend is on the office LAN. Test and Sync talk directly to the device.'
+                : 'HR looks cloud/remote. Keep hikvision-bridge running on an office PC so fingerprints reach Punches URL.',
             'last_sync_at' => $device->last_sync_at,
             'last_event_at' => $device->last_event_at,
             'last_error' => $device->last_error,

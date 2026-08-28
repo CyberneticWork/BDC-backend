@@ -21,7 +21,27 @@ class Roster extends Model
         'notes',
         'date_from',
         'date_to',
+        'status',
+        'cancel_reason',
+        'cancelled_at',
     ];
+
+    protected $casts = [
+        'cancelled_at' => 'datetime',
+        'is_recurring' => 'boolean',
+    ];
+
+    public function scopeActive($query)
+    {
+        return $query->where(function ($q) {
+            $q->whereNull('status')->orWhere('status', 'Active');
+        });
+    }
+
+    public function isCancelled(): bool
+    {
+        return strcasecmp((string) $this->status, 'Cancelled') === 0;
+    }
 
     //relation for company
     public function company()

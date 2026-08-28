@@ -36,6 +36,9 @@ class RosterController extends Controller
                 'employee_name' => $r->employee?->full_name ?? $r->employee?->name_with_initials ?? $r->employee?->first_name ?? 'Unknown',
                 'date_from' => $r->date_from,
                 'date_to' => $r->date_to,
+                'status' => $r->status ?? 'Active',
+                'cancel_reason' => $r->cancel_reason,
+                'cancelled_at' => $r->cancelled_at,
                 'created_at' => $r->created_at,
             ];
         });
@@ -311,11 +314,14 @@ class RosterController extends Controller
                         'roster_id' => $roster->roster_id,
                         'shift_id' => $roster->shift_code,
                         'shift_code' => $roster->shift?->shift_code ?? '-',
-                        'shift_name' => $roster->shift?->shift_name ?? $r->shift?->shift_description ?? '-',
+                        'shift_name' => $roster->shift?->shift_name ?? $roster->shift?->shift_description ?? '-',
                         'start_time' => $roster->shift?->start_time ? substr($roster->shift->start_time, 0, 5) : null,
                         'end_time'   => $roster->shift?->end_time ? substr($roster->shift->end_time, 0, 5) : null,
                         'date_from' => $roster->date_from,
                         'date_to' => $roster->date_to,
+                        'status' => $roster->status ?? 'Active',
+                        'cancel_reason' => $roster->cancel_reason,
+                        'cancelled_at' => $roster->cancelled_at,
                     ],
                     'organization_details' => [
                         'company' => $roster->company ? [
@@ -354,6 +360,56 @@ class RosterController extends Controller
         } catch (\Exception $e) {
             return response()->json(['message' => 'Failed to delete roster', 'success' => false], 500);
         }
+    }
+
+    public function cancel(Request $request, $id)
+    {
+        $validated = $request->validate([
+            'cancel_reason' => 'nullable|string|max:255',
+        ]);
+
+        $roster = Roster::findOrFail($id);
+
+        if ($roster->isCancelled()) {
+            return response()->json(['message' => 'Roster is already cancelled', 'success' => false], 422);
+        }
+
+        $roster->update([
+            'status' => 'Cancelled',
+            'cancel_reason' => $validated['cancel_reason'] ?? null,
+            'cancelled_at' => now(),
+        ]);
+
+        return response()->json([
+            'message' => 'Roster cancelled successfully',
+            'success' => true,
+            'data' => $roster->fresh(['employee', 'shift']),
+        ]);
+    }
+
+    public function bulkCancel(Request $request)
+    {
+        $validated = $request->validate([
+            'ids' => 'required|array|min:1',
+            'ids.*' => 'integer|exists:rosters,id',
+            'cancel_reason' => 'nullable|string|max:255',
+        ]);
+
+        $count = Roster::whereIn('id', $validated['ids'])
+            ->where(function ($q) {
+                $q->whereNull('status')->orWhere('status', '!=', 'Cancelled');
+            })
+            ->update([
+                'status' => 'Cancelled',
+                'cancel_reason' => $validated['cancel_reason'] ?? null,
+                'cancelled_at' => now(),
+            ]);
+
+        return response()->json([
+            'message' => "Successfully cancelled {$count} roster record(s)",
+            'success' => true,
+            'cancelled' => $count,
+        ]);
     }
 
     public function bulkDestroy(Request $request)

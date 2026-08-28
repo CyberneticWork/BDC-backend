@@ -16,10 +16,13 @@ use App\Http\Controllers\EmployeeController;
 use App\Http\Controllers\OvertimeController;
 use App\Http\Controllers\TimeCardController;
 use App\Http\Controllers\HikvisionController;
+use App\Http\Controllers\AttendanceExceptionController;
+use App\Http\Controllers\ShiftHoursReportController;
 use App\Http\Controllers\DeductionController;
 use App\Http\Controllers\AllowancesController;
 use App\Http\Controllers\DepartmentsController;
 use App\Http\Controllers\LeaveMasterController;
+use App\Http\Controllers\EmployeeLeaveBalanceController;
 use App\Http\Controllers\ResignationController;
 use App\Http\Controllers\LeaveCalenderController;
 use App\Http\Controllers\SalaryProcessController;
@@ -59,6 +62,7 @@ use App\Http\Controllers\EmergencyContactRelationshipTypesController;
 use App\Http\Controllers\EmployeeWiseAllowanceController;
 use App\Http\Controllers\EmployeeWiseDeductionController;
 use App\Http\Controllers\EmployeeWiseBonusController;
+use App\Http\Controllers\AssignSalaryComponentController;
 use App\Models\EmployeeWiseAllowance;
 
 Route::get('/user', function (Request $request) {
@@ -128,6 +132,9 @@ Route::apiResource('subdepartments', SubDepartmentsController::class);
 
 
 Route::post('/rosters/bulk', [RosterController::class, 'storeBulk']);
+Route::post('/rosters/bulk-cancel', [RosterController::class, 'bulkCancel']);
+Route::delete('/rosters/bulk-delete', [RosterController::class, 'bulkDestroy']);
+Route::post('/rosters/{id}/cancel', [RosterController::class, 'cancel']);
 Route::apiResource('rosters', RosterController::class);
 Route::apiResource('overtime', OvertimeController::class);
 Route::post('/overtime/approve/{id}', [OvertimeController::class, 'approve']);
@@ -137,6 +144,9 @@ Route::put('/overtime/{id}', [OvertimeController::class, 'update']);
 
 
 Route::post('/salary-process/store', [SalaryProcessController::class, 'storeSalaryData']);
+Route::post('/salary-process/unlock', [SalaryProcessController::class, 'unlockForRevision']);
+Route::post('/salary/process/reprocess', [SalaryProcessController::class, 'storeSalaryData']);
+Route::post('/salary-process/reprocess', [SalaryProcessController::class, 'storeSalaryData']);
 
 
 //new
@@ -253,8 +263,11 @@ Route::get('/companies', [CompanyController::class, 'index']);
 Route::get('/attendance/absentees', [TimeCardController::class, 'fetchAbsentees']);
 Route::get('/attendance-template', [TimeCardController::class, 'downloadTemplate']);
 
-// Hikvision fingerprint terminal integration (DS-K1T320 / iVMS-4200 / Hik-Connect)
+// Hikvision fingerprint terminal integration (DS-K1T320 / Solar-parity sync + bridge)
 Route::post('/hikvision/webhook/{token}', [HikvisionController::class, 'webhook']);
+Route::post('/hikvision/punches/{token}', [HikvisionController::class, 'punches']);
+Route::get('/hikvision/cloud-base', [HikvisionController::class, 'cloudBase']);
+Route::get('/hikvision/setup-guide', [HikvisionController::class, 'setupGuide']);
 Route::get('/hikvision/devices', [HikvisionController::class, 'index']);
 Route::post('/hikvision/devices', [HikvisionController::class, 'store']);
 Route::put('/hikvision/devices/{id}', [HikvisionController::class, 'update']);
@@ -262,6 +275,7 @@ Route::delete('/hikvision/devices/{id}', [HikvisionController::class, 'destroy']
 Route::post('/hikvision/devices/{id}/test', [HikvisionController::class, 'testConnection']);
 Route::post('/hikvision/devices/{id}/sync', [HikvisionController::class, 'syncNow']);
 Route::post('/hikvision/devices/{id}/configure-webhook', [HikvisionController::class, 'configureWebhook']);
+Route::get('/hikvision/devices/{id}/agent-config', [HikvisionController::class, 'agentConfig']);
 Route::get('/hikvision/devices/{id}/logs', [HikvisionController::class, 'eventLogs']);
 Route::post('/attendance/import-hikvision-excel', [HikvisionController::class, 'importExcel']);
 
@@ -286,7 +300,16 @@ Route::get('/salaryCal/employees', [SalaryProcessController::class, 'getEmployee
 Route::post('/salary/process/allowances', [SalaryProcessController::class, 'updateEmployeesAllowances']);
 Route::post('/salary/process/save', [SalaryProcessController::class, 'storeSalaryData']);
 
+// Assign predefined allowances/deductions (all employees or one employee)
+Route::get('/assign/allowances', [AssignSalaryComponentController::class, 'listAllowances']);
+Route::post('/assign/allowances', [AssignSalaryComponentController::class, 'assignAllowance']);
+Route::delete('/assign/allowances/{id}', [AssignSalaryComponentController::class, 'destroyAllowance']);
+Route::get('/assign/deductions', [AssignSalaryComponentController::class, 'listDeductions']);
+Route::post('/assign/deductions', [AssignSalaryComponentController::class, 'assignDeduction']);
+Route::delete('/assign/deductions/{id}', [AssignSalaryComponentController::class, 'destroyDeduction']);
+
 Route::post('/attendance/mark-absentees', [TimeCardController::class, 'markAbsentees']);
+Route::post('/attendance/recalculate', [TimeCardController::class, 'recalculateAttendance']);
 Route::get('/absentees', [ApiDataController::class, 'Absentees']);
 // No Pay routes
 /*
@@ -340,6 +363,14 @@ Route::get('/reports/time-cards/attendance/monthly', [AttendanceReportController
 Route::get('/reports/time-cards/attendance/range', [AttendanceReportController::class, 'dateRange']);
 
 Route::put('/reports/time-cards/attendance/{employeeId}/{date}/approval-status', [AttendanceReportController::class, 'updateApprovalStatus']);
+
+// Late Coming / Early OUT approval
+Route::get('/attendance/exceptions', [AttendanceExceptionController::class, 'index']);
+Route::put('/attendance/exceptions/{id}', [AttendanceExceptionController::class, 'updateStatus']);
+Route::post('/attendance/exceptions/bulk-status', [AttendanceExceptionController::class, 'bulkUpdateStatus']);
+
+// Within-shift hours & Extra hours reports
+Route::get('/reports/shift-hours', [ShiftHoursReportController::class, 'index']);
 // ✅ special route FIRST
 //Route::get('/loans/employee-by-number/{number}', [LoanController::class, 'getEmployeeByNumber']);
 
@@ -583,9 +614,35 @@ Route::post('employee-wise-bonus', [EmployeeWiseBonusController::class, 'store']
 Route::put('employee-wise-bonus/{id}', [EmployeeWiseBonusController::class, 'update']);
 Route::delete('employee-wise-bonus/{id}', [EmployeeWiseBonusController::class, 'destroy']);
 
+Route::get('employee-leave-balances', [EmployeeLeaveBalanceController::class, 'index']);
+Route::get('employee-leave-balances/leave-types', [EmployeeLeaveBalanceController::class, 'leaveTypes']);
+Route::get('employee-leave-balances/employees', [EmployeeLeaveBalanceController::class, 'employees']);
+Route::post('employee-leave-balances', [EmployeeLeaveBalanceController::class, 'store']);
+Route::put('employee-leave-balances/{id}', [EmployeeLeaveBalanceController::class, 'update']);
+Route::delete('employee-leave-balances/{id}', [EmployeeLeaveBalanceController::class, 'destroy']);
+
 // emergency contact relationship types
 Route::get('emergency-contact-relationship-types', [EmergencyContactRelationshipTypesController::class, 'index']);
 Route::post('emergency-contact-relationship-types', [EmergencyContactRelationshipTypesController::class, 'store']);
 Route::get('emergency-contact-relationship-types/{id}', [EmergencyContactRelationshipTypesController::class, 'getOneById']);
 Route::put('emergency-contact-relationship-types/{id}', [EmergencyContactRelationshipTypesController::class, 'update']);
 Route::delete('emergency-contact-relationship-types/{id}', [EmergencyContactRelationshipTypesController::class, 'destroy']);
+
+// Employee self-service portal (Solar-style)
+Route::middleware('auth:sanctum')->prefix('me')->group(function () {
+    Route::get('/portal', [App\Http\Controllers\EmployeePortalController::class, 'home']);
+    Route::get('/attendance', [App\Http\Controllers\EmployeePortalController::class, 'attendance']);
+    Route::get('/overtime', [App\Http\Controllers\EmployeePortalController::class, 'overtime']);
+    Route::get('/nopay', [App\Http\Controllers\EmployeePortalController::class, 'nopay']);
+    Route::get('/salary', [App\Http\Controllers\EmployeePortalController::class, 'salary']);
+    Route::get('/leaves', [App\Http\Controllers\EmployeePortalController::class, 'leaves']);
+    Route::post('/leaves', [App\Http\Controllers\EmployeePortalController::class, 'storeLeave']);
+    Route::get('/advances', [App\Http\Controllers\EmployeePortalController::class, 'myAdvances']);
+    Route::post('/advances', [App\Http\Controllers\EmployeePortalController::class, 'storeAdvance']);
+    Route::post('/change-password', [App\Http\Controllers\EmployeePortalController::class, 'changePassword']);
+});
+
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/hr/advance-requests', [App\Http\Controllers\EmployeePortalController::class, 'listAdvances']);
+    Route::post('/hr/advance-requests/{id}/review', [App\Http\Controllers\EmployeePortalController::class, 'reviewAdvance']);
+});

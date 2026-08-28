@@ -1,0 +1,11 @@
+{
+  "name": "sohan-hr-hikvision-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "On-site bridge: polls Hikvision fingerprint device and posts punches to Sohan HR",
+  "main": "bridge.js",
+  "scripts": {
+    "start": "node bridge.js",
+    "once": "node bridge.js --once"
+  }
+}

@@ -126,6 +126,23 @@ class LeaveMasterController extends Controller
             }
         }
 
+        // Shop & Office Act / HR balance: block if request exceeds entitlement
+        $asOfDate = $request->filled('leave_date')
+            ? Carbon::parse($request->leave_date)
+            : ($request->filled('leave_from') ? Carbon::parse($request->leave_from) : Carbon::now());
+
+        $entitlementCheck = $this->validateLeaveEntitlement(
+            $employee,
+            $orgAssignment,
+            (string) $request->leave_type,
+            (float) $requestedDurationInDays,
+            $asOfDate
+        );
+
+        if ($entitlementCheck !== null) {
+            return response()->json($entitlementCheck, 422);
+        }
+
         $data = $request->all();
         $data['is_half_day'] = $isHalfDay;
         $data['is_short_leave'] = $isShortLeave;
@@ -549,94 +566,122 @@ class LeaveMasterController extends Controller
             $employee = employee::with('organizationAssignment')->find($employeeId);
         }
 
-        if (!$employee) return response()->json(['message' => 'Employee not found'], 404);
+        if (!$employee) {
+            return response()->json(['message' => 'Employee not found'], 404);
+        }
 
         $orgAssignment = $employee->organizationAssignment;
 
         if (!$orgAssignment || !$orgAssignment->date_of_joining) {
             return response()->json([
-                'message' => 'Date of Joining is not set for this employee. Cannot calculate leaves.'
+                'message' => 'Date of Joining is not set for this employee. Cannot calculate leaves under Shop & Office Act.',
             ], 400);
         }
 
         $targetDate = $requestedDateStr ? Carbon::parse($requestedDateStr) : Carbon::now();
-        $currentYear = $targetDate->year;
-
+        $currentYear = (int) $targetDate->year;
         $joinDate = Carbon::parse($orgAssignment->date_of_joining);
-        $joinYear = $joinDate->year;
-        $joinMonth = $joinDate->month;
 
-        $totalAnnualLeaves = 0;
-        $totalCasualLeaves = 0;
-        $isFirstYear = false;
-        $note = '';
-
-        if ($currentYear == $joinYear) {
-            $isFirstYear = true;
-            $totalAnnualLeaves = 0;
-
-            $monthsCompleted = $joinDate->diffInMonths($targetDate);
-            $totalCasualLeaves = floor($monthsCompleted / 2);
-            $note = 'First Year: 1 Casual Leave per 2 completed months. No Annual Leaves.';
-        } elseif ($currentYear == $joinYear + 1) {
-            $totalCasualLeaves = 7;
-            $note = 'Second Year: 7 Casual Leaves. Annual leaves based on joined month.';
-
-            if ($joinMonth >= 1 && $joinMonth <= 3) {
-                $totalAnnualLeaves = 14;
-            } elseif ($joinMonth >= 4 && $joinMonth <= 6) {
-                $totalAnnualLeaves = 10;
-            } elseif ($joinMonth >= 7 && $joinMonth <= 9) {
-                $totalAnnualLeaves = 7;
-            } elseif ($joinMonth >= 10 && $joinMonth <= 12) {
-                $totalAnnualLeaves = 4;
-            }
-        } else {
-            $totalCasualLeaves = 7;
-            $totalAnnualLeaves = 14;
-            $note = 'Standard leaves: 14 Annual and 7 Casual leaves.';
-        }
+        $calculator = app(\App\Services\ShopAndOfficeLeaveCalculator::class);
+        $law = $calculator->calculate($joinDate, $targetDate);
 
         $eligibleLeaves = [];
 
-        if ($totalCasualLeaves > 0) {
-            $usedCasual = $this->getUsedLeaveDays($employee->id, 'Casual Leave', $currentYear);
-            $eligibleLeaves[] = [
-                'leave_type' => 'Casual Leave',
-                'total_days' => $totalCasualLeaves,
-                'used_days' => $usedCasual,
-                'available_days' => max(0, $totalCasualLeaves - $usedCasual),
-                'is_half_day_only' => false,
-                'note' => $isFirstYear ? "Available: $totalCasualLeaves (Earned 1 per 2 months)" : "Standard 7 Days"
-            ];
+        // Optional HR override: employee-wise balances for the year (if configured).
+        $manualBalances = \App\Models\EmployeeLeaveBalance::where('employee_id', $employee->id)
+            ->where('year', $currentYear)
+            ->where('status', 'active')
+            ->whereNull('deleted_at')
+            ->get();
+
+        if ($manualBalances->isNotEmpty()) {
+            foreach ($manualBalances as $balance) {
+                $used = $this->getUsedLeaveDays($employee->id, $balance->leave_type, $currentYear);
+                $total = (float) $balance->entitled_days;
+                $eligibleLeaves[] = [
+                    'leave_type' => $balance->leave_type,
+                    'total_days' => $total,
+                    'used_days' => $used,
+                    'available_days' => max(0, $total - $used),
+                    'is_half_day_only' => false,
+                    'source' => 'employee_balance',
+                    'note' => $balance->notes ?: 'Employee-wise leave balance (HR override)',
+                ];
+            }
+
+            return response()->json([
+                'employee_id' => $employee->id,
+                'emp_number' => $employee->attendance_employee_no,
+                'employee_name' => $employee->display_name ?? $employee->name_with_initials ?? $employee->full_name,
+                'join_date' => $orgAssignment->date_of_joining,
+                'as_of_date' => $targetDate->toDateString(),
+                'calendar_year' => $currentYear,
+                'employment_year' => $law['employment_year'],
+                'is_first_year' => $law['is_first_year'],
+                'is_second_year' => $law['is_second_year'],
+                'balance_source' => 'employee_leave_balances',
+                'law_reference' => $law['law_reference'],
+                'eligible_leaves' => $eligibleLeaves,
+            ]);
         }
 
-        if ($totalAnnualLeaves > 0) {
-            $usedAnnual = $this->getUsedLeaveDays($employee->id, 'Annual Leave', $currentYear);
-            $eligibleLeaves[] = [
-                'leave_type' => 'Annual Leave',
-                'total_days' => $totalAnnualLeaves,
-                'used_days' => $usedAnnual,
-                'available_days' => max(0, $totalAnnualLeaves - $usedAnnual),
-                'is_half_day_only' => false,
-                'note' => $note
-            ];
-        }
+        // Default: Shop & Office Act statutory calculation only (Annual + Casual).
+        $usedCasual = $this->getUsedLeaveDays($employee->id, 'Casual Leave', $currentYear);
+        $eligibleLeaves[] = [
+            'leave_type' => 'Casual Leave',
+            'total_days' => $law['casual_days'],
+            'used_days' => $usedCasual,
+            'available_days' => max(0, $law['casual_days'] - $usedCasual),
+            'is_half_day_only' => false,
+            'source' => 'shop_and_office_act',
+            'note' => $law['casual_note'],
+        ];
+
+        $usedAnnual = $this->getUsedLeaveDays($employee->id, 'Annual Leave', $currentYear);
+        $eligibleLeaves[] = [
+            'leave_type' => 'Annual Leave',
+            'total_days' => $law['annual_days'],
+            'used_days' => $usedAnnual,
+            'available_days' => max(0, $law['annual_days'] - $usedAnnual),
+            'is_half_day_only' => false,
+            'source' => 'shop_and_office_act',
+            'note' => $law['annual_note'],
+        ];
 
         return response()->json([
             'employee_id' => $employee->id,
             'emp_number' => $employee->attendance_employee_no,
-            'employee_name' => $employee->display_name ?? $employee->name_with_initials,
+            'employee_name' => $employee->display_name ?? $employee->name_with_initials ?? $employee->full_name,
             'join_date' => $orgAssignment->date_of_joining,
-            'is_first_year' => $isFirstYear,
+            'as_of_date' => $targetDate->toDateString(),
+            'calendar_year' => $currentYear,
+            'employment_year' => $law['employment_year'],
+            'is_first_year' => $law['is_first_year'],
+            'is_second_year' => $law['is_second_year'],
+            'completed_months_first_year' => $law['completed_months_first_year'],
+            'balance_source' => 'shop_and_office_act',
+            'law_reference' => $law['law_reference'],
             'eligible_leaves' => $eligibleLeaves,
         ]);
     }
 
     private function getUsedLeaveDays($employeeId, $leaveType, $year)
     {
+        $aliases = [$leaveType];
+        $normalized = strtolower(trim((string) $leaveType));
+
+        if (str_contains($normalized, 'casual')) {
+            $aliases = array_unique(array_merge($aliases, ['Casual Leave', 'Casual', 'casual leave', 'CASUAL LEAVE']));
+        } elseif (str_contains($normalized, 'annual')) {
+            $aliases = array_unique(array_merge($aliases, ['Annual Leave', 'Annual', 'annual leave', 'ANNUAL LEAVE']));
+        }
+
         $leaves = leave_master::where('employee_id', $employeeId)
-            ->where('leave_type', $leaveType)
+            ->where(function ($q) use ($aliases) {
+                foreach ($aliases as $alias) {
+                    $q->orWhereRaw('LOWER(leave_type) = ?', [strtolower($alias)]);
+                }
+            })
             ->whereIn('status', ['Approved', 'HR_Approved', 'Pending', 'Pending_Supervisor'])
             ->where(function ($query) use ($year) {
                 $query->whereYear('leave_date', $year)
@@ -655,7 +700,132 @@ class LeaveMasterController extends Controller
             }
         }
 
-        return $totalDays;
+        return round($totalDays, 2);
+    }
+
+    /**
+     * Hard-block leave apply when requested days exceed Shop & Office Act / HR override balance.
+     * Returns error payload array, or null when allowed.
+     */
+    private function validateLeaveEntitlement($employee, $orgAssignment, string $leaveType, float $requestedDays, Carbon $asOfDate): ?array
+    {
+        if ($requestedDays <= 0) {
+            return null;
+        }
+
+        if (!$orgAssignment || !$orgAssignment->date_of_joining) {
+            return [
+                'message' => 'Cannot apply leave: Date of Joining is not set for this employee.',
+                'reason' => 'Date of Joining is missing, so leave entitlement under Shop & Office Act cannot be calculated.',
+                'entitlement_exceeded' => true,
+                'limit_exceeded' => true,
+                'continue_allowed' => false,
+                'leave_type' => $leaveType,
+                'requested_days' => $requestedDays,
+            ];
+        }
+
+        $year = (int) $asOfDate->year;
+        $normalized = strtolower(trim($leaveType));
+        $joinDate = Carbon::parse($orgAssignment->date_of_joining);
+        $calculator = app(\App\Services\ShopAndOfficeLeaveCalculator::class);
+        $law = $calculator->calculate($joinDate, $asOfDate);
+
+        $manualBalances = \App\Models\EmployeeLeaveBalance::where('employee_id', $employee->id)
+            ->where('year', $year)
+            ->where('status', 'active')
+            ->whereNull('deleted_at')
+            ->get();
+
+        $entitled = null;
+        $note = '';
+        $source = 'shop_and_office_act';
+        $displayType = $leaveType;
+
+        if ($manualBalances->isNotEmpty()) {
+            $match = $manualBalances->first(function ($row) use ($normalized) {
+                return strtolower(trim((string) $row->leave_type)) === $normalized;
+            });
+
+            if (!$match) {
+                return [
+                    'message' => "Cannot apply leave: \"{$leaveType}\" is not available for this employee in {$year}.",
+                    'reason' => 'HR has set employee leave balances for this year, but this leave type is not included. Choose a configured leave type or ask HR to add it.',
+                    'entitlement_exceeded' => true,
+                    'limit_exceeded' => true,
+                    'continue_allowed' => false,
+                    'leave_type' => $leaveType,
+                    'requested_days' => $requestedDays,
+                    'available_days' => 0,
+                    'entitled_days' => 0,
+                    'used_days' => 0,
+                    'balance_source' => 'employee_leave_balances',
+                    'law_reference' => $law['law_reference'],
+                ];
+            }
+
+            $entitled = (float) $match->entitled_days;
+            $note = $match->notes ?: 'Employee-wise leave balance (HR override)';
+            $source = 'employee_leave_balances';
+            $displayType = $match->leave_type;
+        } elseif (str_contains($normalized, 'casual')) {
+            $entitled = (float) $law['casual_days'];
+            $note = $law['casual_note'];
+            $displayType = 'Casual Leave';
+        } elseif (str_contains($normalized, 'annual')) {
+            $entitled = (float) $law['annual_days'];
+            $note = $law['annual_note'];
+            $displayType = 'Annual Leave';
+        } else {
+            return [
+                'message' => "Cannot apply leave: \"{$leaveType}\" is not a statutory leave type under Shop & Office Act.",
+                'reason' => 'Only Casual Leave and Annual Leave are calculated under the Act (unless HR sets employee leave balances).',
+                'entitlement_exceeded' => true,
+                'limit_exceeded' => true,
+                'continue_allowed' => false,
+                'leave_type' => $leaveType,
+                'requested_days' => $requestedDays,
+                'available_days' => 0,
+                'entitled_days' => 0,
+                'used_days' => 0,
+                'balance_source' => 'shop_and_office_act',
+                'law_reference' => $law['law_reference'],
+            ];
+        }
+
+        $used = $this->getUsedLeaveDays($employee->id, $displayType, $year);
+        $available = max(0, round($entitled - $used, 2));
+
+        if ($requestedDays <= $available + 0.0001) {
+            return null;
+        }
+
+        $reason = $note;
+        if ($entitled <= 0) {
+            $reason = $note ?: "No {$displayType} entitlement for this period under Shop & Office Act.";
+        } elseif ($available <= 0) {
+            $reason = "All {$displayType} entitlement for {$year} is already used ({$used}/{$entitled} days). {$note}";
+        } else {
+            $reason = "Requested {$requestedDays} day(s) but only {$available} day(s) of {$displayType} remain "
+                . "(entitled {$entitled}, used {$used}). {$note}";
+        }
+
+        return [
+            'message' => "Cannot apply leave: entitlement exceeded for {$displayType}.",
+            'reason' => trim($reason),
+            'entitlement_exceeded' => true,
+            'limit_exceeded' => true,
+            'continue_allowed' => false,
+            'leave_type' => $displayType,
+            'requested_days' => $requestedDays,
+            'entitled_days' => $entitled,
+            'used_days' => $used,
+            'available_days' => $available,
+            'balance_source' => $source,
+            'law_reference' => $law['law_reference'],
+            'employment_year' => $law['employment_year'],
+            'calendar_year' => $year,
+        ];
     }
 }
 
