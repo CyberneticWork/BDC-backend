@@ -191,7 +191,7 @@ class RosterController extends Controller
             if (!$overwrite) {
                 $conflicts = Roster::with('shift')->where('employee_id', $employeeId)->whereIn('date_from', $dates)->get();
                 if ($conflicts->count() > 0) {
-                    $emp = \App\Models\Employee::find($employeeId);
+                    $emp = \App\Models\employee::find($employeeId);
                     $employeeName = $emp->full_name ?? $emp->name_with_initials ?? $emp->first_name ?? "Emp $employeeId";
                     foreach ($conflicts as $c) {
                         $allConflicts[] = [

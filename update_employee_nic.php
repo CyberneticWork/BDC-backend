@@ -6,7 +6,7 @@ $app = require_once __DIR__.'/bootstrap/app.php';
 $app->make('Illuminate\Contracts\Console\Kernel')->bootstrap();
 
 use App\Models\User;
-use App\Models\Employee;
+use App\Models\employee;
 
 // Get employee with email perera@gmail.com
 $employee = Employee::where('email', 'perera@gmail.com')->first();

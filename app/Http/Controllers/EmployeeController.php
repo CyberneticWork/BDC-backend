@@ -72,7 +72,7 @@ class EmployeeController extends Controller
         $page = $request->input('page', 1);
         $search = $request->input('search', '');
 
-        $query = Employee::with([
+        $query = employee::with([
             'employmentType:id,name',
             'contactDetail:id,employee_id,email,mobile_line'
         ])->select([
@@ -109,7 +109,7 @@ class EmployeeController extends Controller
         $page = $request->input('page', 1);
         $search = $request->input('search', '');
 
-        $query = Employee::with([
+        $query = employee::with([
             'employmentType:id,name',
             'contactDetail:id,employee_id,email,mobile_line',
             'organizationAssignment.company:id,name',
@@ -172,7 +172,7 @@ class EmployeeController extends Controller
     {
         $search = $request->input('search', '');
 
-        $query = Employee::query()
+        $query = employee::query()
             ->select([
                 'id',
                 'full_name',
@@ -887,7 +887,7 @@ class EmployeeController extends Controller
         $organization = json_decode($request->input('organization'), true);
 
         // Find the existing employee
-        $employee = Employee::findOrFail($personal['id']);
+        $employee = employee::findOrFail($personal['id']);
 
         // Validate the decoded arrays
         $validator->after(function ($validator) use ($personal, $address, $compensation, $organization, $employee) {
@@ -1330,7 +1330,7 @@ class EmployeeController extends Controller
         DB::beginTransaction();
 
         try {
-            $employee = Employee::findOrFail($id);
+            $employee = employee::findOrFail($id);
 
             // Delete profile picture if exists
             if ($employee->profile_photo_path && Storage::disk('public')->exists($employee->profile_photo_path)) {
@@ -1440,7 +1440,7 @@ class EmployeeController extends Controller
         }
 
         try {
-            $employee = Employee::findOrFail($id);
+            $employee = employee::findOrFail($id);
             if ($employee->profile_photo_path && Storage::disk('public')->exists($employee->profile_photo_path)) {
                 Storage::disk('public')->delete($employee->profile_photo_path);
             }
