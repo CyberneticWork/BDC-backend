@@ -1,0 +1,33 @@
+# Laravel API — apispmhr.cyberneticde.site
+# Place in /etc/nginx/sites-available/ and symlink to sites-enabled.
+# Document root MUST be the Laravel public/ directory.
+
+server {
+    listen 443 ssl http2;
+    server_name apispmhr.cyberneticde.site;
+
+    root /var/www/sohan_hr_system_backend/public;
+    index index.php;
+
+    charset utf-8;
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location = /favicon.ico { access_log off; log_not_found off; }
+    location = /robots.txt  { access_log off; log_not_found off; }
+
+    error_page 404 /index.php;
+
+    location ~ \.php$ {
+        fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+        include fastcgi_params;
+        fastcgi_hide_header X-Powered-By;
+    }
+
+    location ~ /\.(?!well-known).* {
+        deny all;
+    }
+}
