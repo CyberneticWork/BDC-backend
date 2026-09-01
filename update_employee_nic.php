@@ -9,7 +9,7 @@ use App\Models\User;
 use App\Models\employee;
 
 // Get employee with email perera@gmail.com
-$employee = Employee::where('email', 'perera@gmail.com')->first();
+$employee = employee::where('email', 'perera@gmail.com')->first();
 
 if ($employee) {
     // Get user record
