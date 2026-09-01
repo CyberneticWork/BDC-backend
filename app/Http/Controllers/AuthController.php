@@ -17,8 +17,8 @@ class AuthController extends Controller
     public function login(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'identifier' => 'required|email',
-            'password' => 'required',
+            'identifier' => 'required|string|min:3',
+            'password' => 'required|string',
         ]);
 
         if ($validator->fails()) {
@@ -27,19 +27,42 @@ class AuthController extends Controller
                 'errors' => $validator->errors(),
             ], 422);
         }
-        
-        // Find user by email
-        $user = User::where('email', $request->identifier)->first();
 
-        if (!$user || !Hash::check($request->password, $user->password)) {
+        $identifier = trim($request->identifier);
+        $password = $request->password;
+
+        $user = $this->findUserByIdentifier($identifier);
+
+        if (!$user || !Hash::check($password, $user->getAuthPassword())) {
             return response()->json([
                 'message' => 'The provided credentials are incorrect.',
             ], 401);
         }
-        
-        $token = $user->createToken($request->identifier)->plainTextToken;
+
+        $token = $user->createToken($identifier)->plainTextToken;
 
         return response()->json(['token' => $token], 200);
+    }
+
+    private function findUserByIdentifier(string $identifier): ?User
+    {
+        $identifier = trim($identifier);
+        $lower = strtolower($identifier);
+
+        $user = User::query()
+            ->where(function ($query) use ($lower, $identifier) {
+                $query->whereRaw('LOWER(email) = ?', [$lower])
+                    ->orWhereRaw('LOWER(nic) = ?', [$lower]);
+
+                if (filter_var($identifier, FILTER_VALIDATE_EMAIL)) {
+                    $query->orWhereHas('employee.contactDetail', function ($contactQuery) use ($lower) {
+                        $contactQuery->whereRaw('LOWER(email) = ?', [$lower]);
+                    });
+                }
+            })
+            ->first();
+
+        return $user;
     }
 
     // OTP Login for first-time employees
@@ -105,7 +128,7 @@ class AuthController extends Controller
 
         $user = $request->user();
 
-        if (!Hash::check($request->current_password, $user->password)) {
+        if (!Hash::check($request->current_password, $user->getAuthPassword())) {
             return response()->json([
                 'message' => 'Current password is incorrect.',
             ], 401);
