@@ -14,6 +14,7 @@ $paths = [
     'database/migrations/2026_08_27_100000_add_status_to_rosters_table.php',
     'database/migrations/2026_08_27_233000_create_employee_leave_balances_table.php',
     'database/migrations/2026_08_28_000001_create_salary_advance_requests_table.php',
+    'database/migrations/2026_09_03_100000_create_monthly_late_deduction_tables.php',
 ];
 
 echo "Running pending August 2026 migrations...\n\n";

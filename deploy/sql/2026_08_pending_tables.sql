@@ -49,3 +49,4 @@ INSERT IGNORE INTO `migrations` (`migration`, `batch`) VALUES
   ('2026_08_27_100000_add_status_to_rosters_table', 999),
   ('2026_08_27_233000_create_employee_leave_balances_table', 999),
   ('2026_08_28_000001_create_salary_advance_requests_table', 999);
+

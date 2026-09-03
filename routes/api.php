@@ -63,6 +63,7 @@ use App\Http\Controllers\EmployeeWiseAllowanceController;
 use App\Http\Controllers\EmployeeWiseDeductionController;
 use App\Http\Controllers\EmployeeWiseBonusController;
 use App\Http\Controllers\AssignSalaryComponentController;
+use App\Http\Controllers\MonthlyLateDeductionController;
 use App\Models\EmployeeWiseAllowance;
 
 Route::get('/user', function (Request $request) {
@@ -335,6 +336,12 @@ Route::post('no-pay-records/bulk-update', [NopayController::class, 'bulkUpdateSt
 Route::delete('no-pay-records/{id}', [NopayController::class, 'destroy']);
 Route::delete('no-pay-records/bulk-delete', [NopayController::class, 'bulkDestroy']);
 Route::get('no-pay-records/stats', [NopayController::class, 'getNoPayStats']);
+
+// Monthly late deduction (total late → short leave → annual/casual → nopay)
+Route::get('monthly-late-deductions/rules', [MonthlyLateDeductionController::class, 'rules']);
+Route::get('monthly-late-deductions/preview', [MonthlyLateDeductionController::class, 'preview']);
+Route::post('monthly-late-deductions/apply', [MonthlyLateDeductionController::class, 'apply']);
+Route::get('monthly-late-deductions/employees/{employeeId}', [MonthlyLateDeductionController::class, 'employeeDetail']);
 
 // Allowances import/export routes
 Route::get('/allowances/template/download', [AllowancesController::class, 'downloadTemplate']);

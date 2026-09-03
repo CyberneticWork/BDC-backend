@@ -128,79 +128,22 @@ class SalaryProcessController extends Controller
         return $hours > 0 ? round($hours, 2) : $defaultHours;
     }
 
+    /**
+     * Old ≤30-min occurrence policy replaced by MonthlyLateDeductionService
+     * (monthly total → short leave → annual/casual → nopay). Monetary short/half
+     * pay-cuts are disabled to avoid double-charging with auto-applied leaves.
+     */
     private function calculateLateDeductionData(int $employeeId, string $startDate, string $endDate, float $perDaySalary): array
     {
-        $cardsByDate = time_card::where('employee_id', $employeeId)
-            ->whereBetween('date', [$startDate, $endDate])
-            ->whereNull('deleted_at')
-            ->orderBy('time', 'asc')
-            ->get()
-            ->groupBy('date');
-
-        $minorLateCounter = 0;
-
-        $approvedLeaveLateCount = 0;
-        $noDeductionLateCount = 0;
-        $shortLeaveCount = 0;
-        $halfDayCount = 0;
-        $deductibleLateCount = 0;
-
-        $shortLeaveDeductionAmount = 0;
-        $halfDayDeductionAmount = 0;
-
-        foreach ($cardsByDate as $date => $dayCards) {
-            $inCard = $dayCards->first(function ($card) {
-                $st = strtolower(trim($card->status));
-                return $card->entry == 1 || in_array($st, ['in', 'late coming', 'late_coming']);
-            });
-
-            if (!$inCard) {
-                continue;
-            }
-
-            $shiftStartTime = $this->getRosterShiftStartTime($employeeId, $date);
-
-            if (!$shiftStartTime) {
-                continue;
-            }
-
-            $lateMinutes = $this->getLateMinutes($inCard->time, $shiftStartTime);
-
-            if ($lateMinutes > 0 && $lateMinutes <= 30) {
-
-                $leaveInfo = $this->getApprovedLeaveInfoForDate($employeeId, $date);
-
-                if ($leaveInfo['has_approved_leave']) {
-                    $approvedLeaveLateCount++;
-                    continue;
-                }
-
-                $minorLateCounter++;
-                $shiftHours = $this->getRosterShiftWorkHours($employeeId, $date, 8);
-                $hourlyRate = $shiftHours > 0 ? ($perDaySalary / $shiftHours) : 0;
-
-                if ($minorLateCounter <= 3) {
-                    $noDeductionLateCount++;
-                } elseif ($minorLateCounter <= 5) {
-                    $shortLeaveCount++;
-                    $deductibleLateCount++;
-                    $shortLeaveDeductionAmount += ($hourlyRate * 2); // පැය 2ක දඩය (Short Leave)
-                } else {
-                    $halfDayCount++;
-                    $deductibleLateCount++;
-                    $halfDayDeductionAmount += ($hourlyRate * 4); // පැය 4ක දඩය (Half Day)
-                }
-            }
-        }
-
         return [
-            'approved_leave_late_count' => $approvedLeaveLateCount,
-            'no_deduction_late_count' => $noDeductionLateCount,
-            'short_leave_count' => $shortLeaveCount,
-            'half_day_count' => $halfDayCount,
-            'deductible_late_count' => $deductibleLateCount,
-            'short_leave_deduction' => round($shortLeaveDeductionAmount, 2),
-            'half_day_deduction' => round($halfDayDeductionAmount, 2),
+            'approved_leave_late_count' => 0,
+            'no_deduction_late_count' => 0,
+            'short_leave_count' => 0,
+            'half_day_count' => 0,
+            'deductible_late_count' => 0,
+            'short_leave_deduction' => 0,
+            'half_day_deduction' => 0,
+            'policy' => 'monthly_late_total',
         ];
     }
 
@@ -479,6 +422,7 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 COALESCE(SUM(CASE WHEN npr.type IN ('FULL_DAY', 'PARTIAL_ABSENT') AND DAYNAME(npr.date) = 'Saturday' THEN COALESCE(npr.no_pay_count, 0) ELSE 0 END), 0) AS saturday_nopays,
                 COALESCE(SUM(CASE WHEN npr.type = 'EARLY_OUT' THEN COALESCE(npr.no_pay_count, 0) ELSE 0 END), 0) AS early_out_nopays,
                 COALESCE(SUM(CASE WHEN npr.type = 'LATE_IN' THEN COALESCE(npr.no_pay_count, 0) ELSE 0 END), 0) AS major_late_nopays,
+                COALESCE(SUM(CASE WHEN npr.type = 'LATE_MONTHLY' THEN COALESCE(npr.no_pay_count, 0) ELSE 0 END), 0) AS monthly_late_nopays,
 
                 (
                     SELECT COALESCE(CONCAT('[', GROUP_CONCAT(
@@ -602,6 +546,12 @@ public function getEmployeesByMonthAndCompany(Request $request)
             $saturdayNoPays = (float)($employeeData['saturday_nopays'] ?? 0);
             $earlyOutNoPays = (float)($employeeData['early_out_nopays'] ?? 0);
             $majorLateNoPays = (float)($employeeData['major_late_nopays'] ?? 0);
+            $monthlyLateNoPays = (float)($employeeData['monthly_late_nopays'] ?? 0);
+
+            // Prefer monthly late policy nopay; avoid double-counting daily LATE_IN when applied
+            if ($monthlyLateNoPays > 0) {
+                $majorLateNoPays = $monthlyLateNoPays;
+            }
 
             $fullDayNoPayDeduction = round($weekdayNoPays * $perDaySalary, 2);
             $saturdayNoPayBonusDeduction = round($saturdayNoPays * $perDaySalary, 2); // මෙය Bonus එකෙන් කැපෙන කොටස
@@ -1148,6 +1098,7 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 COALESCE(SUM(CASE WHEN npr.type IN ('FULL_DAY', 'PARTIAL_ABSENT') AND DAYNAME(npr.date) = 'Saturday' THEN COALESCE(npr.no_pay_count, 0) ELSE 0 END), 0) AS saturday_nopays,
                 COALESCE(SUM(CASE WHEN npr.type = 'EARLY_OUT' THEN COALESCE(npr.no_pay_count, 0) ELSE 0 END), 0) AS early_out_nopays,
                 COALESCE(SUM(CASE WHEN npr.type = 'LATE_IN' THEN COALESCE(npr.no_pay_count, 0) ELSE 0 END), 0) AS major_late_nopays,
+                COALESCE(SUM(CASE WHEN npr.type = 'LATE_MONTHLY' THEN COALESCE(npr.no_pay_count, 0) ELSE 0 END), 0) AS monthly_late_nopays,
 
                 -- Employee-wise allowances (company/month assignments)
                 (
@@ -1397,6 +1348,11 @@ public function getEmployeesByMonthAndCompany(Request $request)
             $saturdayNoPays = (float)($employeeData['saturday_nopays'] ?? 0);
             $earlyOutNoPays = (float)($employeeData['early_out_nopays'] ?? 0);
             $majorLateNoPays = (float)($employeeData['major_late_nopays'] ?? 0);
+            $monthlyLateNoPays = (float)($employeeData['monthly_late_nopays'] ?? 0);
+
+            if ($monthlyLateNoPays > 0) {
+                $majorLateNoPays = $monthlyLateNoPays;
+            }
 
             $fullDayNoPayDeduction = round($weekdayNoPays * $perDaySalary, 2);
             $saturdayNoPayBonusDeduction = round($saturdayNoPays * $perDaySalary, 2);
