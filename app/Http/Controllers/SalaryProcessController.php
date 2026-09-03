@@ -22,9 +22,58 @@ use App\Models\Roster;
 use Carbon\Carbon;
 use App\Models\EmployeeBonus;
 use App\Models\SalaryProcessAudit;
+use App\Models\MonthlyLateDeductionItem;
 
 class SalaryProcessController extends Controller
 {
+    /**
+     * Late coming NoPay (after leave balances) is valued from full basic / working days,
+     * then deducted from the BONUS side of salary (not basic).
+     */
+    private function resolveLateComingBonusNoPay(
+        int $employeeId,
+        int $year,
+        int $month,
+        float $sqlMonthlyLateNoPays,
+        float $sqlMajorLateNoPays,
+        float $perDayFromBasic
+    ): array {
+        $appliedItem = null;
+        try {
+            $appliedItem = MonthlyLateDeductionItem::where('employee_id', $employeeId)
+                ->where('year', $year)
+                ->where('month', $month)
+                ->where('status', 'applied')
+                ->first();
+        } catch (\Throwable $e) {
+            $appliedItem = null;
+        }
+
+        $days = 0.0;
+        $source = 'none';
+
+        if ($appliedItem) {
+            // After short/annual/casual leave allocation — only remaining NoPay days
+            $days = (float) ($appliedItem->nopay_days ?? 0);
+            $source = 'monthly_late_applied';
+        } elseif ($sqlMonthlyLateNoPays > 0) {
+            $days = $sqlMonthlyLateNoPays;
+            $source = 'late_monthly_record';
+        } elseif ($sqlMajorLateNoPays > 0) {
+            $days = $sqlMajorLateNoPays;
+            $source = 'late_in_record';
+        }
+
+        $amount = round(max(0, $days) * max(0, $perDayFromBasic), 2);
+
+        return [
+            'days' => round(max(0, $days), 4),
+            'amount' => $amount,
+            'source' => $source,
+            'per_day_from_basic' => round($perDayFromBasic, 3),
+            'deduct_from' => 'bonus',
+        ];
+    }
     private function getLateMinutes(?string $inTime, ?string $shiftStartTime): int
     {
         if (!$inTime || !$shiftStartTime) {
@@ -1341,6 +1390,7 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 })->count();
 
             $workingDaysInMonth = max(1, $totalDaysInMonth - $companyLeavesCount);
+            // Late NoPay money value is always based on full basic (incl. BR/increment)
             $perDaySalary = $basicSalary / $workingDaysInMonth;
 
             // Full Day, Partial Absent, Early Out, Major Late Deductions
@@ -1350,15 +1400,22 @@ public function getEmployeesByMonthAndCompany(Request $request)
             $majorLateNoPays = (float)($employeeData['major_late_nopays'] ?? 0);
             $monthlyLateNoPays = (float)($employeeData['monthly_late_nopays'] ?? 0);
 
-            if ($monthlyLateNoPays > 0) {
-                $majorLateNoPays = $monthlyLateNoPays;
-            }
-
             $fullDayNoPayDeduction = round($weekdayNoPays * $perDaySalary, 2);
             $saturdayNoPayBonusDeduction = round($saturdayNoPays * $perDaySalary, 2);
 
             $earlyOutNoPayDeduction = round($earlyOutNoPays * $perDaySalary, 2);
-            $majorLateDeduction = round($majorLateNoPays * $perDaySalary, 2);
+
+            // Late coming → calculate from basic rate, deduct from BONUS
+            $lateBonusNoPay = $this->resolveLateComingBonusNoPay(
+                (int) $employeeData['id'],
+                (int) $year,
+                (int) $month,
+                $monthlyLateNoPays,
+                $majorLateNoPays,
+                $perDaySalary
+            );
+            $majorLateDeduction = $lateBonusNoPay['amount'];
+            $majorLateNoPays = $lateBonusNoPay['days'];
 
             // Probation Deduction
             $probationDeduction = 0.0;
@@ -1452,11 +1509,20 @@ public function getEmployeesByMonthAndCompany(Request $request)
             $holiday_ot_fees = (float)$otRows->sum('holiday_ot_amount');
 
             // --- DEDUCTION SPLIT ---
+            // Basic side: EPF, weekday full-day NoPay, probation
+            // Bonus side: late coming NoPay (valued from basic), Saturday NoPay, early out, funds, custom
             $basicGross = $basicSalary + $totalAllowances;
             $bonusGross = $totalBonuses;
 
             $basicDeductionsTotal = $epfEmployeeDeduction + $epfEtfDeductions + $fullDayNoPayDeduction + $probationDeduction;
-            $bonusDeductionsTotal = $saturdayNoPayBonusDeduction + $earlyOutNoPayDeduction + $shortLeaveDeduction + $halfDayDeduction + $majorLateDeduction + $bonusFixedDeductions + $sportsFundDeduction + $staffFundDeduction;
+            $bonusDeductionsTotal = $saturdayNoPayBonusDeduction
+                + $earlyOutNoPayDeduction
+                + $shortLeaveDeduction
+                + $halfDayDeduction
+                + $majorLateDeduction // late NoPay after leave — valued from basic, taken from bonus
+                + $bonusFixedDeductions
+                + $sportsFundDeduction
+                + $staffFundDeduction;
 
             if ($loanDeductFrom === 'basic') {
                 $basicDeductionsTotal += $loanPrincipal;
@@ -1491,7 +1557,13 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 'early_out_nopay_deduction' => round($earlyOutNoPayDeduction, 2),
                 'short_leave_deduction' => round($shortLeaveDeduction, 2),
                 'half_day_deduction' => round($halfDayDeduction, 2),
+                // Late coming NoPay: amount = basic_per_day × nopay_days; deducted from BONUS
                 'major_late_deduction' => round($majorLateDeduction, 2),
+                'monthly_late_nopay_deduction' => round($majorLateDeduction, 2),
+                'monthly_late_nopay_days' => $lateBonusNoPay['days'],
+                'late_nopay_deduct_from' => 'bonus',
+                'late_nopay_source' => $lateBonusNoPay['source'],
+                'late_nopay_per_day_from_basic' => $lateBonusNoPay['per_day_from_basic'],
                 'epf_employee_deduction' => round($epfEmployeeDeduction, 2),
                 'epf_etf_fixed_deductions' => round($epfEtfDeductions, 2),
                 'sports_fund_deduction' => $sportsFundDeduction,
@@ -1537,7 +1609,8 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 $employeeData['weekday_nopays'],
                 $employeeData['saturday_nopays'],
                 $employeeData['early_out_nopays'],
-                $employeeData['major_late_nopays']
+                $employeeData['major_late_nopays'],
+                $employeeData['monthly_late_nopays']
             );
 
             $data[] = $employeeData;
