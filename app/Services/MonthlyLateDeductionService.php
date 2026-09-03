@@ -13,6 +13,7 @@ use App\Models\time_card;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Schema;
 
 class MonthlyLateDeductionService
 {
@@ -783,34 +784,32 @@ class MonthlyLateDeductionService
 
     private function getRosterShiftStartTime(int $employeeId, string $date): ?string
     {
-        $roster = Roster::with('shift')
+        $query = Roster::with('shift')
             ->where('employee_id', $employeeId)
             ->where(function ($q) use ($date) {
                 $q->whereDate('date_from', '<=', $date)
                     ->whereDate('date_to', '>=', $date);
-            })
-            ->where(function ($q) {
-                $q->whereNull('status')->orWhere('status', '!=', 'Cancelled');
-            })
-            ->orderBy('date_from', 'desc')
-            ->first();
+            });
+
+        $this->excludeCancelledRosters($query);
+
+        $roster = $query->orderBy('date_from', 'desc')->first();
 
         return $roster?->shift?->start_time;
     }
 
     private function resolveShiftMinutes(int $employeeId, Carbon $startDate, Carbon $endDate): int
     {
-        $roster = Roster::with('shift')
+        $query = Roster::with('shift')
             ->where('employee_id', $employeeId)
             ->where(function ($q) use ($startDate, $endDate) {
                 $q->whereDate('date_from', '<=', $endDate->toDateString())
                     ->whereDate('date_to', '>=', $startDate->toDateString());
-            })
-            ->where(function ($q) {
-                $q->whereNull('status')->orWhere('status', '!=', 'Cancelled');
-            })
-            ->orderBy('date_from', 'desc')
-            ->first();
+            });
+
+        $this->excludeCancelledRosters($query);
+
+        $roster = $query->orderBy('date_from', 'desc')->first();
 
         if ($roster?->shift?->start_time && $roster?->shift?->end_time) {
             try {
@@ -829,6 +828,20 @@ class MonthlyLateDeductionService
         }
 
         return self::DEFAULT_SHIFT_MINUTES;
+    }
+
+    /**
+     * Only filter cancelled rosters when the status column exists (older live DBs may not have it yet).
+     */
+    private function excludeCancelledRosters($query): void
+    {
+        if (!Schema::hasColumn('rosters', 'status')) {
+            return;
+        }
+
+        $query->where(function ($q) {
+            $q->whereNull('status')->orWhere('status', '!=', 'Cancelled');
+        });
     }
 
     private function formatMinutes(int $minutes): string
