@@ -1281,7 +1281,7 @@ class LeaveMasterController extends Controller
         $nopayRecordId = null;
         if ($nopayDays > 0.0001) {
             $leaveDate = $asOfDate->toDateString();
-            $type = $nopayDays >= 0.999 ? 'FULL_DAY' : 'PARTIAL_ABSENT';
+            $type = 'LEAVE_SHORTFALL';
             $record = NoPayRecord::create([
                 'employee_id' => $leave->employee_id,
                 'date' => $leaveDate,

@@ -10,7 +10,15 @@ class CompanyController extends Controller
 {
     public function index()
     {
-        $companies = Company::select('id', 'company_code', 'name', 'location', 'established')->get();
+        $companies = company::select(
+            'id',
+            'company_code',
+            'name',
+            'location',
+            'established',
+            'nopay_working_days',
+            'default_sports_fund_percentage'
+        )->get();
         return response()->json($companies);
     }
 
@@ -21,6 +29,7 @@ class CompanyController extends Controller
             'name' => 'required|string|max:255',
             'location' => 'nullable|string|max:255',
             'established' => 'nullable|digits:4|integer|min:1900|max:' . (date('Y')),
+            'nopay_working_days' => 'nullable|integer|min:1|max:31',
         ], [
             'company_code.required' => 'Company ID is required. Please enter a unique code (e.g. SPM-S, SPM-C).',
         ]);
@@ -36,6 +45,10 @@ class CompanyController extends Controller
         $validated['company_code'] = strtoupper(trim($validated['company_code']));
         $validated['name'] = trim($validated['name']);
         $validated['location'] = isset($validated['location']) ? trim($validated['location']) : null;
+        $validated['nopay_working_days'] = (int) ($validated['nopay_working_days'] ?? 30);
+        if ($validated['nopay_working_days'] < 1) {
+            $validated['nopay_working_days'] = 30;
+        }
 
         // Enforce unique company_code (excluding soft-deleted)
         $codeExists = company::where('company_code', $validated['company_code'])
@@ -76,6 +89,7 @@ class CompanyController extends Controller
             'name' => 'required|string|max:255',
             'location' => 'nullable|string|max:255',
             'established' => 'nullable|digits:4|integer|min:1900|max:' . (date('Y')),
+            'nopay_working_days' => 'nullable|integer|min:1|max:31',
         ], [
             'company_code.required' => 'Company ID is required.',
         ]);
@@ -91,6 +105,16 @@ class CompanyController extends Controller
         $validated['company_code'] = strtoupper(trim($validated['company_code']));
         $validated['name'] = trim($validated['name']);
         $validated['location'] = isset($validated['location']) ? trim($validated['location']) : null;
+
+        // Only update working days when client sends the field (ACL-gated on frontend)
+        if (!$request->exists('nopay_working_days')) {
+            unset($validated['nopay_working_days']);
+        } else {
+            $validated['nopay_working_days'] = (int) $validated['nopay_working_days'];
+            if ($validated['nopay_working_days'] < 1) {
+                $validated['nopay_working_days'] = 30;
+            }
+        }
 
         // Check company_code uniqueness excluding current company
         $codeExists = company::where('company_code', $validated['company_code'])

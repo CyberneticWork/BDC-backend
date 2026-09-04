@@ -14,6 +14,13 @@ class company extends Model
         'name',
         'location',
         'established',
+        'nopay_working_days',
+        'default_sports_fund_percentage',
+    ];
+
+    protected $casts = [
+        'nopay_working_days' => 'integer',
+        'default_sports_fund_percentage' => 'float',
     ];
 
     public function departments()
