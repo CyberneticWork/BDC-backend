@@ -131,16 +131,29 @@ class LeaveMasterController extends Controller
             ? Carbon::parse($request->leave_date)
             : ($request->filled('leave_from') ? Carbon::parse($request->leave_from) : Carbon::now());
 
+        $leaveType = (string) $request->leave_type;
         $entitlementCheck = $this->validateLeaveEntitlement(
             $employee,
             $orgAssignment,
-            (string) $request->leave_type,
+            $leaveType,
             (float) $requestedDurationInDays,
             $asOfDate
         );
 
+        $combinedSplit = null;
         if ($entitlementCheck !== null) {
-            return response()->json($entitlementCheck, 422);
+            // If selected type alone is short, try Annual + Casual combined (e.g. 0.5 + 0.5 = 1 day)
+            $combinedSplit = $this->planAnnualCasualCombinedSplit(
+                $employee,
+                $orgAssignment,
+                $leaveType,
+                (float) $requestedDurationInDays,
+                $asOfDate
+            );
+
+            if ($combinedSplit === null) {
+                return response()->json($entitlementCheck, 422);
+            }
         }
 
         $data = $request->all();
@@ -177,6 +190,18 @@ class LeaveMasterController extends Controller
             $data['over_limit'] = $overLimitInfo['amount'];
         } else {
             $data['over_limit'] = 0;
+        }
+
+        // Combined Annual + Casual: create one leave row per type (e.g. 0.5 Annual + 0.5 Casual)
+        if ($combinedSplit !== null) {
+            $created = $this->createCombinedLeaveRecords($data, $combinedSplit);
+            return response()->json([
+                'message' => 'Leave applied using combined Annual and Casual balances.',
+                'combined_balance' => true,
+                'split' => $combinedSplit,
+                'leaves' => $created,
+                'leave' => $created[0] ?? null,
+            ], 201);
         }
 
         $leaveMaster = leave_master::create($data);
@@ -505,49 +530,124 @@ class LeaveMasterController extends Controller
         $employeeId = $request->employee_id;
 
         if ($request->leave_date) {
-            $query = leave_master::where('employee_id', $employeeId)
-                ->where('status', '!=', 'Rejected')
-                ->where(function ($query) use ($request) {
-                    $query->where('leave_date', $request->leave_date)
-                        ->orWhere(function ($q) use ($request) {
-                            $q->where('leave_from', '<=', $request->leave_date)
-                                ->where('leave_to', '>=', $request->leave_date);
-                        });
-                });
+            $newDuration = $this->resolveRequestLeaveDuration($request);
+            $existingDuration = $this->getUsedLeaveDurationOnDate(
+                $employeeId,
+                $request->leave_date,
+                $excludeId
+            );
 
-            if ($excludeId) $query->where('id', '!=', $excludeId);
-            $existing = $query->first();
+            // Allow multiple same-day leaves (e.g. 0.5 Annual + 0.5 Casual) up to 1 full day
+            if ($existingDuration + $newDuration > 1.0001) {
+                return "You already have "
+                    . rtrim(rtrim(number_format($existingDuration, 2), '0'), '.')
+                    . " day(s) of leave on {$request->leave_date}. "
+                    . "Cannot add another "
+                    . rtrim(rtrim(number_format($newDuration, 2), '0'), '.')
+                    . " day(s) (max 1 day per date).";
+            }
 
-            if ($existing) {
-                $existingDateStr = $existing->leave_date ? $existing->leave_date : "{$existing->leave_from} to {$existing->leave_to}";
-                return "You already have a leave request for {$request->leave_date}. Existing leave: {$existingDateStr} ({$existing->status})";
+            if ($existingDuration <= 0) {
+                // no conflict
             }
         }
 
         if ($request->leave_from && $request->leave_to) {
-            $query = leave_master::where('employee_id', $employeeId)
-                ->where('status', '!=', 'Rejected')
-                ->where(function ($query) use ($request) {
-                    $query->where(function ($q) use ($request) {
-                        $q->whereBetween('leave_date', [$request->leave_from, $request->leave_to]);
-                    })->orWhere(function ($q) use ($request) {
-                        $q->where(function ($subQ) use ($request) {
-                            $subQ->where('leave_from', '<=', $request->leave_to)
-                                ->where('leave_to', '>=', $request->leave_from);
+            // For ranges, keep strict overlap check unless it's a same-day range handled above
+            if ($request->leave_from !== $request->leave_to || !$request->leave_date) {
+                $query = leave_master::where('employee_id', $employeeId)
+                    ->where('status', '!=', 'Rejected')
+                    ->where(function ($query) use ($request) {
+                        $query->where(function ($q) use ($request) {
+                            $q->whereBetween('leave_date', [$request->leave_from, $request->leave_to]);
+                        })->orWhere(function ($q) use ($request) {
+                            $q->where(function ($subQ) use ($request) {
+                                $subQ->where('leave_from', '<=', $request->leave_to)
+                                    ->where('leave_to', '>=', $request->leave_from);
+                            });
                         });
                     });
-                });
 
-            if ($excludeId) $query->where('id', '!=', $excludeId);
-            $existing = $query->first();
+                if ($excludeId) {
+                    $query->where('id', '!=', $excludeId);
+                }
+                $existing = $query->first();
 
-            if ($existing) {
-                $existingDateStr = $existing->leave_date ? $existing->leave_date : "{$existing->leave_from} to {$existing->leave_to}";
-                return "Your requested leave period overlaps with an existing leave: {$existingDateStr} ({$existing->status})";
+                if ($existing) {
+                    // Same calendar day range with room under 1 day is allowed via leave_date path
+                    if ($request->leave_from === $request->leave_to) {
+                        $newDuration = $this->resolveRequestLeaveDuration($request);
+                        $existingDuration = $this->getUsedLeaveDurationOnDate(
+                            $employeeId,
+                            $request->leave_from,
+                            $excludeId
+                        );
+                        if ($existingDuration + $newDuration <= 1.0001) {
+                            return null;
+                        }
+                    }
+
+                    $existingDateStr = $existing->leave_date
+                        ? $existing->leave_date
+                        : "{$existing->leave_from} to {$existing->leave_to}";
+                    return "Your requested leave period overlaps with an existing leave: {$existingDateStr} ({$existing->status})";
+                }
             }
         }
 
         return null;
+    }
+
+    private function resolveRequestLeaveDuration($request): float
+    {
+        if (filter_var($request->is_short_leave, FILTER_VALIDATE_BOOLEAN)) {
+            return 0.25;
+        }
+        if (filter_var($request->is_half_day, FILTER_VALIDATE_BOOLEAN)) {
+            return 0.5;
+        }
+        if ($request->filled('leave_duration')) {
+            return (float) $request->leave_duration;
+        }
+        if ($request->filled('leave_from') && $request->filled('leave_to')) {
+            $from = new \DateTime($request->leave_from);
+            $to = new \DateTime($request->leave_to);
+            return (float) ($from->diff($to)->days + 1);
+        }
+        if ($request->filled('leave_date')) {
+            return 1.0;
+        }
+        return 1.0;
+    }
+
+    private function getUsedLeaveDurationOnDate($employeeId, string $date, $excludeId = null): float
+    {
+        $query = leave_master::where('employee_id', $employeeId)
+            ->where('status', '!=', 'Rejected')
+            ->where(function ($q) use ($date) {
+                $q->whereDate('leave_date', $date)
+                    ->orWhere(function ($sub) use ($date) {
+                        $sub->whereDate('leave_from', '<=', $date)
+                            ->whereDate('leave_to', '>=', $date);
+                    });
+            });
+
+        if ($excludeId) {
+            $query->where('id', '!=', $excludeId);
+        }
+
+        $total = 0.0;
+        foreach ($query->get() as $leave) {
+            if ($leave->is_short_leave) {
+                $total += 0.25;
+            } elseif ($leave->is_half_day) {
+                $total += 0.5;
+            } else {
+                $total += (float) ($leave->leave_duration ?? 1);
+            }
+        }
+
+        return round($total, 4);
     }
 
     public function getLeaveEligibility(Request $request)
@@ -800,6 +900,16 @@ class LeaveMasterController extends Controller
             return null;
         }
 
+        $combinedAnnualCasual = null;
+        if (str_contains(strtolower($displayType), 'annual') || str_contains(strtolower($displayType), 'casual')) {
+            $pair = $this->getAnnualCasualAvailability($employee, $orgAssignment, $asOfDate);
+            $combinedAnnualCasual = [
+                'annual_available' => $pair['Annual Leave'] ?? 0,
+                'casual_available' => $pair['Casual Leave'] ?? 0,
+                'combined_available' => round(($pair['Annual Leave'] ?? 0) + ($pair['Casual Leave'] ?? 0), 4),
+            ];
+        }
+
         $reason = $note;
         if ($entitled <= 0) {
             $reason = $note ?: "No {$displayType} entitlement for this period under Shop & Office Act.";
@@ -808,6 +918,10 @@ class LeaveMasterController extends Controller
         } else {
             $reason = "Requested {$requestedDays} day(s) but only {$available} day(s) of {$displayType} remain "
                 . "(entitled {$entitled}, used {$used}). {$note}";
+        }
+
+        if ($combinedAnnualCasual) {
+            $reason .= " Combined Annual ({$combinedAnnualCasual['annual_available']}) + Casual ({$combinedAnnualCasual['casual_available']}) = {$combinedAnnualCasual['combined_available']} day(s).";
         }
 
         return [
@@ -821,11 +935,171 @@ class LeaveMasterController extends Controller
             'entitled_days' => $entitled,
             'used_days' => $used,
             'available_days' => $available,
+            'combined_annual_casual' => $combinedAnnualCasual,
             'balance_source' => $source,
             'law_reference' => $law['law_reference'],
             'employment_year' => $law['employment_year'],
             'calendar_year' => $year,
         ];
+    }
+
+    /**
+     * Available Annual / Casual days for an employee (HR balances or Shop & Office Act).
+     */
+    private function getAnnualCasualAvailability($employee, $orgAssignment, Carbon $asOfDate): array
+    {
+        $year = (int) $asOfDate->year;
+        $result = [
+            'Annual Leave' => 0.0,
+            'Casual Leave' => 0.0,
+        ];
+
+        if (!$orgAssignment || !$orgAssignment->date_of_joining) {
+            return $result;
+        }
+
+        $manualBalances = \App\Models\EmployeeLeaveBalance::where('employee_id', $employee->id)
+            ->where('year', $year)
+            ->where('status', 'active')
+            ->whereNull('deleted_at')
+            ->get();
+
+        if ($manualBalances->isNotEmpty()) {
+            foreach ($manualBalances as $balance) {
+                $type = (string) $balance->leave_type;
+                $normalized = strtolower(trim($type));
+                if (!str_contains($normalized, 'annual') && !str_contains($normalized, 'casual')) {
+                    continue;
+                }
+                $key = str_contains($normalized, 'annual') ? 'Annual Leave' : 'Casual Leave';
+                $used = $this->getUsedLeaveDays($employee->id, $type, $year);
+                $result[$key] = max(0, round((float) $balance->entitled_days - $used, 4));
+            }
+            return $result;
+        }
+
+        $joinDate = Carbon::parse($orgAssignment->date_of_joining);
+        $law = app(\App\Services\ShopAndOfficeLeaveCalculator::class)->calculate($joinDate, $asOfDate);
+
+        $usedAnnual = $this->getUsedLeaveDays($employee->id, 'Annual Leave', $year);
+        $usedCasual = $this->getUsedLeaveDays($employee->id, 'Casual Leave', $year);
+
+        $result['Annual Leave'] = max(0, round((float) $law['annual_days'] - $usedAnnual, 4));
+        $result['Casual Leave'] = max(0, round((float) $law['casual_days'] - $usedCasual, 4));
+
+        return $result;
+    }
+
+    /**
+     * When one leave type is short, plan a split across Annual + Casual
+     * (e.g. need 1 day, have 0.5 Annual + 0.5 Casual).
+     */
+    private function planAnnualCasualCombinedSplit(
+        $employee,
+        $orgAssignment,
+        string $preferredType,
+        float $requestedDays,
+        Carbon $asOfDate
+    ): ?array {
+        if ($requestedDays <= 0) {
+            return null;
+        }
+
+        $normalized = strtolower(trim($preferredType));
+        $isAnnual = str_contains($normalized, 'annual');
+        $isCasual = str_contains($normalized, 'casual');
+        if (!$isAnnual && !$isCasual) {
+            return null;
+        }
+
+        $preferred = $isAnnual ? 'Annual Leave' : 'Casual Leave';
+        $other = $isAnnual ? 'Casual Leave' : 'Annual Leave';
+
+        $availability = $this->getAnnualCasualAvailability($employee, $orgAssignment, $asOfDate);
+        $combined = ($availability['Annual Leave'] ?? 0) + ($availability['Casual Leave'] ?? 0);
+
+        if ($requestedDays > $combined + 0.0001) {
+            return null;
+        }
+
+        // Preferred type alone already enough — no split needed
+        if ($requestedDays <= ($availability[$preferred] ?? 0) + 0.0001) {
+            return null;
+        }
+
+        $fromPreferred = min($requestedDays, max(0, (float) ($availability[$preferred] ?? 0)));
+        $remaining = round($requestedDays - $fromPreferred, 4);
+        $fromOther = min($remaining, max(0, (float) ($availability[$other] ?? 0)));
+        $remaining = round($remaining - $fromOther, 4);
+
+        if ($remaining > 0.0001) {
+            return null;
+        }
+
+        $plan = [];
+        if ($fromPreferred > 0.0001) {
+            $plan[] = [
+                'leave_type' => $preferred,
+                'days' => round($fromPreferred, 4),
+            ];
+        }
+        if ($fromOther > 0.0001) {
+            $plan[] = [
+                'leave_type' => $other,
+                'days' => round($fromOther, 4),
+            ];
+        }
+
+        return count($plan) > 1 ? $plan : null;
+    }
+
+    /**
+     * Create leave_master rows for a combined Annual/Casual split.
+     */
+    private function createCombinedLeaveRecords(array $baseData, array $splitPlan): array
+    {
+        $created = [];
+        $anchorDate = $baseData['leave_date']
+            ?? $baseData['leave_from']
+            ?? now()->toDateString();
+
+        foreach ($splitPlan as $index => $part) {
+            $days = (float) $part['days'];
+            $row = $baseData;
+            $row['leave_type'] = $part['leave_type'];
+            $row['leave_duration'] = $days;
+            $row['leave_date'] = $anchorDate;
+            $row['leave_from'] = null;
+            $row['leave_to'] = null;
+
+            if (abs($days - 0.25) < 0.001) {
+                $row['is_short_leave'] = true;
+                $row['is_half_day'] = false;
+                $row['short_leave_slot'] = $row['short_leave_slot'] ?? 'Morning';
+                $row['period'] = null;
+            } elseif (abs($days - 0.5) < 0.001) {
+                $row['is_short_leave'] = false;
+                $row['is_half_day'] = true;
+                $row['period'] = $row['period'] ?? 'Morning';
+                $row['short_leave_slot'] = null;
+            } else {
+                $row['is_short_leave'] = false;
+                $row['is_half_day'] = false;
+                $row['period'] = null;
+                $row['short_leave_slot'] = null;
+            }
+
+            $reason = trim((string) ($baseData['reason'] ?? ''));
+            $splitNote = "Combined balance split #" . ($index + 1)
+                . ": {$part['leave_type']} {$days} day(s)";
+            $row['reason'] = $reason !== ''
+                ? "{$reason} | {$splitNote}"
+                : $splitNote;
+
+            $created[] = leave_master::create($row);
+        }
+
+        return $created;
     }
 }
 
