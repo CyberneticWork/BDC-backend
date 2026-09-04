@@ -136,6 +136,141 @@ class LoanController extends Controller
     }
 
     /**
+     * Request to skip a loan installment month (needs higher approval).
+     */
+    public function requestSkip(Request $request, $id)
+    {
+        $loan = loans::findOrFail($id);
+        if ($loan->status !== 'active') {
+            return response()->json(['message' => 'Only active loans can skip installments'], 422);
+        }
+
+        $validated = $request->validate([
+            'installment_no' => 'required|integer|min:1',
+            'reason' => 'required|string|max:500',
+        ]);
+
+        $schedule = is_array($loan->schedule) ? $loan->schedule : [];
+        $found = false;
+        foreach ($schedule as &$row) {
+            $no = (int) ($row['no'] ?? $row['installment_no'] ?? 0);
+            if ($no !== (int) $validated['installment_no']) {
+                continue;
+            }
+            $found = true;
+            $status = strtolower((string) ($row['skip_status'] ?? ''));
+            if (!empty($row['skipped']) || $status === 'approved') {
+                return response()->json(['message' => 'This installment is already skipped'], 422);
+            }
+            if ($status === 'pending_approval') {
+                return response()->json(['message' => 'Skip request already pending approval'], 422);
+            }
+            $row['skip_status'] = 'pending_approval';
+            $row['skip_reason'] = $validated['reason'];
+            $row['skip_requested_at'] = now()->toDateTimeString();
+            break;
+        }
+        unset($row);
+
+        if (!$found) {
+            return response()->json(['message' => 'Installment not found in schedule'], 404);
+        }
+
+        $loan->schedule = array_values($schedule);
+        $loan->save();
+
+        return response()->json([
+            'message' => 'Skip request submitted. Waiting for higher approval.',
+            'loan' => $loan->fresh('employee'),
+        ]);
+    }
+
+    /**
+     * Approve or reject a skip request (higher approval).
+     * On approve: mark skipped and defer this + later installments by 1 month.
+     */
+    public function decideSkip(Request $request, $id)
+    {
+        $loan = loans::findOrFail($id);
+
+        $validated = $request->validate([
+            'installment_no' => 'required|integer|min:1',
+            'action' => 'required|in:approve,reject',
+            'approver_note' => 'nullable|string|max:500',
+        ]);
+
+        $schedule = is_array($loan->schedule) ? $loan->schedule : [];
+        $targetNo = (int) $validated['installment_no'];
+        $found = false;
+
+        foreach ($schedule as $idx => &$row) {
+            $no = (int) ($row['no'] ?? $row['installment_no'] ?? 0);
+            if ($no !== $targetNo) {
+                continue;
+            }
+            $found = true;
+            $status = strtolower((string) ($row['skip_status'] ?? ''));
+            if ($status !== 'pending_approval') {
+                return response()->json(['message' => 'No pending skip request for this installment'], 422);
+            }
+
+            if ($validated['action'] === 'reject') {
+                $row['skip_status'] = 'rejected';
+                $row['skip_approver_note'] = $validated['approver_note'] ?? null;
+                $row['skip_decided_at'] = now()->toDateTimeString();
+            } else {
+                $priorReason = $row['skip_reason'] ?? null;
+                // Higher approval: defer this + later installments by 1 month (no deduction this month)
+                for ($j = $idx; $j < count($schedule); $j++) {
+                    $schedule[$j] = $this->shiftScheduleRowByMonths($schedule[$j], 1);
+                }
+                $schedule[$idx]['skip_status'] = 'approved_deferred';
+                $schedule[$idx]['skipped'] = false;
+                $schedule[$idx]['skip_approver_note'] = $validated['approver_note'] ?? null;
+                $schedule[$idx]['skip_decided_at'] = now()->toDateTimeString();
+                $schedule[$idx]['skip_reason'] = $priorReason;
+            }
+            break;
+        }
+        unset($row);
+
+        if (!$found) {
+            return response()->json(['message' => 'Installment not found in schedule'], 404);
+        }
+
+        $loan->schedule = array_values($schedule);
+        $loan->save();
+
+        return response()->json([
+            'message' => $validated['action'] === 'approve'
+                ? 'Skip approved. Installment deferred by one month.'
+                : 'Skip request rejected.',
+            'loan' => $loan->fresh('employee'),
+        ]);
+    }
+
+    private function shiftScheduleRowByMonths(array $row, int $months): array
+    {
+        $iso = $row['dueDateIso'] ?? $row['due_date_iso'] ?? null;
+        $due = $iso ?: ($row['dueDate'] ?? $row['due_date'] ?? null);
+        if (!$due) {
+            return $row;
+        }
+
+        try {
+            $dt = new \DateTime((string) $due);
+            $dt->modify(($months >= 0 ? '+' : '') . $months . ' month');
+            $row['dueDateIso'] = $dt->format('Y-m-d');
+            $row['dueDate'] = $dt->format('d M Y');
+            $row['due_date'] = $row['dueDateIso'];
+        } catch (\Throwable $e) {
+            // keep original
+        }
+
+        return $row;
+    }
+
+    /**
      * Detailed loan report for export (all loans or single employee)
      */
     public function report(Request $request)

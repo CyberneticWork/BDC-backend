@@ -25,9 +25,8 @@ class AllowancesController extends Controller
             'allowance_name' => 'required|string|max:255',
             'status' => 'required|in:active,inactive',
             'category' => 'nullable|in:travel,bonus,monthly_bonus,performance,health,other',
-            'allowance_type' => 'nullable|in:fixed,variable',
             'company_id' => 'required|exists:companies,id',
-            'amount' => 'nullable|numeric',
+            'amount' => 'nullable|numeric|min:0',
             'department_id' => [
                 'nullable',
                 'exists:departments,id',
@@ -35,33 +34,6 @@ class AllowancesController extends Controller
                     $query->where('company_id', $request->company_id);
                 })
             ],
-            'fixed_date' => [
-                'nullable',
-                'date',
-                Rule::requiredIf(function () use ($request) {
-                    return $request->allowance_type === 'fixed';
-                })
-            ],
-            'variable_from' => [
-                'nullable',
-                'date',
-                Rule::requiredIf(function () use ($request) {
-                    return $request->allowance_type === 'variable';
-                }),
-                function ($attribute, $value, $fail) use ($request) {
-                    if ($request->allowance_type === 'variable' && $request->to_date && $value > $request->to_date) {
-                        $fail('The from date must be before the to date.');
-                    }
-                }
-            ],
-            'variable_to' => [
-                'nullable',
-                'date',
-                Rule::requiredIf(function () use ($request) {
-                    return $request->allowance_type === 'variable';
-                }),
-                'after_or_equal:variable_from'
-            ]
         ]);
 
         if ($validator->fails()) {
@@ -71,18 +43,14 @@ class AllowancesController extends Controller
             ], 422);
         }
 
-        // Prepare data based on allowance type
         $data = $validator->validated();
-
-        if ($data['amount'] == null) {
+        if (($data['amount'] ?? null) === null) {
             $data['amount'] = 0.00;
         }
-        if ($data['allowance_type'] === 'fixed') {
-            $data['variable_from'] = null;
-            $data['variable_to'] = null;
-        } else {
-            $data['fixed_date'] = null;
-        }
+        // Fixed/variable is chosen at assignment time — clear legacy master date fields
+        $data['fixed_date'] = null;
+        $data['variable_from'] = null;
+        $data['variable_to'] = null;
 
         $allowance = allowances::create($data);
         return response()->json(['data' => $allowance], 201);
@@ -112,7 +80,6 @@ class AllowancesController extends Controller
             'allowance_name' => 'required|string|max:255',
             'status' => 'required|in:active,inactive',
             'category' => 'nullable|in:travel,bonus,monthly_bonus,performance,health,other',
-            'allowance_type' => 'required|in:fixed,variable',
             'company_id' => 'nullable|exists:companies,id',
             'amount' => 'required|numeric|min:0',
             'department_id' => [
@@ -122,33 +89,6 @@ class AllowancesController extends Controller
                     $query->where('company_id', $request->company_id);
                 })
             ],
-            'fixed_date' => [
-                'nullable',
-                'date',
-                Rule::requiredIf(function () use ($request) {
-                    return $request->allowance_type === 'fixed';
-                })
-            ],
-            'variable_from' => [
-                'nullable',
-                'date',
-                Rule::requiredIf(function () use ($request) {
-                    return $request->allowance_type === 'variable';
-                }),
-                function ($attribute, $value, $fail) use ($request) {
-                    if ($request->allowance_type === 'variable' && $request->to_date && $value > $request->to_date) {
-                        $fail('The from date must be before the to date.');
-                    }
-                }
-            ],
-            'variable_to' => [
-                'nullable',
-                'date',
-                Rule::requiredIf(function () use ($request) {
-                    return $request->allowance_type === 'variable';
-                }),
-                'after_or_equal:variable_from'
-            ]
         ]);
 
         if ($validator->fails()) {
@@ -158,15 +98,10 @@ class AllowancesController extends Controller
             ], 422);
         }
 
-        // Prepare data based on allowance type
         $data = $validator->validated();
-
-        if ($data['allowance_type'] === 'fixed') {
-            $data['variable_from'] = null;
-            $data['variable_to'] = null;
-        } else {
-            $data['fixed_date'] = null;
-        }
+        $data['fixed_date'] = null;
+        $data['variable_from'] = null;
+        $data['variable_to'] = null;
 
         $allowance->update($data);
         return response()->json(['data' => $allowance], 200);

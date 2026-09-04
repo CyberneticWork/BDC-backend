@@ -11,22 +11,7 @@ class DeductionTemplateExport implements FromArray, WithHeadings, WithTitle, Wit
 {
     public function array(): array
     {
-        return [
-            // Example data row
-            // [
-            //     'DED001', // deduction_code
-            //     'EPF Deduction', // deduction_name
-            //     'EPF contribution', // description
-            //     500.00, // amount
-            //     'active', // status
-            //     'EPF', // category
-            //     'fixed', // deduction_type
-            //     1, // company_id
-            //     1, // department_id
-            //     '2023-01-01', // startDate
-            //     null // endDate
-            // ]
-        ];
+        return [];
     }
 
     public function headings(): array
@@ -37,11 +22,8 @@ class DeductionTemplateExport implements FromArray, WithHeadings, WithTitle, Wit
             'description',
             'amount',
             'status',
-            'deduction_type',
             'company_id',
             'department_id',
-            'startDate',
-            'endDate'
         ];
     }
 

@@ -21,12 +21,27 @@ class leave_master extends Model
         'is_short_leave',      // 
         'short_leave_slot',
         'leave_duration',
-        
+        'requested_days',
+        'leave_balance_days',
+        'nopay_days',
+        'nopay_applied',
+        'nopay_record_id',
         'cancel_from',
         'cancel_to',
         'reason',
         'status',
         'over_limit'
+    ];
+
+    protected $casts = [
+        'is_half_day' => 'boolean',
+        'is_short_leave' => 'boolean',
+        'leave_duration' => 'float',
+        'requested_days' => 'float',
+        'leave_balance_days' => 'float',
+        'nopay_days' => 'float',
+        'nopay_applied' => 'boolean',
+        'over_limit' => 'float',
     ];
 
     public function employee()

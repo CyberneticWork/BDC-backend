@@ -108,6 +108,8 @@ Route::get('/employees/by-employment-type/{typeName}', [EmployeeController::clas
 Route::get('/loans/employee-by-number/{number}', [LoanController::class, 'getEmployeeByNumber']);
 Route::get('/loans/by-employee/{employeeNo}', [LoanController::class, 'getByEmployeeNo']);
 Route::get('/loans/report/export', [LoanController::class, 'report']);
+Route::post('/loans/{id}/skip-request', [LoanController::class, 'requestSkip']);
+Route::post('/loans/{id}/skip-decide', [LoanController::class, 'decideSkip']);
 Route::apiResource('loans', LoanController::class);
 // ✅ Special route FIRST
 Route::get('/allowances/by-company-or-department', [AllowancesController::class, 'getAllowancesByCompanyOrDepartment']);

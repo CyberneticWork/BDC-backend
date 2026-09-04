@@ -6,15 +6,29 @@ use Illuminate\Http\Request;
 use App\Models\leave_master;
 use App\Models\employee;
 use App\Models\LeaveSetting;
+use App\Models\NoPayRecord;
 use Illuminate\Support\Facades\Validator;
 use App\Mail\LeaveApprovedMail;
 use App\Mail\LeaveRejectedMail;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Auth;
 use Carbon\Carbon;
 
 class LeaveMasterController extends Controller
 {
+    /**
+     * Shop & Office Act earning/accrual leave calculation is enabled from this date onward.
+     * Before this date, only HR manual employee_leave_balances are used as actual balances.
+     */
+    private const ACT_ACCRUAL_START_DATE = '2026-12-31';
+
+    private function isActAccrualEnabled(Carbon $asOfDate): bool
+    {
+        return $asOfDate->copy()->startOfDay()
+            ->gte(Carbon::parse(self::ACT_ACCRUAL_START_DATE)->startOfDay());
+    }
+
     public function index()
     {
         $leaveMasters = leave_master::with('employee')->get();
@@ -141,6 +155,7 @@ class LeaveMasterController extends Controller
         );
 
         $combinedSplit = null;
+        $nopayPreviewDays = 0.0;
         if ($entitlementCheck !== null) {
             // If selected type alone is short, try Annual + Casual combined (e.g. 0.5 + 0.5 = 1 day)
             $combinedSplit = $this->planAnnualCasualCombinedSplit(
@@ -152,7 +167,15 @@ class LeaveMasterController extends Controller
             );
 
             if ($combinedSplit === null) {
-                return response()->json($entitlementCheck, 422);
+                // Allow apply even when balance is short; shortfall becomes NoPay on HR approve.
+                $available = (float) ($entitlementCheck['available_days'] ?? 0);
+                $nopayPreviewDays = max(0, round((float) $requestedDurationInDays - $available, 4));
+                if ($nopayPreviewDays > 0 && !$overLimitInfo) {
+                    $overLimitInfo = [
+                        'reason' => 'balance_shortfall_nopay_preview',
+                        'amount' => $nopayPreviewDays,
+                    ];
+                }
             }
         }
 
@@ -160,6 +183,7 @@ class LeaveMasterController extends Controller
         $data['is_half_day'] = $isHalfDay;
         $data['is_short_leave'] = $isShortLeave;
         $data['leave_duration'] = $requestedDurationInDays;
+        $data['requested_days'] = $requestedDurationInDays;
         $data['period'] = $request->input('period');
         $data['short_leave_slot'] = $request->input('short_leave_slot');
 
@@ -188,8 +212,17 @@ class LeaveMasterController extends Controller
                 $data['leave_duration'] = max(0, $requestedDurationInDays - $overLimitInfo['amount']);
             }
             $data['over_limit'] = $overLimitInfo['amount'];
+            if ($overLimitInfo['reason'] === 'balance_shortfall_nopay_preview') {
+                $availableForLeave = max(0, round((float) $requestedDurationInDays - (float) $overLimitInfo['amount'], 4));
+                $data['leave_balance_days'] = $availableForLeave;
+                $data['nopay_days'] = (float) $overLimitInfo['amount'];
+                $data['nopay_applied'] = false;
+            }
         } else {
             $data['over_limit'] = 0;
+            $data['leave_balance_days'] = $requestedDurationInDays;
+            $data['nopay_days'] = 0;
+            $data['nopay_applied'] = false;
         }
 
         // Combined Annual + Casual: create one leave row per type (e.g. 0.5 Annual + 0.5 Casual)
@@ -205,7 +238,12 @@ class LeaveMasterController extends Controller
         }
 
         $leaveMaster = leave_master::create($data);
-        return response()->json($leaveMaster, 201);
+        $payload = $leaveMaster->toArray();
+        if ($nopayPreviewDays > 0) {
+            $payload['nopay_preview_days'] = $nopayPreviewDays;
+            $payload['message'] = 'Leave submitted. Shortfall will be treated as NoPay when HR approves.';
+        }
+        return response()->json($payload, 201);
     }
 
     public function show(string $id)
@@ -357,21 +395,38 @@ class LeaveMasterController extends Controller
             return response()->json($validator->errors(), 422);
         }
 
-        $leaveMaster = leave_master::with('employee.contactDetail')->findOrFail($id);
+        $leaveMaster = leave_master::with('employee.organizationAssignment', 'employee.contactDetail')->findOrFail($id);
         $oldStatus = $leaveMaster->status;
+        $newStatus = $request->status;
+
+        $wasApproved = in_array($oldStatus, ['Approved', 'HR_Approved'], true);
+        $willApprove = in_array($newStatus, ['Approved', 'HR_Approved'], true);
+
+        if ($willApprove && !$wasApproved) {
+            $this->applyLeaveBalanceAndNopayOnApprove($leaveMaster);
+            $leaveMaster->refresh();
+        }
+
+        if (!$willApprove && $wasApproved && $leaveMaster->nopay_applied && $leaveMaster->nopay_record_id) {
+            $this->revokeLeaveNopay($leaveMaster);
+            $leaveMaster->refresh();
+        }
 
         $leaveMaster->update([
-            'status' => $request->status,
+            'status' => $newStatus,
             'rejection_reason' => $request->rejection_reason
         ]);
 
-        if ($oldStatus !== $request->status) {
-            $this->sendStatusEmail($leaveMaster, $request->status, $request->rejection_reason);
+        if ($oldStatus !== $newStatus) {
+            $this->sendStatusEmail($leaveMaster, $newStatus, $request->rejection_reason);
         }
 
         return response()->json([
             'message' => 'Leave status updated successfully',
-            'leave' => $leaveMaster
+            'leave' => $leaveMaster->fresh(),
+            'nopay_days' => (float) ($leaveMaster->nopay_days ?? 0),
+            'leave_balance_days' => $leaveMaster->leave_balance_days,
+            'nopay_applied' => (bool) ($leaveMaster->nopay_applied ?? false),
         ]);
     }
 
@@ -671,19 +726,8 @@ class LeaveMasterController extends Controller
         }
 
         $orgAssignment = $employee->organizationAssignment;
-
-        if (!$orgAssignment || !$orgAssignment->date_of_joining) {
-            return response()->json([
-                'message' => 'Date of Joining is not set for this employee. Cannot calculate leaves under Shop & Office Act.',
-            ], 400);
-        }
-
         $targetDate = $requestedDateStr ? Carbon::parse($requestedDateStr) : Carbon::now();
         $currentYear = (int) $targetDate->year;
-        $joinDate = Carbon::parse($orgAssignment->date_of_joining);
-
-        $calculator = app(\App\Services\ShopAndOfficeLeaveCalculator::class);
-        $law = $calculator->calculate($joinDate, $targetDate);
 
         $eligibleLeaves = [];
 
@@ -693,6 +737,28 @@ class LeaveMasterController extends Controller
             ->where('status', 'active')
             ->whereNull('deleted_at')
             ->get();
+
+        $law = [
+            'employment_year' => null,
+            'is_first_year' => false,
+            'is_second_year' => false,
+            'completed_months_first_year' => 0,
+            'casual_days' => 0,
+            'annual_days' => 0,
+            'casual_note' => '',
+            'annual_note' => '',
+            'law_reference' => 'Shop and Office Employees Act No. 19 of 1954 (Sri Lanka)',
+        ];
+
+        if ($orgAssignment && $orgAssignment->date_of_joining) {
+            $joinDate = Carbon::parse($orgAssignment->date_of_joining);
+            $calculator = app(\App\Services\ShopAndOfficeLeaveCalculator::class);
+            $law = $calculator->calculate($joinDate, $targetDate);
+        } elseif ($manualBalances->isEmpty() && $this->isActAccrualEnabled($targetDate)) {
+            return response()->json([
+                'message' => 'Date of Joining is not set for this employee. Cannot calculate leaves under Shop & Office Act.',
+            ], 400);
+        }
 
         if ($manualBalances->isNotEmpty()) {
             foreach ($manualBalances as $balance) {
@@ -713,15 +779,40 @@ class LeaveMasterController extends Controller
                 'employee_id' => $employee->id,
                 'emp_number' => $employee->attendance_employee_no,
                 'employee_name' => $employee->display_name ?? $employee->name_with_initials ?? $employee->full_name,
-                'join_date' => $orgAssignment->date_of_joining,
+                'join_date' => $orgAssignment->date_of_joining ?? null,
                 'as_of_date' => $targetDate->toDateString(),
                 'calendar_year' => $currentYear,
                 'employment_year' => $law['employment_year'],
                 'is_first_year' => $law['is_first_year'],
                 'is_second_year' => $law['is_second_year'],
                 'balance_source' => 'employee_leave_balances',
+                'act_accrual_enabled' => $this->isActAccrualEnabled($targetDate),
+                'act_accrual_starts_on' => self::ACT_ACCRUAL_START_DATE,
                 'law_reference' => $law['law_reference'],
                 'eligible_leaves' => $eligibleLeaves,
+            ]);
+        }
+
+        // Before Act accrual start date: manual balances only (no Act auto-earn for this year).
+        if (!$this->isActAccrualEnabled($targetDate)) {
+            return response()->json([
+                'employee_id' => $employee->id,
+                'emp_number' => $employee->attendance_employee_no,
+                'employee_name' => $employee->display_name ?? $employee->name_with_initials ?? $employee->full_name,
+                'join_date' => $orgAssignment->date_of_joining ?? null,
+                'as_of_date' => $targetDate->toDateString(),
+                'calendar_year' => $currentYear,
+                'employment_year' => $law['employment_year'],
+                'is_first_year' => $law['is_first_year'],
+                'is_second_year' => $law['is_second_year'],
+                'balance_source' => 'manual_only_until_act_start',
+                'act_accrual_enabled' => false,
+                'act_accrual_starts_on' => self::ACT_ACCRUAL_START_DATE,
+                'law_reference' => $law['law_reference'],
+                'eligible_leaves' => [],
+                'message' => 'Shop & Office Act earning leave starts from '
+                    . self::ACT_ACCRUAL_START_DATE
+                    . '. For this year, use HR-entered leave balances only. Leave can still be applied; shortfall becomes NoPay on HR approve.',
             ]);
         }
 
@@ -752,7 +843,7 @@ class LeaveMasterController extends Controller
             'employee_id' => $employee->id,
             'emp_number' => $employee->attendance_employee_no,
             'employee_name' => $employee->display_name ?? $employee->name_with_initials ?? $employee->full_name,
-            'join_date' => $orgAssignment->date_of_joining,
+            'join_date' => $orgAssignment->date_of_joining ?? null,
             'as_of_date' => $targetDate->toDateString(),
             'calendar_year' => $currentYear,
             'employment_year' => $law['employment_year'],
@@ -760,12 +851,14 @@ class LeaveMasterController extends Controller
             'is_second_year' => $law['is_second_year'],
             'completed_months_first_year' => $law['completed_months_first_year'],
             'balance_source' => 'shop_and_office_act',
+            'act_accrual_enabled' => true,
+            'act_accrual_starts_on' => self::ACT_ACCRUAL_START_DATE,
             'law_reference' => $law['law_reference'],
             'eligible_leaves' => $eligibleLeaves,
         ]);
     }
 
-    private function getUsedLeaveDays($employeeId, $leaveType, $year)
+    private function getUsedLeaveDays($employeeId, $leaveType, $year, ?int $excludeLeaveId = null)
     {
         $aliases = [$leaveType];
         $normalized = strtolower(trim((string) $leaveType));
@@ -776,7 +869,7 @@ class LeaveMasterController extends Controller
             $aliases = array_unique(array_merge($aliases, ['Annual Leave', 'Annual', 'annual leave', 'ANNUAL LEAVE']));
         }
 
-        $leaves = leave_master::where('employee_id', $employeeId)
+        $leavesQuery = leave_master::where('employee_id', $employeeId)
             ->where(function ($q) use ($aliases) {
                 foreach ($aliases as $alias) {
                     $q->orWhereRaw('LOWER(leave_type) = ?', [strtolower($alias)]);
@@ -786,26 +879,48 @@ class LeaveMasterController extends Controller
             ->where(function ($query) use ($year) {
                 $query->whereYear('leave_date', $year)
                     ->orWhereYear('leave_from', $year);
-            })
-            ->get();
+            });
+
+        if ($excludeLeaveId) {
+            $leavesQuery->where('id', '!=', $excludeLeaveId);
+        }
+
+        $leaves = $leavesQuery->get();
 
         $totalDays = 0;
         foreach ($leaves as $leave) {
-            if ($leave->is_short_leave) {
-                $totalDays += 0.25;
-            } elseif ($leave->is_half_day) {
-                $totalDays += 0.5;
-            } else {
-                $totalDays += $leave->leave_duration ?? 1;
+            // Count only the leave-balance portion (exclude NoPay shortfall).
+            if ($leave->leave_balance_days !== null) {
+                $totalDays += (float) $leave->leave_balance_days;
+                continue;
             }
+
+            $days = 0.0;
+            if ($leave->is_short_leave) {
+                $days = 0.25;
+            } elseif ($leave->is_half_day) {
+                $days = 0.5;
+            } else {
+                $days = (float) ($leave->leave_duration ?? 1);
+            }
+
+            $nopayPreview = (float) ($leave->nopay_days ?? 0);
+            if ($nopayPreview <= 0 && (float) ($leave->over_limit ?? 0) > 0) {
+                $nopayPreview = (float) $leave->over_limit;
+            }
+            if (!$leave->nopay_applied && $nopayPreview > 0) {
+                $days = max(0, round($days - $nopayPreview, 4));
+            }
+
+            $totalDays += $days;
         }
 
         return round($totalDays, 2);
     }
 
     /**
-     * Hard-block leave apply when requested days exceed Shop & Office Act / HR override balance.
-     * Returns error payload array, or null when allowed.
+     * Soft-check leave entitlement. Shortfall is allowed (NoPay on HR approve).
+     * Returns warning payload when short, or null when fully covered.
      */
     private function validateLeaveEntitlement($employee, $orgAssignment, string $leaveType, float $requestedDays, Carbon $asOfDate): ?array
     {
@@ -813,23 +928,22 @@ class LeaveMasterController extends Controller
             return null;
         }
 
-        if (!$orgAssignment || !$orgAssignment->date_of_joining) {
-            return [
-                'message' => 'Cannot apply leave: Date of Joining is not set for this employee.',
-                'reason' => 'Date of Joining is missing, so leave entitlement under Shop & Office Act cannot be calculated.',
-                'entitlement_exceeded' => true,
-                'limit_exceeded' => true,
-                'continue_allowed' => false,
-                'leave_type' => $leaveType,
-                'requested_days' => $requestedDays,
-            ];
-        }
-
         $year = (int) $asOfDate->year;
         $normalized = strtolower(trim($leaveType));
-        $joinDate = Carbon::parse($orgAssignment->date_of_joining);
-        $calculator = app(\App\Services\ShopAndOfficeLeaveCalculator::class);
-        $law = $calculator->calculate($joinDate, $asOfDate);
+        $law = [
+            'law_reference' => 'Shop and Office Employees Act No. 19 of 1954 (Sri Lanka)',
+            'employment_year' => null,
+            'casual_days' => 0,
+            'annual_days' => 0,
+            'casual_note' => '',
+            'annual_note' => '',
+        ];
+
+        if ($orgAssignment && $orgAssignment->date_of_joining) {
+            $joinDate = Carbon::parse($orgAssignment->date_of_joining);
+            $calculator = app(\App\Services\ShopAndOfficeLeaveCalculator::class);
+            $law = $calculator->calculate($joinDate, $asOfDate);
+        }
 
         $manualBalances = \App\Models\EmployeeLeaveBalance::where('employee_id', $employee->id)
             ->where('year', $year)
@@ -848,26 +962,21 @@ class LeaveMasterController extends Controller
             });
 
             if (!$match) {
-                return [
-                    'message' => "Cannot apply leave: \"{$leaveType}\" is not available for this employee in {$year}.",
-                    'reason' => 'HR has set employee leave balances for this year, but this leave type is not included. Choose a configured leave type or ask HR to add it.',
-                    'entitlement_exceeded' => true,
-                    'limit_exceeded' => true,
-                    'continue_allowed' => false,
-                    'leave_type' => $leaveType,
-                    'requested_days' => $requestedDays,
-                    'available_days' => 0,
-                    'entitled_days' => 0,
-                    'used_days' => 0,
-                    'balance_source' => 'employee_leave_balances',
-                    'law_reference' => $law['law_reference'],
-                ];
+                // Type not in manual list → treat as 0 balance (full NoPay on approve)
+                $entitled = 0.0;
+                $note = 'Leave type not in HR leave balances for this year; shortfall will be NoPay on HR approve.';
+                $source = 'employee_leave_balances';
+            } else {
+                $entitled = (float) $match->entitled_days;
+                $note = $match->notes ?: 'Employee-wise leave balance (HR override)';
+                $source = 'employee_leave_balances';
+                $displayType = $match->leave_type;
             }
-
-            $entitled = (float) $match->entitled_days;
-            $note = $match->notes ?: 'Employee-wise leave balance (HR override)';
-            $source = 'employee_leave_balances';
-            $displayType = $match->leave_type;
+        } elseif (!$this->isActAccrualEnabled($asOfDate)) {
+            $entitled = 0.0;
+            $note = 'Act earning leave starts from ' . self::ACT_ACCRUAL_START_DATE
+                . '. No HR leave balance set for this year; shortfall will be NoPay on HR approve.';
+            $source = 'manual_only_until_act_start';
         } elseif (str_contains($normalized, 'casual')) {
             $entitled = (float) $law['casual_days'];
             $note = $law['casual_note'];
@@ -877,20 +986,9 @@ class LeaveMasterController extends Controller
             $note = $law['annual_note'];
             $displayType = 'Annual Leave';
         } else {
-            return [
-                'message' => "Cannot apply leave: \"{$leaveType}\" is not a statutory leave type under Shop & Office Act.",
-                'reason' => 'Only Casual Leave and Annual Leave are calculated under the Act (unless HR sets employee leave balances).',
-                'entitlement_exceeded' => true,
-                'limit_exceeded' => true,
-                'continue_allowed' => false,
-                'leave_type' => $leaveType,
-                'requested_days' => $requestedDays,
-                'available_days' => 0,
-                'entitled_days' => 0,
-                'used_days' => 0,
-                'balance_source' => 'shop_and_office_act',
-                'law_reference' => $law['law_reference'],
-            ];
+            $entitled = 0.0;
+            $note = 'Non-statutory leave type; shortfall will be NoPay on HR approve.';
+            $source = 'nopay_fallback';
         }
 
         $used = $this->getUsedLeaveDays($employee->id, $displayType, $year);
@@ -910,14 +1008,15 @@ class LeaveMasterController extends Controller
             ];
         }
 
+        $nopayPreview = max(0, round($requestedDays - $available, 4));
         $reason = $note;
         if ($entitled <= 0) {
-            $reason = $note ?: "No {$displayType} entitlement for this period under Shop & Office Act.";
+            $reason = $note ?: "No {$displayType} balance available. Full request will be NoPay on HR approve.";
         } elseif ($available <= 0) {
-            $reason = "All {$displayType} entitlement for {$year} is already used ({$used}/{$entitled} days). {$note}";
+            $reason = "All {$displayType} for {$year} is already used ({$used}/{$entitled} days). Shortfall {$nopayPreview} day(s) will be NoPay on HR approve. {$note}";
         } else {
-            $reason = "Requested {$requestedDays} day(s) but only {$available} day(s) of {$displayType} remain "
-                . "(entitled {$entitled}, used {$used}). {$note}";
+            $reason = "Requested {$requestedDays} day(s); {$available} day(s) from {$displayType} balance, "
+                . "{$nopayPreview} day(s) as NoPay on HR approve. {$note}";
         }
 
         if ($combinedAnnualCasual) {
@@ -925,11 +1024,12 @@ class LeaveMasterController extends Controller
         }
 
         return [
-            'message' => "Cannot apply leave: entitlement exceeded for {$displayType}.",
+            'message' => "Leave balance short for {$displayType}. You can still submit; shortfall becomes NoPay when HR approves.",
             'reason' => trim($reason),
             'entitlement_exceeded' => true,
             'limit_exceeded' => true,
-            'continue_allowed' => false,
+            'continue_allowed' => true,
+            'nopay_preview_days' => $nopayPreview,
             'leave_type' => $displayType,
             'requested_days' => $requestedDays,
             'entitled_days' => $entitled,
@@ -938,8 +1038,10 @@ class LeaveMasterController extends Controller
             'combined_annual_casual' => $combinedAnnualCasual,
             'balance_source' => $source,
             'law_reference' => $law['law_reference'],
-            'employment_year' => $law['employment_year'],
+            'employment_year' => $law['employment_year'] ?? null,
             'calendar_year' => $year,
+            'act_accrual_enabled' => $this->isActAccrualEnabled($asOfDate),
+            'act_accrual_starts_on' => self::ACT_ACCRUAL_START_DATE,
         ];
     }
 
@@ -953,10 +1055,6 @@ class LeaveMasterController extends Controller
             'Annual Leave' => 0.0,
             'Casual Leave' => 0.0,
         ];
-
-        if (!$orgAssignment || !$orgAssignment->date_of_joining) {
-            return $result;
-        }
 
         $manualBalances = \App\Models\EmployeeLeaveBalance::where('employee_id', $employee->id)
             ->where('year', $year)
@@ -975,6 +1073,14 @@ class LeaveMasterController extends Controller
                 $used = $this->getUsedLeaveDays($employee->id, $type, $year);
                 $result[$key] = max(0, round((float) $balance->entitled_days - $used, 4));
             }
+            return $result;
+        }
+
+        if (!$this->isActAccrualEnabled($asOfDate)) {
+            return $result;
+        }
+
+        if (!$orgAssignment || !$orgAssignment->date_of_joining) {
             return $result;
         }
 
@@ -1096,10 +1202,166 @@ class LeaveMasterController extends Controller
                 ? "{$reason} | {$splitNote}"
                 : $splitNote;
 
+            $row['requested_days'] = $days;
+            $row['leave_balance_days'] = $days;
+            $row['nopay_days'] = 0;
+            $row['nopay_applied'] = false;
+            $row['over_limit'] = 0;
+
             $created[] = leave_master::create($row);
         }
 
         return $created;
+    }
+
+    /**
+     * On HR/manager approve: deduct available leave balance; remainder becomes NoPay.
+     * Example: request 1 day, balance 0.5 → leave 0.5 + NoPay 0.5.
+     */
+    private function applyLeaveBalanceAndNopayOnApprove(leave_master $leave): void
+    {
+        if ($leave->nopay_applied) {
+            return;
+        }
+
+        $employee = $leave->employee ?: employee::with('organizationAssignment')->find($leave->employee_id);
+        if (!$employee) {
+            return;
+        }
+        if (!$employee->relationLoaded('organizationAssignment')) {
+            $employee->load('organizationAssignment');
+        }
+        $orgAssignment = $employee->organizationAssignment;
+
+        $asOfDate = $leave->leave_date
+            ? Carbon::parse($leave->leave_date)
+            : ($leave->leave_from ? Carbon::parse($leave->leave_from) : Carbon::now());
+
+        $requested = (float) ($leave->requested_days
+            ?? $leave->leave_duration
+            ?? ($leave->is_short_leave ? 0.25 : ($leave->is_half_day ? 0.5 : 1)));
+
+        $available = $this->getAvailableDaysForLeaveType(
+            $employee,
+            $orgAssignment,
+            (string) $leave->leave_type,
+            $asOfDate,
+            (int) $leave->id
+        );
+
+        $fromBalance = max(0, min($requested, $available));
+        $nopayDays = max(0, round($requested - $fromBalance, 4));
+
+        $updates = [
+            'requested_days' => $requested,
+            'leave_balance_days' => $fromBalance,
+            'leave_duration' => $fromBalance > 0 ? $fromBalance : 0,
+            'nopay_days' => $nopayDays,
+            'over_limit' => $nopayDays,
+            'nopay_applied' => $nopayDays > 0.0001,
+        ];
+
+        if (abs($fromBalance - 0.25) < 0.001) {
+            $updates['is_short_leave'] = true;
+            $updates['is_half_day'] = false;
+        } elseif (abs($fromBalance - 0.5) < 0.001) {
+            $updates['is_short_leave'] = false;
+            $updates['is_half_day'] = true;
+            if (!$leave->period) {
+                $updates['period'] = 'Morning';
+            }
+        } elseif ($fromBalance <= 0.0001) {
+            $updates['is_short_leave'] = false;
+            $updates['is_half_day'] = false;
+        } else {
+            $updates['is_short_leave'] = false;
+            $updates['is_half_day'] = false;
+        }
+
+        $nopayRecordId = null;
+        if ($nopayDays > 0.0001) {
+            $leaveDate = $asOfDate->toDateString();
+            $type = $nopayDays >= 0.999 ? 'FULL_DAY' : 'PARTIAL_ABSENT';
+            $record = NoPayRecord::create([
+                'employee_id' => $leave->employee_id,
+                'date' => $leaveDate,
+                'no_pay_count' => $nopayDays,
+                'description' => "Auto NoPay from leave shortfall | Leave #{$leave->id} | "
+                    . "Requested {$requested} day(s), leave balance used {$fromBalance}, NoPay {$nopayDays}",
+                'status' => 'Approved',
+                'processed_by' => Auth::id(),
+                'type' => $type,
+                'hours' => null,
+                'minutes' => null,
+            ]);
+            $nopayRecordId = $record->id;
+            $updates['nopay_record_id'] = $nopayRecordId;
+        }
+
+        $leave->update($updates);
+    }
+
+    private function revokeLeaveNopay(leave_master $leave): void
+    {
+        if ($leave->nopay_record_id) {
+            NoPayRecord::where('id', $leave->nopay_record_id)->delete();
+        }
+        $leave->update([
+            'nopay_applied' => false,
+            'nopay_record_id' => null,
+            // Keep nopay_days / over_limit as preview if leave goes back to pending
+        ]);
+    }
+
+    /**
+     * Available days for a leave type, excluding one leave id (the one being approved).
+     */
+    private function getAvailableDaysForLeaveType(
+        $employee,
+        $orgAssignment,
+        string $leaveType,
+        Carbon $asOfDate,
+        ?int $excludeLeaveId = null
+    ): float {
+        $year = (int) $asOfDate->year;
+        $normalized = strtolower(trim($leaveType));
+
+        $manualBalances = \App\Models\EmployeeLeaveBalance::where('employee_id', $employee->id)
+            ->where('year', $year)
+            ->where('status', 'active')
+            ->whereNull('deleted_at')
+            ->get();
+
+        $entitled = 0.0;
+        $displayType = $leaveType;
+
+        if ($manualBalances->isNotEmpty()) {
+            $match = $manualBalances->first(function ($row) use ($normalized) {
+                return strtolower(trim((string) $row->leave_type)) === $normalized;
+            });
+            if (!$match) {
+                return 0.0;
+            }
+            $entitled = (float) $match->entitled_days;
+            $displayType = $match->leave_type;
+        } elseif ($this->isActAccrualEnabled($asOfDate) && $orgAssignment && $orgAssignment->date_of_joining) {
+            $joinDate = Carbon::parse($orgAssignment->date_of_joining);
+            $law = app(\App\Services\ShopAndOfficeLeaveCalculator::class)->calculate($joinDate, $asOfDate);
+            if (str_contains($normalized, 'casual')) {
+                $entitled = (float) $law['casual_days'];
+                $displayType = 'Casual Leave';
+            } elseif (str_contains($normalized, 'annual')) {
+                $entitled = (float) $law['annual_days'];
+                $displayType = 'Annual Leave';
+            } else {
+                return 0.0;
+            }
+        } else {
+            return 0.0;
+        }
+
+        $used = $this->getUsedLeaveDays($employee->id, $displayType, $year, $excludeLeaveId);
+        return max(0, round($entitled - $used, 4));
     }
 }
 

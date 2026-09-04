@@ -20,20 +20,22 @@ class DeductionController extends Controller
     public function store(Request $request)
     {
         //validate the request data
-        $request->validate([
+        $data = $request->validate([
             'department_id' => 'nullable|exists:departments,id',
-            'company_id' => 'required|exists:companies,id',  
+            'company_id' => 'required|exists:companies,id',
             'deduction_code' => 'required|string|max:255|unique:deductions,deduction_code',
             'deduction_name' => 'required|string|max:255',
             'description' => 'nullable|string',
-            'amount' => 'required|numeric|min:0', // Amount එක අනිවාර්ය කළා
+            'amount' => 'required|numeric|min:0',
             'status' => 'required|in:active,inactive',
-            'deduction_type' => 'required|in:fixed,variable',
-            'startDate' => 'nullable|string|max:255',
-            'endDate' => 'nullable|string|max:255',
+            'category' => 'nullable|string|max:255',
         ]);
-        
-        $deduction = deduction::create($request->all());
+
+        // Fixed/variable is chosen at assignment time — clear legacy master date fields
+        $data['startDate'] = null;
+        $data['endDate'] = null;
+
+        $deduction = deduction::create($data);
         return response()->json($deduction, 201);
     }
 
@@ -50,16 +52,14 @@ class DeductionController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'department_id' => 'nullable|exists:departments,id',
-            'company_id' => 'required|exists:companies,id',  
+            'company_id' => 'required|exists:companies,id',
             'deduction_name' => 'required|string|max:255',
             'description' => 'nullable|string',
-            'amount' => 'required|numeric|min:0', // Amount එක අනිවාර්ය කළා
+            'amount' => 'required|numeric|min:0',
             'status' => 'required|in:active,inactive',
-            'deduction_type' => 'required|in:fixed,variable',
-            'startDate' => 'nullable|string|max:255',
-            'endDate' => 'nullable|string|max:255',
+            'category' => 'nullable|string|max:255',
         ]);
-        
+
         if ($validator->fails()) {
             return response()->json([
                 'message' => 'Validation failed',
@@ -71,7 +71,12 @@ class DeductionController extends Controller
         if (!$deduction) {
             return response()->json(['message' => 'Deduction not found'], 404);
         }
-        $deduction->update($validator->validated());
+
+        $data = $validator->validated();
+        $data['startDate'] = null;
+        $data['endDate'] = null;
+
+        $deduction->update($data);
         return response()->json($deduction);
     }
 

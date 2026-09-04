@@ -550,36 +550,15 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 $basicSalary += (float)($employeeData['increment_value'] ?? 0);
             }
 
-            // LOAN CALCULATION
+            // LOAN CALCULATION (reducing-balance schedule; skip if approved)
             $installmentAmount = 0.0;
             $loanInterest = 0.0;
             $loanPrincipal = 0.0;
             $loanDeductFrom = $employeeData['loan_deduct_from'] ?? 'bonus';
-            $loanStatus = strtolower((string)($employeeData['loan_status'] ?? ''));
-
-            if ($loanStatus === 'active') {
-                $schedule = $employeeData['loan_schedule'] ?? null;
-                if (is_string($schedule)) { $schedule = is_array(json_decode($schedule, true)) ? json_decode($schedule, true) : null; }
-
-                if (is_array($schedule) && count($schedule) > 0) {
-                    foreach ($schedule as $r) {
-                        $due = $r['due_date'] ?? $r['dueDate'] ?? null;
-                        if ($due && date('Y-m', strtotime($due)) === $selectedMonthYear) {
-                            $installmentAmount = (float)($r['installment_amount'] ?? $r['installmentAmount'] ?? 0);
-                            break;
-                        }
-                    }
-                } else {
-                    $installmentAmount = ((int)($employeeData['installment_count'] ?? 0) > 0) ? (float)($employeeData['installment_amount'] ?? 0) : 0.0;
-                }
-
-                if ($employeeData['with_interest'] && $employeeData['interest_rate_per_annum'] > 0) {
-                    $loanAmountTotal = (float)($employeeData['total_loan_amount'] ?? 0);
-                    $loanInterest = ($loanAmountTotal * ((float)$employeeData['interest_rate_per_annum'] / 100)) / 12;
-                    if ($loanInterest > $installmentAmount) { $loanInterest = $installmentAmount; }
-                }
-                $loanPrincipal = $installmentAmount - $loanInterest;
-            }
+            $loanResolved = $this->resolveLoanInstallmentForMonth($employeeData, $selectedMonthYear);
+            $installmentAmount = $loanResolved['installment'];
+            $loanPrincipal = $loanResolved['principal'];
+            $loanInterest = $loanResolved['interest'];
 
             // Working Days
             $companyLeavesCount = DB::table('leave_calendars')->where('company_id', $company_id ?? 0)
@@ -679,11 +658,10 @@ public function getEmployeesByMonthAndCompany(Request $request)
             $bonusDeductionsTotal = $saturdayNoPayBonusDeduction + $earlyOutNoPayDeduction + $shortLeaveDeduction + $halfDayDeduction + $majorLateDeduction + $totalFixedDeductions;
 
             if ($loanDeductFrom === 'basic') {
-                $basicDeductionsTotal += $loanPrincipal;
+                $basicDeductionsTotal += $loanPrincipal + $loanInterest;
             } else {
-                $bonusDeductionsTotal += $loanPrincipal;
+                $bonusDeductionsTotal += $loanPrincipal + $loanInterest;
             }
-            $bonusDeductionsTotal += $loanInterest;
 
             // Totals
             $grossSalary = $basicGross + $bonusGross + $morning_ot_fees + $night_ot_fees + $holiday_ot_fees;
@@ -1348,40 +1326,15 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 $basicSalary += (float)($employeeData['increment_value'] ?? 0);
             }
 
-            // LOAN CALCULATION
+            // LOAN CALCULATION (reducing-balance schedule; skip if approved)
             $installmentAmount = 0.0;
             $loanInterest = 0.0;
             $loanPrincipal = 0.0;
             $loanDeductFrom = $employeeData['loan_deduct_from'] ?? 'bonus';
-            $loanStatus = strtolower((string)($employeeData['loan_status'] ?? ''));
-
-            if ($loanStatus === 'active') {
-                $schedule = $employeeData['loan_schedule'] ?? null;
-                if (is_string($schedule)) {
-                    $schedule = is_array(json_decode($schedule, true)) ? json_decode($schedule, true) : null;
-                }
-
-                if (is_array($schedule) && count($schedule) > 0) {
-                    foreach ($schedule as $r) {
-                        $due = $r['due_date'] ?? $r['dueDate'] ?? null;
-                        if ($due && date('Y-m', strtotime($due)) === $selectedMonthYear) {
-                            $installmentAmount = (float)($r['installment_amount'] ?? $r['installmentAmount'] ?? 0);
-                            break;
-                        }
-                    }
-                } else {
-                    $installmentAmount = ((int)($employeeData['installment_count'] ?? 0) > 0) ? (float)($employeeData['installment_amount'] ?? 0) : 0.0;
-                }
-
-                if ($employeeData['with_interest'] && $employeeData['interest_rate_per_annum'] > 0) {
-                    $loanAmountTotal = (float)($employeeData['total_loan_amount'] ?? 0);
-                    $loanInterest = ($loanAmountTotal * ((float)$employeeData['interest_rate_per_annum'] / 100)) / 12;
-                    if ($loanInterest > $installmentAmount) {
-                        $loanInterest = $installmentAmount;
-                    }
-                }
-                $loanPrincipal = $installmentAmount - $loanInterest;
-            }
+            $loanResolved = $this->resolveLoanInstallmentForMonth($employeeData, $selectedMonthYear);
+            $installmentAmount = $loanResolved['installment'];
+            $loanPrincipal = $loanResolved['principal'];
+            $loanInterest = $loanResolved['interest'];
 
             // Working Days & No Pay Deductions
             $companyLeavesCount = DB::table('leave_calendars')->where('company_id', $company_id ?? 0)
@@ -1525,12 +1478,10 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 + $staffFundDeduction;
 
             if ($loanDeductFrom === 'basic') {
-                $basicDeductionsTotal += $loanPrincipal;
+                $basicDeductionsTotal += $loanPrincipal + $loanInterest;
             } else {
-                $bonusDeductionsTotal += $loanPrincipal;
+                $bonusDeductionsTotal += $loanPrincipal + $loanInterest;
             }
-
-            $bonusDeductionsTotal += $loanInterest;
 
             // Totals
             $grossSalary = $basicGross + $bonusGross + $morning_ot_fees + $night_ot_fees + $holiday_ot_fees;
@@ -1633,6 +1584,91 @@ public function getEmployeesByMonthAndCompany(Request $request)
         unset($row);
 
         return response()->json(['data' => $data, 'meta' => ['count' => count($data)]]);
+    }
+
+    /**
+     * Resolve loan principal/interest for a payroll month from schedule (reducing balance).
+     * Skipped (approved) installments return zeros. Prefer schedule row amounts over recalculation.
+     *
+     * @return array{installment: float, principal: float, interest: float, skipped: bool}
+     */
+    private function resolveLoanInstallmentForMonth(array $employeeData, string $selectedMonthYear): array
+    {
+        $empty = ['installment' => 0.0, 'principal' => 0.0, 'interest' => 0.0, 'skipped' => false];
+
+        $loanStatus = strtolower((string) ($employeeData['loan_status'] ?? ''));
+        if ($loanStatus !== 'active') {
+            return $empty;
+        }
+
+        $schedule = $employeeData['loan_schedule'] ?? null;
+        if (is_string($schedule)) {
+            $decoded = json_decode($schedule, true);
+            $schedule = is_array($decoded) ? $decoded : null;
+        }
+
+        if (is_array($schedule) && count($schedule) > 0) {
+            foreach ($schedule as $r) {
+                $due = $r['dueDateIso'] ?? $r['due_date_iso'] ?? $r['due_date'] ?? $r['dueDate'] ?? null;
+                if (!$due) {
+                    continue;
+                }
+                $dueYm = date('Y-m', strtotime((string) $due));
+                if ($dueYm !== $selectedMonthYear) {
+                    continue;
+                }
+
+                $skipStatus = strtolower((string) ($r['skip_status'] ?? ''));
+                $skipped = !empty($r['skipped']) || $skipStatus === 'approved';
+                if ($skipped) {
+                    return ['installment' => 0.0, 'principal' => 0.0, 'interest' => 0.0, 'skipped' => true];
+                }
+
+                $principal = (float) ($r['capitalRepayment'] ?? $r['capital_repayment'] ?? $r['principal_amount'] ?? 0);
+                $interest = (float) ($r['interestPayment'] ?? $r['interest_payment'] ?? $r['interest_amount'] ?? 0);
+                $installment = (float) ($r['installmentAmount'] ?? $r['installment_amount'] ?? ($principal + $interest));
+
+                if ($installment <= 0 && ($principal > 0 || $interest > 0)) {
+                    $installment = $principal + $interest;
+                }
+
+                return [
+                    'installment' => round($installment, 2),
+                    'principal' => round($principal, 2),
+                    'interest' => round($interest, 2),
+                    'skipped' => false,
+                ];
+            }
+
+            // Schedule exists but no row for this month → no deduction
+            return $empty;
+        }
+
+        // Legacy fallback without schedule
+        $installmentAmount = ((int) ($employeeData['installment_count'] ?? 0) > 0)
+            ? (float) ($employeeData['installment_amount'] ?? 0)
+            : 0.0;
+
+        if ($installmentAmount <= 0) {
+            return $empty;
+        }
+
+        $interest = 0.0;
+        if (!empty($employeeData['with_interest']) && (float) ($employeeData['interest_rate_per_annum'] ?? 0) > 0) {
+            $loanAmountTotal = (float) ($employeeData['total_loan_amount'] ?? 0);
+            $interest = round($loanAmountTotal * ((float) $employeeData['interest_rate_per_annum'] / 100), 2);
+            if ($interest > $installmentAmount) {
+                $interest = $installmentAmount;
+            }
+        }
+        $principal = round($installmentAmount - $interest, 2);
+
+        return [
+            'installment' => round($installmentAmount, 2),
+            'principal' => $principal,
+            'interest' => $interest,
+            'skipped' => false,
+        ];
     }
 
     /**
