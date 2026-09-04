@@ -8,10 +8,12 @@ use Carbon\Carbon;
  * Shop and Office Employees (Regulation of Employment and Remuneration) Act No. 19 of 1954
  * — statutory Annual Leave and Casual Leave entitlements for Sri Lanka.
  *
- * Official Department of Labour / Act summary:
+ * Official Department of Labour / Act summary (Annual unchanged):
  * - Annual leave: none in join (1st) calendar year; pro-rated in 2nd year by join quarter; 14 days from 3rd year.
- * - Casual leave: 1 day per completed 2 months in 1st year; 7 days from 2nd year onward
- *   (covers private business, ill-health, other reasonable cause — no separate statutory sick leave).
+ *
+ * Casual leave (company rule until 3rd year):
+ * - 1st and 2nd calendar years: 0.5 day per month from the month after joining (hire month ignored).
+ * - 3rd year onward: 7 days per year.
  */
 class ShopAndOfficeLeaveCalculator
 {
@@ -51,34 +53,37 @@ class ShopAndOfficeLeaveCalculator
         $annualNote = '';
         $casualNote = '';
 
+        // Casual: 0.5 day per completed month until the 3rd calendar year.
+        // Hire month is excluded — accrual starts from the 1st of the following month.
+        $useCasualAccrual = $isFirstYear || $isSecondYear;
+        if ($useCasualAccrual) {
+            $completedMonths = $this->completedMonthsForCasualAccrual($joinDate, $asOfDate);
+            $casualDays = round($completedMonths * 0.5, 4);
+            $yearLabel = $isFirstYear ? '1st' : '2nd';
+            $casualNote = "Casual Leave ({$yearLabel} year): 0.5 day per month from the month after joining "
+                . "(hire month ignored; e.g. Jan join → Feb onward) "
+                . "({$completedMonths} month(s) → {$casualDays} day(s)). "
+                . "This accrual applies until the 3rd year. "
+                . "Casual leave covers private business, ill-health or other reasonable cause.";
+        } else {
+            $casualDays = 7.0;
+            $casualNote = 'Casual Leave (3rd year onward): 7 days per year.';
+        }
+
         if ($isFirstYear) {
             // Act: no annual leave in the first calendar year of employment.
             $annualDays = 0.0;
             $annualNote = 'Shop & Office Act: No Annual Leave in the 1st calendar year of employment.';
-
-            // Act / Labour Dept: 1 casual day for each completed period of 2 months' service
-            // (equivalent wording: ½ day per completed month, taken in whole/half days).
-            $completedMonths = $this->completedMonthsOfService($joinDate, $asOfDate);
-            $casualDays = (float) intdiv($completedMonths, 2);
-            $casualNote = "Shop & Office Act (1st year): 1 Casual day per 2 completed months "
-                . "({$completedMonths} month(s) completed → {$casualDays} day(s)). "
-                . "Casual leave covers private business, ill-health or other reasonable cause.";
         } elseif ($isSecondYear) {
             // Act: 2nd calendar year annual leave depends on join quarter in year 1.
             $annualDays = (float) $this->secondYearAnnualLeave($joinMonth);
             $annualNote = 'Shop & Office Act (2nd year): Annual Leave based on join date in year 1 — '
                 . $this->joinQuarterLabel($joinMonth) . " → {$annualDays} day(s).";
-
-            $casualDays = 7.0;
-            $casualNote = 'Shop & Office Act (2nd year onward): 7 Casual Leave days per year.';
         } else {
-            // Act: 3rd and subsequent calendar years — 14 annual + 7 casual.
+            // Act: 3rd and subsequent calendar years — 14 annual.
             $annualDays = 14.0;
             $annualNote = 'Shop & Office Act (3rd year onward): 14 Annual Leave days '
                 . '(not less than 7 consecutive).';
-
-            $casualDays = 7.0;
-            $casualNote = 'Shop & Office Act (2nd year onward): 7 Casual Leave days per year.';
         }
 
         return [
@@ -107,6 +112,28 @@ class ShopAndOfficeLeaveCalculator
         $months = $joinDate->diffInMonths($asOfDate);
 
         return max(0, (int) $months);
+    }
+
+    /**
+     * Months counted for Casual accrual.
+     * Hire month is ignored. Counting starts from the next calendar month
+     * (e.g. January join → February onward), inclusive of the as-of month.
+     */
+    public function completedMonthsForCasualAccrual(Carbon $joinDate, Carbon $asOfDate): int
+    {
+        // First countable month = calendar month AFTER the hire month
+        $firstCountable = $joinDate->copy()->startOfMonth()->addMonth()->startOfDay();
+
+        // Still inside hire month → nothing earned yet
+        if ($asOfDate->lt($firstCountable)) {
+            return 0;
+        }
+
+        $from = $firstCountable->copy()->startOfMonth();
+        $to = $asOfDate->copy()->startOfMonth();
+
+        // Inclusive: Feb→Feb = 1, Feb→May = 4
+        return max(0, (int) $from->diffInMonths($to) + 1);
     }
 
     /**
