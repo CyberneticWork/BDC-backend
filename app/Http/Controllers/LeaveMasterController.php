@@ -74,20 +74,7 @@ class LeaveMasterController extends Controller
         $isHalfDay = filter_var($request->is_half_day, FILTER_VALIDATE_BOOLEAN);
         $isShortLeave = filter_var($request->is_short_leave, FILTER_VALIDATE_BOOLEAN);
 
-        $requestedDurationInDays = 0;
-        if ($request->filled('leave_from') && $request->filled('leave_to')) {
-            $from = new \DateTime($request->leave_from);
-            $to = new \DateTime($request->leave_to);
-            $requestedDurationInDays = $from->diff($to)->days + 1;
-        } elseif ($request->filled('leave_date')) {
-            $requestedDurationInDays = 1;
-        }
-
-        if ($isHalfDay) {
-            $requestedDurationInDays = 0.5;
-        } elseif ($isShortLeave) {
-            $requestedDurationInDays = 0.25;
-        }
+        $requestedDurationInDays = $this->computeRequestedLeaveDays($request, $isHalfDay, $isShortLeave);
 
         $overLimitInfo = null;
 
@@ -292,21 +279,7 @@ class LeaveMasterController extends Controller
         $isHalfDay = filter_var($request->is_half_day, FILTER_VALIDATE_BOOLEAN);
         $isShortLeave = filter_var($request->is_short_leave, FILTER_VALIDATE_BOOLEAN);
 
-        $fullDuration = 0;
-        if ($request->filled('leave_from') && $request->filled('leave_to')) {
-            $from = new \DateTime($request->leave_from);
-            $to = new \DateTime($request->leave_to);
-            $fullDuration = $from->diff($to)->days + 1;
-        } elseif ($request->filled('leave_date')) {
-            $fullDuration = 1;
-        }
-
-        $requestedDurationInDays = $fullDuration;
-        if ($isHalfDay) {
-            $requestedDurationInDays = 0.5;
-        } elseif ($isShortLeave) {
-            $requestedDurationInDays = 0.25;
-        }
+        $requestedDurationInDays = $this->computeRequestedLeaveDays($request, $isHalfDay, $isShortLeave);
 
         $overLimitInfo = null;
 
@@ -463,11 +436,11 @@ class LeaveMasterController extends Controller
             ->selectRaw('
             leave_type,
             SUM(CASE WHEN (is_half_day = 0 AND is_short_leave = 0) AND status != "Rejected" THEN COALESCE(leave_duration, 1) ELSE 0 END) as approved_full_days,
-            SUM(CASE WHEN is_half_day = 1 AND status != "Rejected" THEN 0.5 ELSE 0 END) as approved_half_days,
-            SUM(CASE WHEN is_short_leave = 1 AND status != "Rejected" THEN 0.25 ELSE 0 END) as approved_short_leaves,
+            SUM(CASE WHEN is_half_day = 1 AND status != "Rejected" THEN COALESCE(leave_duration, 0.5) ELSE 0 END) as approved_half_days,
+            SUM(CASE WHEN is_short_leave = 1 AND status != "Rejected" THEN COALESCE(leave_duration, 0.25) ELSE 0 END) as approved_short_leaves,
             SUM(CASE WHEN (is_half_day = 0 AND is_short_leave = 0) AND status = "Rejected" THEN COALESCE(leave_duration, 1) ELSE 0 END) as rejected_full_days,
-            SUM(CASE WHEN is_half_day = 1 AND status = "Rejected" THEN 0.5 ELSE 0 END) as rejected_half_days,
-            SUM(CASE WHEN is_short_leave = 1 AND status = "Rejected" THEN 0.25 ELSE 0 END) as rejected_short_leaves
+            SUM(CASE WHEN is_half_day = 1 AND status = "Rejected" THEN COALESCE(leave_duration, 0.5) ELSE 0 END) as rejected_half_days,
+            SUM(CASE WHEN is_short_leave = 1 AND status = "Rejected" THEN COALESCE(leave_duration, 0.25) ELSE 0 END) as rejected_short_leaves
         ')
             ->groupBy('leave_type')
             ->get();
@@ -653,26 +626,43 @@ class LeaveMasterController extends Controller
         return null;
     }
 
-    private function resolveRequestLeaveDuration($request): float
+    private function computeRequestedLeaveDays($request, ?bool $isHalfDay = null, ?bool $isShortLeave = null): float
     {
-        if (filter_var($request->is_short_leave, FILTER_VALIDATE_BOOLEAN)) {
-            return 0.25;
-        }
-        if (filter_var($request->is_half_day, FILTER_VALIDATE_BOOLEAN)) {
-            return 0.5;
-        }
-        if ($request->filled('leave_duration')) {
-            return (float) $request->leave_duration;
-        }
+        $isHalfDay = $isHalfDay ?? filter_var($request->is_half_day, FILTER_VALIDATE_BOOLEAN);
+        $isShortLeave = $isShortLeave ?? filter_var($request->is_short_leave, FILTER_VALIDATE_BOOLEAN);
+
+        $calendarDays = 0.0;
         if ($request->filled('leave_from') && $request->filled('leave_to')) {
             $from = new \DateTime($request->leave_from);
             $to = new \DateTime($request->leave_to);
-            return (float) ($from->diff($to)->days + 1);
+            $calendarDays = (float) ($from->diff($to)->days + 1);
+        } elseif ($request->filled('leave_date')) {
+            $calendarDays = 1.0;
         }
-        if ($request->filled('leave_date')) {
-            return 1.0;
+
+        $unit = 1.0;
+        if ($isShortLeave) {
+            $unit = 0.25;
+        } elseif ($isHalfDay) {
+            $unit = 0.5;
         }
-        return 1.0;
+
+        $computed = round(max(0, $calendarDays) * $unit, 4);
+
+        // Prefer explicit leave_duration when it matches calendar×unit (or when calendar missing)
+        if ($request->filled('leave_duration')) {
+            $provided = round((float) $request->leave_duration, 4);
+            if ($calendarDays <= 0 || abs($provided - $computed) < 0.0001 || $computed <= 0) {
+                return max(0, $provided);
+            }
+        }
+
+        return $computed > 0 ? $computed : 1.0;
+    }
+
+    private function resolveRequestLeaveDuration($request): float
+    {
+        return $this->computeRequestedLeaveDays($request);
     }
 
     private function getUsedLeaveDurationOnDate($employeeId, string $date, $excludeId = null): float
@@ -693,10 +683,13 @@ class LeaveMasterController extends Controller
 
         $total = 0.0;
         foreach ($query->get() as $leave) {
+            // For multi-day half/short leaves, charge the per-day unit on each overlapped date
             if ($leave->is_short_leave) {
                 $total += 0.25;
             } elseif ($leave->is_half_day) {
                 $total += 0.5;
+            } elseif ($leave->leave_from && $leave->leave_to && $leave->leave_from !== $leave->leave_to) {
+                $total += 1.0;
             } else {
                 $total += (float) ($leave->leave_duration ?? 1);
             }
@@ -1261,22 +1254,7 @@ class LeaveMasterController extends Controller
             'nopay_applied' => $nopayDays > 0.0001,
         ];
 
-        if (abs($fromBalance - 0.25) < 0.001) {
-            $updates['is_short_leave'] = true;
-            $updates['is_half_day'] = false;
-        } elseif (abs($fromBalance - 0.5) < 0.001) {
-            $updates['is_short_leave'] = false;
-            $updates['is_half_day'] = true;
-            if (!$leave->period) {
-                $updates['period'] = 'Morning';
-            }
-        } elseif ($fromBalance <= 0.0001) {
-            $updates['is_short_leave'] = false;
-            $updates['is_half_day'] = false;
-        } else {
-            $updates['is_short_leave'] = false;
-            $updates['is_half_day'] = false;
-        }
+        // Keep original full/half/short flags from the leave request (do not rewrite from balance amount)
 
         $nopayRecordId = null;
         if ($nopayDays > 0.0001) {

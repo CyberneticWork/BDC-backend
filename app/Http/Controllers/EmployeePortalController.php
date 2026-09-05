@@ -239,12 +239,14 @@ class EmployeePortalController extends Controller
         $dayType = strtoupper((string) $request->input('day_type', 'FULL'));
         $from = Carbon::parse($request->leave_from);
         $to = Carbon::parse($request->leave_to);
-        $days = $from->diffInDays($to) + 1;
+        $calendarDays = $from->diffInDays($to) + 1;
+        $unit = 1.0;
         if ($dayType === 'HALF') {
-            $days = 0.5;
+            $unit = 0.5;
         } elseif ($dayType === 'SHORT') {
-            $days = 0.25;
+            $unit = 0.25;
         }
+        $days = round($calendarDays * $unit, 4);
 
         $leave = leave_master::create([
             'employee_id' => $emp->id,
@@ -252,8 +254,9 @@ class EmployeePortalController extends Controller
             'leave_type' => $request->leave_type,
             'leave_from' => $request->leave_from,
             'leave_to' => $request->leave_to,
-            'leave_date' => $request->leave_from,
+            'leave_date' => $request->leave_from === $request->leave_to ? $request->leave_from : null,
             'leave_duration' => $days,
+            'requested_days' => $days,
             'reason' => $request->reason,
             'status' => 'Pending',
             'is_half_day' => $dayType === 'HALF',
