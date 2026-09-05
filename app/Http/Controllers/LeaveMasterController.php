@@ -155,7 +155,19 @@ class LeaveMasterController extends Controller
 
             if ($combinedSplit === null) {
                 // Allow apply even when balance is short; shortfall becomes NoPay on HR approve.
+                // For Annual/Casual, NoPay is only the amount beyond COMBINED Annual+Casual.
                 $available = (float) ($entitlementCheck['available_days'] ?? 0);
+                $normalizedType = strtolower(trim((string) $leaveType));
+                if (str_contains($normalizedType, 'annual') || str_contains($normalizedType, 'casual')) {
+                    $pair = $this->getAnnualCasualAvailability($employee, $orgAssignment, $asOfDate);
+                    $combined = round(
+                        (float) ($pair['Annual Leave'] ?? 0) + (float) ($pair['Casual Leave'] ?? 0),
+                        4
+                    );
+                    if ($combined > $available) {
+                        $available = $combined;
+                    }
+                }
                 $nopayPreviewDays = max(0, round((float) $requestedDurationInDays - $available, 4));
                 if ($nopayPreviewDays > 0 && !$overLimitInfo) {
                     $overLimitInfo = [
@@ -213,14 +225,27 @@ class LeaveMasterController extends Controller
         }
 
         // Combined Annual + Casual: create one leave row per type (e.g. 0.5 Annual + 0.5 Casual)
+        // May also include a NoPay shortfall row when combined still < requested.
         if ($combinedSplit !== null) {
             $created = $this->createCombinedLeaveRecords($data, $combinedSplit);
+            $nopayTotal = 0.0;
+            foreach ($combinedSplit as $part) {
+                $nopayTotal += (float) ($part['nopay_days'] ?? 0);
+            }
+            $balanceTotal = 0.0;
+            foreach ($combinedSplit as $part) {
+                $balanceTotal += (float) ($part['balance_days'] ?? $part['days'] ?? 0);
+            }
             return response()->json([
-                'message' => 'Leave applied using combined Annual and Casual balances.',
+                'message' => $nopayTotal > 0.0001
+                    ? 'Leave applied using combined Annual and Casual balances; remainder will be NoPay on HR approve.'
+                    : 'Leave applied using combined Annual and Casual balances.',
                 'combined_balance' => true,
                 'split' => $combinedSplit,
                 'leaves' => $created,
                 'leave' => $created[0] ?? null,
+                'nopay_preview_days' => round($nopayTotal, 4),
+                'leave_balance_days' => round($balanceTotal, 4),
             ], 201);
         }
 
@@ -992,6 +1017,7 @@ class LeaveMasterController extends Controller
         }
 
         $combinedAnnualCasual = null;
+        $coverFromBalance = $available;
         if (str_contains(strtolower($displayType), 'annual') || str_contains(strtolower($displayType), 'casual')) {
             $pair = $this->getAnnualCasualAvailability($employee, $orgAssignment, $asOfDate);
             $combinedAnnualCasual = [
@@ -999,17 +1025,20 @@ class LeaveMasterController extends Controller
                 'casual_available' => $pair['Casual Leave'] ?? 0,
                 'combined_available' => round(($pair['Annual Leave'] ?? 0) + ($pair['Casual Leave'] ?? 0), 4),
             ];
+            // Shortfall / NoPay is beyond combined Annual + Casual, not selected type alone
+            $coverFromBalance = max($available, (float) $combinedAnnualCasual['combined_available']);
         }
 
-        $nopayPreview = max(0, round($requestedDays - $available, 4));
+        $nopayPreview = max(0, round($requestedDays - $coverFromBalance, 4));
         $reason = $note;
         if ($entitled <= 0) {
             $reason = $note ?: "No {$displayType} balance available. Full request will be NoPay on HR approve.";
         } elseif ($available <= 0) {
             $reason = "All {$displayType} for {$year} is already used ({$used}/{$entitled} days). Shortfall {$nopayPreview} day(s) will be NoPay on HR approve. {$note}";
         } else {
-            $reason = "Requested {$requestedDays} day(s); {$available} day(s) from {$displayType} balance, "
-                . "{$nopayPreview} day(s) as NoPay on HR approve. {$note}";
+            $reason = "Requested {$requestedDays} day(s); {$coverFromBalance} day(s) from leave balance"
+                . ($combinedAnnualCasual ? " (Annual + Casual)" : " ({$displayType})")
+                . ", {$nopayPreview} day(s) as NoPay on HR approve. {$note}";
         }
 
         if ($combinedAnnualCasual) {
@@ -1028,6 +1057,7 @@ class LeaveMasterController extends Controller
             'entitled_days' => $entitled,
             'used_days' => $used,
             'available_days' => $available,
+            'cover_from_balance_days' => $coverFromBalance,
             'combined_annual_casual' => $combinedAnnualCasual,
             'balance_source' => $source,
             'law_reference' => $law['law_reference'],
@@ -1115,40 +1145,52 @@ class LeaveMasterController extends Controller
         $other = $isAnnual ? 'Casual Leave' : 'Annual Leave';
 
         $availability = $this->getAnnualCasualAvailability($employee, $orgAssignment, $asOfDate);
-        $combined = ($availability['Annual Leave'] ?? 0) + ($availability['Casual Leave'] ?? 0);
-
-        if ($requestedDays > $combined + 0.0001) {
-            return null;
-        }
+        $preferredAvail = max(0, (float) ($availability[$preferred] ?? 0));
+        $otherAvail = max(0, (float) ($availability[$other] ?? 0));
 
         // Preferred type alone already enough — no split needed
-        if ($requestedDays <= ($availability[$preferred] ?? 0) + 0.0001) {
+        if ($requestedDays <= $preferredAvail + 0.0001) {
             return null;
         }
 
-        $fromPreferred = min($requestedDays, max(0, (float) ($availability[$preferred] ?? 0)));
+        // Other type has nothing to contribute — keep single-record NoPay path
+        if ($otherAvail <= 0.0001) {
+            return null;
+        }
+
+        $fromPreferred = min($requestedDays, $preferredAvail);
         $remaining = round($requestedDays - $fromPreferred, 4);
-        $fromOther = min($remaining, max(0, (float) ($availability[$other] ?? 0)));
+        $fromOther = min($remaining, $otherAvail);
         $remaining = round($remaining - $fromOther, 4);
-
-        if ($remaining > 0.0001) {
-            return null;
-        }
 
         $plan = [];
         if ($fromPreferred > 0.0001) {
             $plan[] = [
                 'leave_type' => $preferred,
                 'days' => round($fromPreferred, 4),
+                'balance_days' => round($fromPreferred, 4),
+                'nopay_days' => 0.0,
             ];
         }
         if ($fromOther > 0.0001) {
             $plan[] = [
                 'leave_type' => $other,
                 'days' => round($fromOther, 4),
+                'balance_days' => round($fromOther, 4),
+                'nopay_days' => 0.0,
+            ];
+        }
+        // Remainder beyond combined Annual + Casual → NoPay row (same preferred type)
+        if ($remaining > 0.0001) {
+            $plan[] = [
+                'leave_type' => $preferred,
+                'days' => round($remaining, 4),
+                'balance_days' => 0.0,
+                'nopay_days' => round($remaining, 4),
             ];
         }
 
+        // Need at least preferred+other, or other+nopay style multi-part
         return count($plan) > 1 ? $plan : null;
     }
 
@@ -1161,45 +1203,74 @@ class LeaveMasterController extends Controller
         $anchorDate = $baseData['leave_date']
             ?? $baseData['leave_from']
             ?? now()->toDateString();
+        $hasRange = !empty($baseData['leave_from']) && !empty($baseData['leave_to'])
+            && $baseData['leave_from'] !== $baseData['leave_to'];
 
         foreach ($splitPlan as $index => $part) {
             $days = (float) $part['days'];
+            $balanceDays = array_key_exists('balance_days', $part)
+                ? (float) $part['balance_days']
+                : $days;
+            $nopayDays = array_key_exists('nopay_days', $part)
+                ? (float) $part['nopay_days']
+                : 0.0;
+
             $row = $baseData;
             $row['leave_type'] = $part['leave_type'];
-            $row['leave_duration'] = $days;
-            $row['leave_date'] = $anchorDate;
-            $row['leave_from'] = null;
-            $row['leave_to'] = null;
+            $row['leave_duration'] = $balanceDays > 0.0001 ? $balanceDays : 0;
+            $row['requested_days'] = $days;
+            $row['leave_balance_days'] = $balanceDays;
+            $row['nopay_days'] = $nopayDays;
+            $row['nopay_applied'] = false;
+            $row['over_limit'] = $nopayDays;
 
-            if (abs($days - 0.25) < 0.001) {
-                $row['is_short_leave'] = true;
-                $row['is_half_day'] = false;
-                $row['short_leave_slot'] = $row['short_leave_slot'] ?? 'Morning';
-                $row['period'] = null;
-            } elseif (abs($days - 0.5) < 0.001) {
-                $row['is_short_leave'] = false;
-                $row['is_half_day'] = true;
-                $row['period'] = $row['period'] ?? 'Morning';
-                $row['short_leave_slot'] = null;
+            // Keep original range on the first balance row; siblings use anchor date only
+            // so multi-day overlap usage is not triple-counted.
+            if ($index === 0 && $hasRange) {
+                $row['leave_from'] = $baseData['leave_from'];
+                $row['leave_to'] = $baseData['leave_to'];
+                $row['leave_date'] = $baseData['leave_date'] ?? null;
+                $row['is_half_day'] = (bool) ($baseData['is_half_day'] ?? false);
+                $row['is_short_leave'] = (bool) ($baseData['is_short_leave'] ?? false);
+                $row['period'] = $baseData['period'] ?? null;
+                $row['short_leave_slot'] = $baseData['short_leave_slot'] ?? null;
             } else {
-                $row['is_short_leave'] = false;
-                $row['is_half_day'] = false;
-                $row['period'] = null;
-                $row['short_leave_slot'] = null;
+                $row['leave_date'] = $anchorDate;
+                $row['leave_from'] = null;
+                $row['leave_to'] = null;
+
+                if ($nopayDays > 0.0001 && $balanceDays <= 0.0001) {
+                    $row['is_short_leave'] = false;
+                    $row['is_half_day'] = false;
+                    $row['period'] = null;
+                    $row['short_leave_slot'] = null;
+                } elseif (abs($days - 0.25) < 0.001) {
+                    $row['is_short_leave'] = true;
+                    $row['is_half_day'] = false;
+                    $row['short_leave_slot'] = $row['short_leave_slot'] ?? 'slot1';
+                    $row['period'] = null;
+                } elseif (abs($days - 0.5) < 0.001) {
+                    $row['is_short_leave'] = false;
+                    $row['is_half_day'] = true;
+                    $row['period'] = $row['period'] ?? 'Morning';
+                    $row['short_leave_slot'] = null;
+                } else {
+                    $row['is_short_leave'] = false;
+                    $row['is_half_day'] = false;
+                    $row['period'] = null;
+                    $row['short_leave_slot'] = null;
+                }
             }
 
             $reason = trim((string) ($baseData['reason'] ?? ''));
-            $splitNote = "Combined balance split #" . ($index + 1)
-                . ": {$part['leave_type']} {$days} day(s)";
+            $splitNote = $nopayDays > 0.0001 && $balanceDays <= 0.0001
+                ? "Combined balance shortfall (NoPay) #" . ($index + 1)
+                    . ": {$part['leave_type']} {$days} day(s)"
+                : "Combined balance split #" . ($index + 1)
+                    . ": {$part['leave_type']} {$days} day(s)";
             $row['reason'] = $reason !== ''
                 ? "{$reason} | {$splitNote}"
                 : $splitNote;
-
-            $row['requested_days'] = $days;
-            $row['leave_balance_days'] = $days;
-            $row['nopay_days'] = 0;
-            $row['nopay_applied'] = false;
-            $row['over_limit'] = 0;
 
             $created[] = leave_master::create($row);
         }
@@ -1234,16 +1305,76 @@ class LeaveMasterController extends Controller
             ?? $leave->leave_duration
             ?? ($leave->is_short_leave ? 0.25 : ($leave->is_half_day ? 0.5 : 1)));
 
-        $available = $this->getAvailableDaysForLeaveType(
-            $employee,
-            $orgAssignment,
-            (string) $leave->leave_type,
-            $asOfDate,
-            (int) $leave->id
-        );
+        // Pre-marked combined-split NoPay shortfall row — do not take from leave balance
+        $premarkedNopayOnly = ((float) ($leave->leave_balance_days ?? 0) <= 0.0001)
+            && ((float) ($leave->nopay_days ?? 0) > 0.0001);
 
-        $fromBalance = max(0, min($requested, $available));
-        $nopayDays = max(0, round($requested - $fromBalance, 4));
+        if ($premarkedNopayOnly) {
+            $fromBalance = 0.0;
+            $nopayDays = max(0, round($requested, 4));
+        } else {
+            $available = $this->getAvailableDaysForLeaveType(
+                $employee,
+                $orgAssignment,
+                (string) $leave->leave_type,
+                $asOfDate,
+                (int) $leave->id
+            );
+
+            $normalized = strtolower(trim((string) $leave->leave_type));
+            $isAnnualOrCasual = str_contains($normalized, 'annual') || str_contains($normalized, 'casual');
+
+            $fromPreferred = max(0, min($requested, $available));
+            $fromOther = 0.0;
+            $otherType = null;
+
+            // Use the other of Annual/Casual when this type alone is short
+            if ($isAnnualOrCasual && ($requested - $fromPreferred) > 0.0001) {
+                $otherType = str_contains($normalized, 'annual') ? 'Casual Leave' : 'Annual Leave';
+                $otherAvail = $this->getAvailableDaysForLeaveType(
+                    $employee,
+                    $orgAssignment,
+                    $otherType,
+                    $asOfDate,
+                    null
+                );
+                $fromOther = max(0, min(round($requested - $fromPreferred, 4), $otherAvail));
+            }
+
+            $fromBalance = round($fromPreferred + $fromOther, 4);
+            $nopayDays = max(0, round($requested - $fromBalance, 4));
+
+            // Persist other-type usage as its own approved leave row
+            if ($fromOther > 0.0001 && $otherType) {
+                leave_master::create([
+                    'employee_id' => $leave->employee_id,
+                    'reporting_date' => $leave->reporting_date ?? now()->toDateString(),
+                    'leave_type' => $otherType,
+                    'leave_date' => $leave->leave_date,
+                    'leave_from' => $leave->leave_from,
+                    'leave_to' => $leave->leave_to,
+                    'leave_duration' => $fromOther,
+                    'requested_days' => $fromOther,
+                    'leave_balance_days' => $fromOther,
+                    'nopay_days' => 0,
+                    'nopay_applied' => false,
+                    'over_limit' => 0,
+                    'is_half_day' => false,
+                    'is_short_leave' => false,
+                    'period' => null,
+                    'short_leave_slot' => null,
+                    'reason' => trim((string) ($leave->reason ?? ''))
+                        . (trim((string) ($leave->reason ?? '')) !== '' ? ' | ' : '')
+                        . "Auto-split from leave #{$leave->id}: {$otherType} {$fromOther} day(s)",
+                    'status' => $leave->status === 'HR_Approved' ? 'HR_Approved' : 'Approved',
+                ]);
+            }
+
+            // This leave row only consumes its own type balance
+            $fromBalance = $fromPreferred;
+            // Total covered for nopay calc already used $fromPreferred+$fromOther above
+            $nopayDays = max(0, round($requested - $fromPreferred - $fromOther, 4));
+        }
 
         $updates = [
             'requested_days' => $requested,
@@ -1265,7 +1396,9 @@ class LeaveMasterController extends Controller
                 'date' => $leaveDate,
                 'no_pay_count' => $nopayDays,
                 'description' => "Auto NoPay from leave shortfall | Leave #{$leave->id} | "
-                    . "Requested {$requested} day(s), leave balance used {$fromBalance}, NoPay {$nopayDays}",
+                    . "Requested {$requested} day(s), leave balance used {$fromBalance}"
+                    . ($premarkedNopayOnly ? '' : ' (+ paired Annual/Casual if any)')
+                    . ", NoPay {$nopayDays}",
                 'status' => 'Approved',
                 'processed_by' => Auth::id(),
                 'type' => $type,
