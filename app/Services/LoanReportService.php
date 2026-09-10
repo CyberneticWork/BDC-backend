@@ -188,7 +188,11 @@ class LoanReportService
             'installments_overdue' => $overdueCount,
             'monthly_interest_deduction' => $monthlyInterest,
             'deduct_from' => $loan->deduct_from,
-            'deduct_from_label' => $loan->deduct_from === 'basic' ? 'Basic Salary' : 'Monthly Bonus',
+            'installment_deduct_from' => $loan->installment_deduct_from,
+            'interest_deduct_from' => $loan->interest_deduct_from,
+            'deduct_from_label' => $this->deductFromLabel($loan),
+            'deduct_basic_amount' => $loan->deduct_basic_amount,
+            'deduct_bonus_amount' => $loan->deduct_bonus_amount,
             'start_from' => $loan->start_from?->format('Y-m-d'),
             'start_from_display' => $loan->start_from?->format('d M Y'),
             'status' => $loan->status,
@@ -266,5 +270,20 @@ class LoanReportService
         }
 
         return $rows;
+    }
+
+    private function deductFromLabel(loans $loan): string
+    {
+        $pay = function (?string $from, ?string $fallback): string {
+            $v = strtolower(trim((string) ($from ?: $fallback ?: 'bonus')));
+            return $v === 'basic' ? 'Basic' : 'Monthly Bonus';
+        };
+        $legacy = $loan->deduct_from;
+        $inst = $pay($loan->installment_deduct_from, $legacy === 'basic' ? 'basic' : 'bonus');
+        $interest = $pay($loan->interest_deduct_from, $loan->installment_deduct_from ?: ($legacy === 'basic' ? 'basic' : 'bonus'));
+        if ($inst === $interest) {
+            return "Installment and interest from {$inst}";
+        }
+        return "Installment from {$inst}, interest from {$interest}";
     }
 }

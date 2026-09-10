@@ -22,6 +22,10 @@ class loans extends Model
         'status',
         'schedule',
         'deduct_from',
+        'installment_deduct_from',
+        'interest_deduct_from',
+        'deduct_basic_amount',
+        'deduct_bonus_amount',
     ];
 
 

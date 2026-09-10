@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\DB;
 use App\Models\employee_allowances;
 use App\Models\employee_deductions;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Schema;
 use Maatwebsite\Excel\Facades\Excel;
 use App\Imports\EmployeeAllowancesImport;
 use App\Imports\EmployeeDeductionsImport;
@@ -1113,6 +1114,12 @@ public function getEmployeesByMonthAndCompany(Request $request)
         $lastDay = date('t', strtotime($startDate));
         $endDate = "{$year}-{$month}-{$lastDay}";
         $selectedMonthYear = date('Y-m', strtotime($startDate));
+        $loanInstallmentDeductSql = Schema::hasColumn('loans', 'installment_deduct_from')
+            ? 'MAX(lo.installment_deduct_from) AS loan_installment_deduct_from,'
+            : 'NULL AS loan_installment_deduct_from,';
+        $loanInterestDeductSql = Schema::hasColumn('loans', 'interest_deduct_from')
+            ? 'MAX(lo.interest_deduct_from) AS loan_interest_deduct_from,'
+            : 'NULL AS loan_interest_deduct_from,';
 
         $totalDaysInMonth = (int)$lastDay;
 
@@ -1157,6 +1164,10 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 MAX(lo.status) AS loan_status,
                 MAX(lo.schedule) AS loan_schedule,
                 MAX(lo.deduct_from) AS loan_deduct_from,
+                {$loanInstallmentDeductSql}
+                {$loanInterestDeductSql}
+                MAX(lo.deduct_basic_amount) AS loan_deduct_basic_amount,
+                MAX(lo.deduct_bonus_amount) AS loan_deduct_bonus_amount,
                 MAX(lo.with_interest) AS with_interest,
                 MAX(lo.interest_rate_per_annum) AS interest_rate_per_annum,
 
@@ -1387,11 +1398,24 @@ public function getEmployeesByMonthAndCompany(Request $request)
             $installmentAmount = 0.0;
             $loanInterest = 0.0;
             $loanPrincipal = 0.0;
-            $loanDeductFrom = $employeeData['loan_deduct_from'] ?? 'bonus';
+            $loanDeductFrom = strtolower((string) ($employeeData['loan_deduct_from'] ?? 'bonus'));
             $loanResolved = $this->resolveLoanInstallmentForMonth($employeeData, $selectedMonthYear);
             $installmentAmount = $loanResolved['installment'];
             $loanPrincipal = $loanResolved['principal'];
             $loanInterest = $loanResolved['interest'];
+            $loanSplit = $this->splitLoanDeductionAcrossPayslips(
+                $loanPrincipal,
+                $loanInterest,
+                $loanDeductFrom,
+                (float) ($employeeData['loan_deduct_basic_amount'] ?? 0),
+                (float) ($employeeData['loan_deduct_bonus_amount'] ?? 0),
+                $employeeData['loan_installment_deduct_from'] ?? null,
+                $employeeData['loan_interest_deduct_from'] ?? null
+            );
+            $loanBasicPrincipal = $loanSplit['basic_principal'];
+            $loanBasicInterest = $loanSplit['basic_interest'];
+            $loanBonusPrincipal = $loanSplit['bonus_principal'];
+            $loanBonusInterest = $loanSplit['bonus_interest'];
 
             // Working Days & No Pay Deductions
             $companyLeavesCount = DB::table('leave_calendars')->where('company_id', $company_id ?? 0)
@@ -1570,11 +1594,8 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 + $sportsFundDeduction
                 + $staffFundDeduction;
 
-            if ($loanDeductFrom === 'basic') {
-                $basicDeductionsTotal += $loanPrincipal + $loanInterest;
-            } else {
-                $bonusDeductionsTotal += $loanPrincipal + $loanInterest;
-            }
+            $basicDeductionsTotal += $loanBasicPrincipal + $loanBasicInterest;
+            $bonusDeductionsTotal += $loanBonusPrincipal + $loanBonusInterest;
 
             // Totals
             $grossSalary = $basicGross + $bonusGross + $morning_ot_fees + $night_ot_fees + $holiday_ot_fees;
@@ -1632,6 +1653,12 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 'loan_principal' => round($loanPrincipal, 2),
                 'loan_interest' => round($loanInterest, 2),
                 'loan_deduct_from' => $loanDeductFrom,
+                'loan_installment_deduct_from' => strtolower((string) ($employeeData['loan_installment_deduct_from'] ?? $loanDeductFrom)),
+                'loan_interest_deduct_from' => strtolower((string) ($employeeData['loan_interest_deduct_from'] ?? $loanDeductFrom)),
+                'loan_basic_principal' => round($loanBasicPrincipal, 2),
+                'loan_basic_interest' => round($loanBasicInterest, 2),
+                'loan_bonus_principal' => round($loanBonusPrincipal, 2),
+                'loan_bonus_interest' => round($loanBonusInterest, 2),
 
                 'basic_deductions_total' => round($basicDeductionsTotal, 2),
                 'bonus_deductions_total' => round($bonusDeductionsTotal, 2),
@@ -1662,6 +1689,10 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 $employeeData['loan_status'],
                 $employeeData['loan_schedule'],
                 $employeeData['loan_deduct_from'],
+                $employeeData['loan_installment_deduct_from'],
+                $employeeData['loan_interest_deduct_from'],
+                $employeeData['loan_deduct_basic_amount'],
+                $employeeData['loan_deduct_bonus_amount'],
                 $employeeData['with_interest'],
                 $employeeData['interest_rate_per_annum'],
                 $employeeData['weekday_nopays'],
@@ -1693,6 +1724,90 @@ public function getEmployeesByMonthAndCompany(Request $request)
         unset($row);
 
         return response()->json(['data' => $data, 'meta' => ['count' => count($data)]]);
+    }
+
+    /**
+     * Split a month's loan principal+interest across basic and monthly bonus payslips.
+     */
+    private function splitLoanDeductionAcrossPayslips(
+        float $principal,
+        float $interest,
+        string $deductFrom,
+        float $configuredBasicAmount,
+        float $configuredBonusAmount,
+        $installmentDeductFrom = null,
+        $interestDeductFrom = null
+    ): array {
+        $principal = max(0, $principal);
+        $interest = max(0, $interest);
+        $empty = [
+            'basic_principal' => 0.0,
+            'basic_interest' => 0.0,
+            'bonus_principal' => 0.0,
+            'bonus_interest' => 0.0,
+        ];
+        if ($principal <= 0 && $interest <= 0) {
+            return $empty;
+        }
+
+        $instFrom = strtolower(trim((string) $installmentDeductFrom));
+        $intFrom = strtolower(trim((string) $interestDeductFrom));
+        if (in_array($instFrom, ['basic', 'bonus'], true) && in_array($intFrom, ['basic', 'bonus'], true)) {
+            return [
+                'basic_principal' => $instFrom === 'basic' ? round($principal, 2) : 0.0,
+                'bonus_principal' => $instFrom === 'bonus' ? round($principal, 2) : 0.0,
+                'basic_interest' => $intFrom === 'basic' ? round($interest, 2) : 0.0,
+                'bonus_interest' => $intFrom === 'bonus' ? round($interest, 2) : 0.0,
+            ];
+        }
+
+        $total = $principal + $interest;
+        $mode = strtolower(trim($deductFrom));
+        if ($mode === 'basic') {
+            return [
+                'basic_principal' => round($principal, 2),
+                'basic_interest' => round($interest, 2),
+                'bonus_principal' => 0.0,
+                'bonus_interest' => 0.0,
+            ];
+        }
+        if ($mode !== 'split') {
+            return [
+                'basic_principal' => 0.0,
+                'basic_interest' => 0.0,
+                'bonus_principal' => round($principal, 2),
+                'bonus_interest' => round($interest, 2),
+            ];
+        }
+
+        $basicShare = max(0, $configuredBasicAmount);
+        $bonusShare = max(0, $configuredBonusAmount);
+        $shareTotal = $basicShare + $bonusShare;
+        if ($shareTotal <= 0 || $total <= 0) {
+            return [
+                'basic_principal' => 0.0,
+                'basic_interest' => 0.0,
+                'bonus_principal' => round($principal, 2),
+                'bonus_interest' => round($interest, 2),
+            ];
+        }
+
+        $basicRatio = $basicShare / $shareTotal;
+        $basicTotal = round($total * $basicRatio, 2);
+        $bonusTotal = round($total - $basicTotal, 2);
+        $principalRatio = $total > 0 ? $principal / $total : 0;
+
+        $basicPrincipal = round($basicTotal * $principalRatio, 2);
+        $basicInterest = round($basicTotal - $basicPrincipal, 2);
+        $bonusPrincipal = round($bonusTotal * $principalRatio, 2);
+        $bonusInterest = round($bonusTotal - $bonusPrincipal, 2);
+
+        return [
+            'basic_principal' => $basicPrincipal,
+            'basic_interest' => $basicInterest,
+            'bonus_principal' => $bonusPrincipal,
+            'bonus_interest' => $bonusInterest,
+        ];
     }
 
     /**

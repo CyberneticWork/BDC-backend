@@ -33,7 +33,7 @@ class AuthController extends Controller
 
         $user = $this->findUserByIdentifier($identifier);
 
-        if (!$user || !Hash::check($password, $user->getAuthPassword())) {
+        if (!$user || !$this->passwordMatches($password, $user->getAuthPassword())) {
             return response()->json([
                 'message' => 'The provided credentials are incorrect.',
             ], 401);
@@ -63,6 +63,31 @@ class AuthController extends Controller
             ->first();
 
         return $user;
+    }
+
+    /**
+     * Verify a password against bcrypt hashes from PHP ($2y$) or Node ($2b$).
+     */
+    private function passwordMatches(string $plain, ?string $hashed): bool
+    {
+        if (!$hashed) {
+            return false;
+        }
+
+        $normalized = $hashed;
+        if (str_starts_with($hashed, '$2b$')) {
+            $normalized = '$2y$' . substr($hashed, 4);
+        }
+
+        try {
+            if (Hash::check($plain, $normalized)) {
+                return true;
+            }
+        } catch (\RuntimeException $e) {
+            // Fall through to password_verify for other bcrypt prefixes
+        }
+
+        return password_verify($plain, $hashed) || password_verify($plain, $normalized);
     }
 
     // OTP Login for first-time employees
@@ -128,7 +153,7 @@ class AuthController extends Controller
 
         $user = $request->user();
 
-        if (!Hash::check($request->current_password, $user->getAuthPassword())) {
+        if (!$this->passwordMatches($request->current_password, $user->getAuthPassword())) {
             return response()->json([
                 'message' => 'Current password is incorrect.',
             ], 401);

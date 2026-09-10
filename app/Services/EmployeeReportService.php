@@ -248,7 +248,7 @@ class EmployeeReportService
             'installment_amount' => round((float) $loan->installment_amount, 2),
             'installments_remaining' => (int) $loan->installment_count,
             'with_interest' => (bool) $loan->with_interest,
-            'deduct_from' => $loan->deduct_from === 'basic' ? 'Basic Salary' : 'Monthly Bonus',
+            'deduct_from' => $this->loanDeductLabel($loan),
             'start_from' => $this->fmtDate($loan->start_from),
             'status' => $loan->status,
             'outstanding_estimate' => round((float) $loan->installment_count * (float) $loan->installment_amount, 2),
@@ -386,5 +386,20 @@ class EmployeeReportService
         } catch (\Throwable) {
             return (string) $date;
         }
+    }
+
+    private function loanDeductLabel($loan): string
+    {
+        $pay = function (?string $from, ?string $fallback): string {
+            $v = strtolower(trim((string) ($from ?: $fallback ?: 'bonus')));
+            return $v === 'basic' ? 'Basic' : 'Monthly Bonus';
+        };
+        $legacy = $loan->deduct_from ?? 'bonus';
+        $inst = $pay($loan->installment_deduct_from ?? null, $legacy === 'basic' ? 'basic' : 'bonus');
+        $interest = $pay($loan->interest_deduct_from ?? null, $loan->installment_deduct_from ?? ($legacy === 'basic' ? 'basic' : 'bonus'));
+        if ($inst === $interest) {
+            return "Installment and interest from {$inst}";
+        }
+        return "Installment from {$inst}, interest from {$interest}";
     }
 }

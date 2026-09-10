@@ -44,9 +44,13 @@ class LoanController extends Controller
             'installment_amount'      => 'sometimes|numeric|min:0.01',
             'interest_rate_per_annum' => 'sometimes|numeric|min:0',
             'start_from'              => 'sometimes|date',
-            'deduct_from'             => 'sometimes|in:basic,bonus',
+            'deduct_from'             => 'sometimes|in:basic,bonus,split',
+            'installment_deduct_from' => 'sometimes|in:basic,bonus',
+            'interest_deduct_from'    => 'sometimes|in:basic,bonus',
             'status'                  => 'sometimes|in:active,completed,cancelled',
         ]);
+
+        $validated = array_merge($validated, $this->normalizeDeductTargets($validated, $loan));
 
         $loan->update($validated);
 
@@ -83,8 +87,12 @@ class LoanController extends Controller
             'with_interest' => 'required|boolean',
             'schedule' => 'nullable|array',
             'installment_count' => 'nullable|integer|min:1',
-            'deduct_from' => 'required|in:basic,bonus',
+            'deduct_from' => 'nullable|in:basic,bonus,split',
+            'installment_deduct_from' => 'required|in:basic,bonus',
+            'interest_deduct_from' => 'required|in:basic,bonus',
         ]);
+
+        $validated = array_merge($validated, $this->normalizeDeductTargets($validated));
 
         try {
             // 2. Attendance No එකෙන් DB එකේ තියෙන Employee ID එක හොයාගන්නවා
@@ -119,6 +127,10 @@ class LoanController extends Controller
             $loan->status = 'active';
             $loan->schedule = $schedule; // JSON cast එක Model එකේ තිබිය යුතුයි
             $loan->deduct_from = $validated['deduct_from'];
+            $loan->installment_deduct_from = $validated['installment_deduct_from'];
+            $loan->interest_deduct_from = $validated['interest_deduct_from'];
+            $loan->deduct_basic_amount = $validated['deduct_basic_amount'] ?? null;
+            $loan->deduct_bonus_amount = $validated['deduct_bonus_amount'] ?? null;
 
             $loan->save();
 
@@ -288,6 +300,37 @@ class LoanController extends Controller
         $report = $this->loanReportService->buildReport($employeeNo, $loanId);
 
         return response()->json($report);
+    }
+
+    /**
+     * Capital installment and interest can each be taken from basic or bonus.
+     */
+    private function normalizeDeductTargets(array $input, ?loans $loan = null): array
+    {
+        $installmentFrom = strtolower(trim((string) ($input['installment_deduct_from']
+            ?? $loan?->installment_deduct_from
+            ?? '')));
+        $interestFrom = strtolower(trim((string) ($input['interest_deduct_from']
+            ?? $loan?->interest_deduct_from
+            ?? '')));
+
+        if (!in_array($installmentFrom, ['basic', 'bonus'], true)) {
+            $legacy = strtolower(trim((string) ($input['deduct_from'] ?? $loan?->deduct_from ?? 'bonus')));
+            $installmentFrom = $legacy === 'basic' ? 'basic' : 'bonus';
+        }
+        if (!in_array($interestFrom, ['basic', 'bonus'], true)) {
+            $interestFrom = $installmentFrom;
+        }
+
+        $same = $installmentFrom === $interestFrom;
+
+        return [
+            'installment_deduct_from' => $installmentFrom,
+            'interest_deduct_from' => $interestFrom,
+            'deduct_from' => $same ? $installmentFrom : 'split',
+            'deduct_basic_amount' => ($installmentFrom === 'basic' || $interestFrom === 'basic') ? 1 : 0,
+            'deduct_bonus_amount' => ($installmentFrom === 'bonus' || $interestFrom === 'bonus') ? 1 : 0,
+        ];
     }
 }
 

@@ -17,13 +17,17 @@ use Illuminate\Support\Facades\Schema;
 
 class MonthlyLateDeductionService
 {
-    /** First N late days that are ≤ GRACE_MINUTE_LIMIT get no deduction. */
+    /** First N late days that are ≤ GRACE_MINUTE_LIMIT (any dates) get no deduction. */
     public const GRACE_DAY_LIMIT = 3;
-    /** Late minutes allowed on a grace day (inclusive). */
+    /** After grace, next N ≤30m late days take short leave. Over-30m days do not use these slots. */
+    public const SHORT_LEAVE_DAY_LIMIT = 2;
+    /** From this many ≤30m late days onward, every ≤30m late day becomes a half day. */
+    public const SIX_PLUS_DAY_LIMIT = 6;
+    /** Late minutes allowed on a grace / short-leave day (inclusive). */
     public const GRACE_MINUTE_LIMIT = 30;
-    /** Any day over grace minutes (e.g. 35) → half-day deduction. */
+    /** Any day over grace minutes (e.g. 35) → half-day that day, counted separately from ≤30m days. */
     public const HALF_DAY = 0.5;
-    public const SHORT_LEAVE_DAYS = 0.25; // kept for schema compatibility
+    public const SHORT_LEAVE_DAYS = 0.25;
     public const DEFAULT_SHIFT_MINUTES = 480; // 8 hours
     public const REASON_TAG = 'Monthly Late Deduction';
 
@@ -131,10 +135,11 @@ class MonthlyLateDeductionService
 
             if (!($row['has_deduction'] ?? false)
                 && ($row['half_day_count'] ?? 0) <= 0
+                && ($row['short_leave_count'] ?? 0) <= 0
                 && ($row['nopay_days'] ?? 0) <= 0
             ) {
                 // Within free band — store for audit but no leave/nopay
-                $this->upsertItem($run->id, $row, 'skipped', [], [], 'Within free late days (≤30m, first 3 days)');
+                $this->upsertItem($run->id, $row, 'skipped', [], [], 'Within grace (≤30m days only, first 3)');
                 $skipped[] = [
                     'employee_id' => $row['employee_id'],
                     'employee_name' => $row['employee_name'],
@@ -190,55 +195,116 @@ class MonthlyLateDeductionService
     public function calculateForEmployee(int $employeeId, Carbon $startDate, Carbon $endDate, int $year): array
     {
         $lateDaysRaw = $this->collectLateDays($employeeId, $startDate, $endDate);
-        // Day-by-day policy (not monthly total minutes)
         usort($lateDaysRaw, fn ($a, $b) => strcmp($a['date'], $b['date']));
 
-        $graceUsed = 0;
-        $evaluatedDays = [];
+        $qualifyingDays = [];
+        foreach ($lateDaysRaw as $day) {
+            if ((int) ($day['late_minutes'] ?? 0) > 0) {
+                $qualifyingDays[] = $day;
+            }
+        }
+
+        $within30Days = [];
+        $over30Days = [];
+        foreach ($qualifyingDays as $day) {
+            if ((int) $day['late_minutes'] > self::GRACE_MINUTE_LIMIT) {
+                $over30Days[] = $day;
+            } else {
+                $within30Days[] = $day;
+            }
+        }
+
+        $evaluatedByDate = [];
         $halfDayCount = 0;
         $halfDayDaysNeeded = 0.0;
+        $shortLeaveCount = 0;
+        $shortLeaveDaysNeeded = 0.0;
         $graceDayCount = 0;
+        $sixPlusConverted = false;
+        $within30Count = count($within30Days);
+        $over30Count = count($over30Days);
 
-        foreach ($lateDaysRaw as $day) {
-            $mins = (int) ($day['late_minutes'] ?? 0);
-            if ($mins <= 0) {
-                continue;
+        // Track A — over 30 minutes: half day that day. Never uses grace / short-leave slots.
+        foreach ($over30Days as $i => $day) {
+            $n = $i + 1;
+            $halfDayCount++;
+            $halfDayDaysNeeded += self::HALF_DAY;
+            $evaluatedByDate[$day['date']] = array_merge($day, [
+                'late_bucket' => 'over_30',
+                'bucket_index' => $n,
+                'action' => 'half_day',
+                'deduct_days' => self::HALF_DAY,
+                'action_label' => "Over 30m late #{$n} ({$day['late_display']}) — half day (separate from ≤30m days)",
+            ]);
+        }
+
+        // Track B — within 30 minutes, any dates: own 3 grace / 2 short / 6+ half-day counter.
+        if ($within30Count >= self::SIX_PLUS_DAY_LIMIT) {
+            $sixPlusConverted = true;
+            foreach ($within30Days as $i => $day) {
+                $n = $i + 1;
+                $halfDayCount++;
+                $halfDayDaysNeeded += self::HALF_DAY;
+                $evaluatedByDate[$day['date']] = array_merge($day, [
+                    'late_bucket' => 'within_30',
+                    'bucket_index' => $n,
+                    'action' => 'half_day',
+                    'deduct_days' => self::HALF_DAY,
+                    'action_label' => "≤30m late #{$n}/{$within30Count} — "
+                        . self::SIX_PLUS_DAY_LIMIT
+                        . '+ days within 30m this month, so half day for every ≤30m late day (grace + short-leave days converted)',
+                ]);
             }
-
-            if ($mins <= self::GRACE_MINUTE_LIMIT) {
-                if ($graceUsed < self::GRACE_DAY_LIMIT) {
-                    $graceUsed++;
+        } else {
+            foreach ($within30Days as $i => $day) {
+                $n = $i + 1;
+                if ($n <= self::GRACE_DAY_LIMIT) {
                     $graceDayCount++;
-                    $evaluatedDays[] = array_merge($day, [
+                    $evaluatedByDate[$day['date']] = array_merge($day, [
+                        'late_bucket' => 'within_30',
+                        'bucket_index' => $n,
                         'action' => 'grace',
                         'deduct_days' => 0.0,
-                        'action_label' => "Grace {$graceUsed}/" . self::GRACE_DAY_LIMIT
-                            . " (≤" . self::GRACE_MINUTE_LIMIT . "m) — no deduction",
+                        'action_label' => "≤30m late #{$n} — grace {$graceDayCount}/"
+                            . self::GRACE_DAY_LIMIT
+                            . ' (any date) — no deduction',
                     ]);
                     continue;
                 }
 
-                // Grace used up: even ≤30m late becomes half day
+                if ($n <= self::GRACE_DAY_LIMIT + self::SHORT_LEAVE_DAY_LIMIT) {
+                    $shortLeaveCount++;
+                    $shortLeaveDaysNeeded += self::SHORT_LEAVE_DAYS;
+                    $slot = $n - self::GRACE_DAY_LIMIT;
+                    $evaluatedByDate[$day['date']] = array_merge($day, [
+                        'late_bucket' => 'within_30',
+                        'bucket_index' => $n,
+                        'action' => 'short_leave',
+                        'deduct_days' => self::SHORT_LEAVE_DAYS,
+                        'action_label' => "≤30m late #{$n} — short leave {$slot}/"
+                            . self::SHORT_LEAVE_DAY_LIMIT
+                            . ' (≤' . self::GRACE_MINUTE_LIMIT . 'm after grace; over-30m days not counted here)',
+                    ]);
+                    continue;
+                }
+
                 $halfDayCount++;
                 $halfDayDaysNeeded += self::HALF_DAY;
-                $evaluatedDays[] = array_merge($day, [
+                $evaluatedByDate[$day['date']] = array_merge($day, [
+                    'late_bucket' => 'within_30',
+                    'bucket_index' => $n,
                     'action' => 'half_day',
                     'deduct_days' => self::HALF_DAY,
-                    'action_label' => '≤' . self::GRACE_MINUTE_LIMIT
-                        . 'm but grace already used — half day',
+                    'action_label' => "≤30m late #{$n} — half day",
                 ]);
-                continue;
             }
+        }
 
-            // e.g. 35 minutes → half day that day
-            $halfDayCount++;
-            $halfDayDaysNeeded += self::HALF_DAY;
-            $evaluatedDays[] = array_merge($day, [
-                'action' => 'half_day',
-                'deduct_days' => self::HALF_DAY,
-                'action_label' => '>' . self::GRACE_MINUTE_LIMIT
-                    . "m late ({$day['late_display']}) — half day",
-            ]);
+        $evaluatedDays = [];
+        foreach ($qualifyingDays as $day) {
+            if (isset($evaluatedByDate[$day['date']])) {
+                $evaluatedDays[] = $evaluatedByDate[$day['date']];
+            }
         }
 
         $totalLateMinutes = (int) array_sum(array_column($evaluatedDays, 'late_minutes'));
@@ -249,8 +315,9 @@ class MonthlyLateDeductionService
         $annualAvailable = (float) ($balances['Annual Leave']['available'] ?? 0);
         $casualAvailable = (float) ($balances['Casual Leave']['available'] ?? 0);
 
-        // Allocate half days: Casual first, then Annual, remainder NoPay
-        $remaining = $halfDayDaysNeeded;
+        // Allocate deducted days: Casual first, then Annual, remainder NoPay
+        $daysNeeded = round($halfDayDaysNeeded + $shortLeaveDaysNeeded, 4);
+        $remaining = $daysNeeded;
         $casualLeaveDays = min($remaining, max(0, $casualAvailable));
         $remaining = round($remaining - $casualLeaveDays, 4);
         $casualLeft = round($casualAvailable - $casualLeaveDays, 4);
@@ -262,24 +329,44 @@ class MonthlyLateDeductionService
         $nopayDays = max(0, $remaining);
         $nopayMinutes = (int) round($nopayDays * $shiftMinutes);
 
-        $band = $halfDayCount > 0
-            ? ($nopayDays > 0 ? 'half_day_nopay' : 'half_day')
-            : 'grace_only';
-        $bandLabel = $halfDayCount > 0
-            ? "{$halfDayCount} half-day late deduction(s) (day-by-day)"
-            : 'Within grace (≤' . self::GRACE_MINUTE_LIMIT . 'm on first '
-                . self::GRACE_DAY_LIMIT . ' late days)';
+        if ($sixPlusConverted) {
+            $band = $nopayDays > 0 ? 'half_day_nopay' : 'half_day';
+            $bandLabel = "{$within30Count} × ≤30m (≥" . self::SIX_PLUS_DAY_LIMIT
+                . " → all half) + {$over30Count} × >30m half-day";
+        } elseif ($halfDayCount > 0 && $shortLeaveCount > 0) {
+            $band = $nopayDays > 0 ? 'half_day_nopay' : 'half_day';
+            $bandLabel = "{$shortLeaveCount} short (≤30m) + {$halfDayCount} half-day (>30m)";
+        } elseif ($halfDayCount > 0) {
+            $band = $nopayDays > 0 ? 'half_day_nopay' : 'half_day';
+            $bandLabel = "{$halfDayCount} half-day (>30m) + {$graceDayCount} grace (≤30m)";
+            if ($graceDayCount <= 0) {
+                $bandLabel = "{$halfDayCount} half-day late deduction(s)";
+            }
+        } elseif ($shortLeaveCount > 0) {
+            $band = 'one_short';
+            $bandLabel = "{$shortLeaveCount} short-leave (≤30m days 4–5) + {$graceDayCount} grace";
+        } else {
+            $band = 'grace_only';
+            $bandLabel = 'Grace only — first ' . self::GRACE_DAY_LIMIT
+                . ' days ≤' . self::GRACE_MINUTE_LIMIT . 'm (any dates)';
+        }
 
         $breakdownSteps = $this->buildDayByDayBreakdown(
             $evaluatedDays,
             $graceDayCount,
             $halfDayCount,
             $halfDayDaysNeeded,
+            $shortLeaveCount,
+            $shortLeaveDaysNeeded,
             $casualLeaveDays,
             $annualLeaveDays,
             $nopayDays,
             $annualAvailable,
-            $casualAvailable
+            $casualAvailable,
+            $sixPlusConverted,
+            $lateDayCount,
+            $within30Count,
+            $over30Count
         );
 
         // Tag deducted days with leave source for createLeaveRecords
@@ -288,22 +375,18 @@ class MonthlyLateDeductionService
             fn ($d) => ($d['deduct_days'] ?? 0) > 0
         ));
         $assigned = [];
-        $casualSlots = (int) round($casualLeaveDays / self::HALF_DAY);
-        $annualSlots = (int) round($annualLeaveDays / self::HALF_DAY);
-        $nopaySlots = (int) round($nopayDays / self::HALF_DAY);
-        $ci = 0;
-        $ai = 0;
-        $ni = 0;
+        $casualLeftAssign = $casualLeaveDays;
+        $annualLeftAssign = $annualLeaveDays;
         foreach ($deductQueue as $d) {
-            if ($ci < $casualSlots) {
+            $need = (float) ($d['deduct_days'] ?? 0);
+            if ($need <= $casualLeftAssign + 0.0001 && $casualLeftAssign > 0.0001) {
                 $d['leave_source'] = 'Casual Leave';
-                $ci++;
-            } elseif ($ai < $annualSlots) {
+                $casualLeftAssign = round($casualLeftAssign - $need, 4);
+            } elseif ($need <= $annualLeftAssign + 0.0001 && $annualLeftAssign > 0.0001) {
                 $d['leave_source'] = 'Annual Leave';
-                $ai++;
+                $annualLeftAssign = round($annualLeftAssign - $need, 4);
             } else {
                 $d['leave_source'] = 'NoPay';
-                $ni++;
             }
             $assigned[] = $d;
         }
@@ -324,10 +407,15 @@ class MonthlyLateDeductionService
             'total_late_minutes' => $totalLateMinutes,
             'total_late_display' => $this->formatMinutes($totalLateMinutes),
             'late_day_count' => $lateDayCount,
+            'within_30_day_count' => $within30Count,
+            'over_30_day_count' => $over30Count,
             'late_days' => $lateDaysOut,
             'grace_day_count' => $graceDayCount,
             'grace_day_limit' => self::GRACE_DAY_LIMIT,
             'grace_minute_limit' => self::GRACE_MINUTE_LIMIT,
+            'short_leave_day_limit' => self::SHORT_LEAVE_DAY_LIMIT,
+            'six_plus_day_limit' => self::SIX_PLUS_DAY_LIMIT,
+            'six_plus_converted' => $sixPlusConverted,
             'half_day_count' => $halfDayCount,
             'half_day_days' => $halfDayDaysNeeded,
             'free_minutes' => self::GRACE_MINUTE_LIMIT,
@@ -341,9 +429,8 @@ class MonthlyLateDeductionService
             'shift_hours' => round($shiftMinutes / 60, 2),
             'band' => $band,
             'band_label' => $bandLabel,
-            // Schema compatibility: short_leave_* unused under day-by-day half-day policy
-            'short_leave_count' => 0,
-            'short_leave_days' => 0,
+            'short_leave_count' => $shortLeaveCount,
+            'short_leave_days' => $shortLeaveDaysNeeded,
             'short_from_casual' => 0,
             'short_from_annual' => 0,
             'short_uncovered_days' => 0,
@@ -358,7 +445,7 @@ class MonthlyLateDeductionService
             'casual_balance_before' => $casualAvailable,
             'annual_balance_after' => max(0, $annualLeft),
             'casual_balance_after' => max(0, $casualLeft),
-            'has_deduction' => $halfDayCount > 0,
+            'has_deduction' => $halfDayCount > 0 || $shortLeaveCount > 0,
             'breakdown' => $breakdownSteps,
             'deducted_days' => $assigned,
         ];
@@ -528,6 +615,10 @@ class MonthlyLateDeductionService
                 continue;
             }
 
+            $isShort = ($day['action'] ?? '') === 'short_leave'
+                || abs((float) ($day['deduct_days'] ?? 0) - self::SHORT_LEAVE_DAYS) < 0.001;
+            $duration = $isShort ? self::SHORT_LEAVE_DAYS : self::HALF_DAY;
+
             $leave = leave_master::create([
                 'employee_id' => $employeeId,
                 'reporting_date' => $reportingDate,
@@ -535,15 +626,15 @@ class MonthlyLateDeductionService
                 'leave_date' => $day['date'],
                 'leave_from' => null,
                 'leave_to' => null,
-                'is_half_day' => true,
-                'period' => 'Morning',
-                'is_short_leave' => false,
-                'short_leave_slot' => null,
-                'leave_duration' => self::HALF_DAY,
+                'is_half_day' => !$isShort,
+                'period' => $isShort ? null : 'Morning',
+                'is_short_leave' => $isShort,
+                'short_leave_slot' => $isShort ? 'slot1' : null,
+                'leave_duration' => $duration,
                 'reason' => $reasonBase
                     . " | {$day['date']} late {$day['late_display']}"
-                    . " | " . ($day['action_label'] ?? 'half day')
-                    . " | Half day from {$source}",
+                    . " | " . ($day['action_label'] ?? ($isShort ? 'short leave' : 'half day'))
+                    . " | " . ($isShort ? 'Short leave' : 'Half day') . " from {$source}",
                 'status' => 'Approved',
                 'over_limit' => 0,
             ]);
@@ -866,35 +957,73 @@ class MonthlyLateDeductionService
         int $graceDayCount,
         int $halfDayCount,
         float $halfDayDaysNeeded,
+        int $shortLeaveCount,
+        float $shortLeaveDaysNeeded,
         float $casualLeaveDays,
         float $annualLeaveDays,
         float $nopayDays,
         float $annualAvailable,
-        float $casualAvailable
+        float $casualAvailable,
+        bool $sixPlusConverted,
+        int $lateDayCount,
+        int $within30Count = 0,
+        int $over30Count = 0
     ): array {
         $steps = [];
         $step = 1;
 
         $steps[] = [
             'step' => $step++,
-            'title' => 'Policy',
-            'detail' => 'Day-by-day late check (not monthly total). First '
-                . self::GRACE_DAY_LIMIT . ' late days ≤'
-                . self::GRACE_MINUTE_LIMIT . 'm = no deduction. Any day >'
-                . self::GRACE_MINUTE_LIMIT . 'm = half day.',
+            'title' => 'Two separate tracks',
+            'detail' => '≤' . self::GRACE_MINUTE_LIMIT
+                . 'm late days (any dates) have their own grace / short-leave / 6+ counter. Days >'
+                . self::GRACE_MINUTE_LIMIT
+                . 'm are always a half day that day and do not use grace or short-leave slots.',
             'type' => 'info',
         ];
 
         $steps[] = [
             'step' => $step++,
-            'title' => 'Grace days used',
-            'detail' => "{$graceDayCount} / " . self::GRACE_DAY_LIMIT . ' (≤'
-                . self::GRACE_MINUTE_LIMIT . 'm late, no deduction)',
-            'type' => $graceDayCount > 0 ? 'ok' : 'info',
+            'title' => 'This month split',
+            'detail' => "{$within30Count} day(s) ≤" . self::GRACE_MINUTE_LIMIT
+                . "m · {$over30Count} day(s) >" . self::GRACE_MINUTE_LIMIT
+                . "m · {$lateDayCount} late day(s) total",
+            'type' => 'info',
         ];
 
+        if ($sixPlusConverted) {
+            $steps[] = [
+                'step' => $step++,
+                'title' => self::SIX_PLUS_DAY_LIMIT . '+ days within 30m — convert ≤30m days only',
+                'detail' => "{$within30Count} day(s) ≤" . self::GRACE_MINUTE_LIMIT
+                    . 'm. First ' . self::GRACE_DAY_LIMIT
+                    . ' grace and next ' . self::SHORT_LEAVE_DAY_LIMIT
+                    . ' short-leave days on this track become half day each. Over-30m days stay as their own half days.',
+                'type' => 'deduct',
+            ];
+        } else {
+            $steps[] = [
+                'step' => $step++,
+                'title' => 'Grace (≤' . self::GRACE_MINUTE_LIMIT . 'm only)',
+                'detail' => "{$graceDayCount} / " . self::GRACE_DAY_LIMIT
+                    . ' — first ' . self::GRACE_DAY_LIMIT
+                    . ' days within 30m, any dates, no deduction',
+                'type' => $graceDayCount > 0 ? 'ok' : 'info',
+            ];
+            if ($shortLeaveCount > 0) {
+                $steps[] = [
+                    'step' => $step++,
+                    'title' => 'Short leave (≤' . self::GRACE_MINUTE_LIMIT . 'm only)',
+                    'detail' => "{$shortLeaveCount} / " . self::SHORT_LEAVE_DAY_LIMIT
+                        . ' (4th–5th day within 30m) = ' . $shortLeaveDaysNeeded . ' day(s)',
+                    'type' => 'warn',
+                ];
+            }
+        }
+
         foreach ($evaluatedDays as $day) {
-            $type = ($day['action'] ?? '') === 'grace' ? 'ok' : 'deduct';
+            $action = $day['action'] ?? '';
+            $type = $action === 'grace' ? 'ok' : ($action === 'short_leave' ? 'warn' : 'deduct');
             $steps[] = [
                 'step' => $step++,
                 'title' => $day['date'] . ' — late ' . ($day['late_display'] ?? ''),
@@ -903,22 +1032,33 @@ class MonthlyLateDeductionService
             ];
         }
 
-        if ($halfDayCount <= 0) {
+        if ($halfDayCount <= 0 && $shortLeaveCount <= 0) {
             $steps[] = [
                 'step' => $step++,
                 'title' => 'Result',
-                'detail' => 'No half-day deduction this month',
+                'detail' => 'No leave / NoPay deduction this month',
                 'type' => 'ok',
             ];
             return $steps;
         }
 
-        $steps[] = [
-            'step' => $step++,
-            'title' => 'Half days required',
-            'detail' => "{$halfDayCount} day(s) × 0.5 = {$halfDayDaysNeeded} day(s)",
-            'type' => 'deduct',
-        ];
+        if ($shortLeaveCount > 0 && !$sixPlusConverted) {
+            $steps[] = [
+                'step' => $step++,
+                'title' => 'Short leaves required',
+                'detail' => "{$shortLeaveCount} day(s) × 0.25 = {$shortLeaveDaysNeeded} day(s)",
+                'type' => 'warn',
+            ];
+        }
+
+        if ($halfDayCount > 0) {
+            $steps[] = [
+                'step' => $step++,
+                'title' => 'Half days required',
+                'detail' => "{$halfDayCount} day(s) × 0.5 = {$halfDayDaysNeeded} day(s)",
+                'type' => 'deduct',
+            ];
+        }
 
         if ($casualLeaveDays > 0) {
             $steps[] = [
@@ -977,28 +1117,33 @@ class MonthlyLateDeductionService
     {
         return [
             [
-                'band' => 'Day-by-day (not monthly total)',
-                'action' => 'Each late punch is judged on that day alone',
+                'band' => 'Two separate tracks',
+                'action' => '≤30m late days and >30m late days are counted separately. Dates can be mixed in any order.',
                 'color' => 'blue',
             ],
             [
-                'band' => 'First 3 late days ≤ 30 minutes',
-                'action' => 'No deduction (grace)',
+                'band' => 'First 3 days ≤ 30 minutes (any dates)',
+                'action' => 'No deduction (grace). Over-30m days do not use these 3 slots.',
                 'color' => 'green',
             ],
             [
-                'band' => 'Any day > 30 minutes (e.g. 35m)',
-                'action' => 'Half-day deduction that day',
-                'color' => 'orange',
-            ],
-            [
-                'band' => '≤ 30m after grace used up',
-                'action' => 'Half-day deduction that day',
+                'band' => '4th–5th day ≤ 30 minutes (any dates)',
+                'action' => 'Short leave (0.25 day) each — only on the ≤30m track',
                 'color' => 'amber',
             ],
             [
+                'band' => 'Any day > 30 minutes (e.g. 35m)',
+                'action' => 'Half-day that day. Never counted as grace or short leave.',
+                'color' => 'orange',
+            ],
+            [
+                'band' => '6 or more days ≤ 30 minutes',
+                'action' => 'Every ≤30m late day becomes a half day (grace + short-leave days converted). Over-30m half days stay separate.',
+                'color' => 'rose',
+            ],
+            [
                 'band' => 'Leave / NoPay',
-                'action' => 'Half days taken from Casual → Annual → remaining NoPay',
+                'action' => 'Deducted days taken from Casual → Annual → remaining NoPay',
                 'color' => 'red',
             ],
         ];
@@ -1009,6 +1154,7 @@ class MonthlyLateDeductionService
         $withLate = count($items);
         $withDeduction = 0;
         $halfDays = 0;
+        $shortLeaves = 0;
         $annualDays = 0.0;
         $casualDays = 0.0;
         $nopayDays = 0.0;
@@ -1021,6 +1167,7 @@ class MonthlyLateDeductionService
                 $withDeduction++;
             }
             $halfDays += (int) ($item['half_day_count'] ?? 0);
+            $shortLeaves += (int) ($item['short_leave_count'] ?? 0);
             $annualDays += (float) ($item['annual_leave_days'] ?? 0);
             $casualDays += (float) ($item['casual_leave_days'] ?? 0);
             $nopayDays += (float) ($item['nopay_days'] ?? 0);
@@ -1035,7 +1182,7 @@ class MonthlyLateDeductionService
             'already_applied' => $applied,
             'total_late_minutes' => $totalLateMinutes,
             'total_late_display' => $this->formatMinutes($totalLateMinutes),
-            'total_short_leaves' => 0,
+            'total_short_leaves' => $shortLeaves,
             'total_half_days' => $halfDays,
             'total_annual_days' => round($annualDays, 4),
             'total_casual_days' => round($casualDays, 4),

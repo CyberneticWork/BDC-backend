@@ -91,8 +91,12 @@ class ReportController extends Controller
             $loanPrincipal = (float)($breakdown['loan_principal'] ?? $breakdown['loan_installment'] ?? 0);
             $loanInterest = (float)($breakdown['loan_interest'] ?? 0);
             $loanDeductFrom = strtolower((string)($breakdown['loan_deduct_from'] ?? 'bonus'));
-            $loanOnBasic = $loanDeductFrom === 'basic' ? $loanPrincipal : 0.0;
-            $loanOnBonus = $loanDeductFrom === 'bonus' ? $loanPrincipal : 0.0;
+            $loanOnBasic = (float)($breakdown['loan_basic_principal'] ?? ($loanDeductFrom === 'basic' ? $loanPrincipal : 0));
+            $loanOnBonus = (float)($breakdown['loan_bonus_principal'] ?? ($loanDeductFrom === 'bonus' ? $loanPrincipal : 0));
+            $loanInterestOnBasic = (float)($breakdown['loan_basic_interest'] ?? ($loanDeductFrom === 'basic' ? $loanInterest : 0));
+            $loanInterestOnBonus = (float)($breakdown['loan_bonus_interest'] ?? ($loanDeductFrom === 'bonus' ? $loanInterest : 0));
+            $loanOnBasic += $loanInterestOnBasic;
+            $loanOnBonus += $loanInterestOnBonus;
 
             $fullDayNoPay = (float)($breakdown['full_day_nopay_deduction'] ?? 0);
             $halfDayNoPay = (float)($breakdown['half_day_deduction'] ?? 0);
