@@ -7,6 +7,7 @@ use App\Models\loans;
 use App\Models\employee;
 use App\Services\LoanReportService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class LoanController extends Controller
 {
@@ -43,6 +44,7 @@ class LoanController extends Controller
             'loan_amount'             => 'sometimes|numeric|min:0.01',
             'installment_amount'      => 'sometimes|numeric|min:0.01',
             'interest_rate_per_annum' => 'sometimes|numeric|min:0',
+            'request_date'            => 'sometimes|date',
             'start_from'              => 'sometimes|date',
             'deduct_from'             => 'sometimes|in:basic,bonus,split',
             'installment_deduct_from' => 'sometimes|in:basic,bonus',
@@ -51,6 +53,9 @@ class LoanController extends Controller
         ]);
 
         $validated = array_merge($validated, $this->normalizeDeductTargets($validated, $loan));
+        if (!empty($validated['start_from'])) {
+            $validated['start_from'] = $this->firstOfMonth($validated['start_from']);
+        }
 
         $loan->update($validated);
 
@@ -83,6 +88,7 @@ class LoanController extends Controller
             'loan_amount' => 'required|numeric|min:0.01',
             'installment_amount' => 'required|numeric|min:0.01',
             'interest_rate_per_annum' => 'nullable|numeric|min:0',
+            'request_date' => 'required|date',
             'start_from' => 'required|date',
             'with_interest' => 'required|boolean',
             'schedule' => 'nullable|array',
@@ -120,7 +126,10 @@ class LoanController extends Controller
             
             $loan->loan_amount = $loanAmount;
             $loan->installment_amount = $installmentAmount;
-            $loan->start_from = $validated['start_from'];
+            $loan->start_from = $this->firstOfMonth($validated['start_from']);
+            if (Schema::hasColumn('loans', 'request_date')) {
+                $loan->request_date = $validated['request_date'];
+            }
             $loan->interest_rate_per_annum = (float) ($validated['interest_rate_per_annum'] ?? 0);
             $loan->with_interest = (bool) $validated['with_interest'];
             $loan->installment_count = (int) ($validated['installment_count'] ?? $totalInstallments);
@@ -331,6 +340,16 @@ class LoanController extends Controller
             'deduct_basic_amount' => ($installmentFrom === 'basic' || $interestFrom === 'basic') ? 1 : 0,
             'deduct_bonus_amount' => ($installmentFrom === 'bonus' || $interestFrom === 'bonus') ? 1 : 0,
         ];
+    }
+
+    private function firstOfMonth(string $value): string
+    {
+        $ts = strtotime($value);
+        if ($ts === false) {
+            return $value;
+        }
+
+        return date('Y-m-01', $ts);
     }
 }
 

@@ -16,6 +16,7 @@ class loans extends Model
         'loan_amount',
         'interest_rate_per_annum',
         'installment_amount',
+        'request_date',
         'start_from',
         'with_interest',
         'installment_count',
@@ -38,6 +39,7 @@ class loans extends Model
         'installment_count' => 'integer',
         'schedule' => 'array', // JSON <-> array automatic
         'start_from' => 'date',
+        'request_date' => 'date',
     ];
 
     //relationships

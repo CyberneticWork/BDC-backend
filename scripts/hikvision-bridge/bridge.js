@@ -75,6 +75,12 @@ function punchesToken(urlStr) {
 function apiOrigin(urlStr) {
   try {
     const u = new URL(String(urlStr || '').replace(/\/+$/, ''));
+    const host = u.hostname.toLowerCase().replace(/^www\./, '');
+    const mapped = {
+      'spmhr.cyberneticde.site': 'https://apispmhr.cyberneticde.site',
+      'apispmhr.cyberneticde.site': 'https://apispmhr.cyberneticde.site',
+    };
+    if (mapped[host]) return mapped[host];
     return u.origin;
   } catch {
     return '';

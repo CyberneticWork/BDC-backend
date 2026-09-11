@@ -56,7 +56,7 @@ class MonthlyLateDeductionService
                 ->where('month', $month)
                 ->first();
 
-            if ($calc['total_late_minutes'] <= 0 && (!$existing || $existing->status !== 'applied')) {
+            if ($calc['within_30_day_count'] <= 0 && (!$existing || $existing->status !== 'applied')) {
                 continue;
             }
 
@@ -224,21 +224,7 @@ class MonthlyLateDeductionService
         $within30Count = count($within30Days);
         $over30Count = count($over30Days);
 
-        // Track A — over 30 minutes: half day that day. Never uses grace / short-leave slots.
-        foreach ($over30Days as $i => $day) {
-            $n = $i + 1;
-            $halfDayCount++;
-            $halfDayDaysNeeded += self::HALF_DAY;
-            $evaluatedByDate[$day['date']] = array_merge($day, [
-                'late_bucket' => 'over_30',
-                'bucket_index' => $n,
-                'action' => 'half_day',
-                'deduct_days' => self::HALF_DAY,
-                'action_label' => "Over 30m late #{$n} ({$day['late_display']}) — half day (separate from ≤30m days)",
-            ]);
-        }
-
-        // Track B — within 30 minutes, any dates: own 3 grace / 2 short / 6+ half-day counter.
+        // Monthly UI: only first-30-minute lates. Over-30m days go to Excess Late Review.
         if ($within30Count >= self::SIX_PLUS_DAY_LIMIT) {
             $sixPlusConverted = true;
             foreach ($within30Days as $i => $day) {
@@ -301,7 +287,7 @@ class MonthlyLateDeductionService
         }
 
         $evaluatedDays = [];
-        foreach ($qualifyingDays as $day) {
+        foreach ($within30Days as $day) {
             if (isset($evaluatedByDate[$day['date']])) {
                 $evaluatedDays[] = $evaluatedByDate[$day['date']];
             }
@@ -332,13 +318,13 @@ class MonthlyLateDeductionService
         if ($sixPlusConverted) {
             $band = $nopayDays > 0 ? 'half_day_nopay' : 'half_day';
             $bandLabel = "{$within30Count} × ≤30m (≥" . self::SIX_PLUS_DAY_LIMIT
-                . " → all half) + {$over30Count} × >30m half-day";
+                . ' → all half). Over-30m lates are reviewed separately.';
         } elseif ($halfDayCount > 0 && $shortLeaveCount > 0) {
             $band = $nopayDays > 0 ? 'half_day_nopay' : 'half_day';
-            $bandLabel = "{$shortLeaveCount} short (≤30m) + {$halfDayCount} half-day (>30m)";
+            $bandLabel = "{$shortLeaveCount} short (≤30m) + {$halfDayCount} half-day (≤30m only)";
         } elseif ($halfDayCount > 0) {
             $band = $nopayDays > 0 ? 'half_day_nopay' : 'half_day';
-            $bandLabel = "{$halfDayCount} half-day (>30m) + {$graceDayCount} grace (≤30m)";
+            $bandLabel = "{$halfDayCount} half-day (≤30m track)";
             if ($graceDayCount <= 0) {
                 $bandLabel = "{$halfDayCount} half-day late deduction(s)";
             }
@@ -830,11 +816,34 @@ class MonthlyLateDeductionService
         return $rev[$i]['date'];
     }
 
+    public function getPolicyEmployees(?int $companyId, ?string $search)
+    {
+        return $this->getEmployees($companyId, $search);
+    }
+
+    public function listLateDays(int $employeeId, Carbon $startDate, Carbon $endDate): array
+    {
+        return $this->collectLateDays($employeeId, $startDate, $endDate);
+    }
+
+    public function shiftMinutesForEmployee(int $employeeId, Carbon $startDate, Carbon $endDate): int
+    {
+        return $this->resolveShiftMinutes($employeeId, $startDate, $endDate);
+    }
+
     private function getEmployees(?int $companyId, ?string $search)
     {
-        $query = employee::with(['organizationAssignment.company'])
+        $query = employee::with(['organizationAssignment.company', 'compensation'])
             ->where('is_active', true)
             ->whereNull('deleted_at');
+
+        if (Schema::hasColumn('companies', 'late_attendance_policy_enabled')) {
+            $query->whereHas('organizationAssignment.company', function ($q) {
+                $q->where('late_attendance_policy_enabled', true);
+            });
+        } else {
+            $query->whereRaw('1 = 0');
+        }
 
         if ($companyId) {
             $query->whereHas('organizationAssignment', function ($q) use ($companyId) {
@@ -1117,28 +1126,23 @@ class MonthlyLateDeductionService
     {
         return [
             [
-                'band' => 'Two separate tracks',
-                'action' => '≤30m late days and >30m late days are counted separately. Dates can be mixed in any order.',
+                'band' => 'First 30 minutes only',
+                'action' => 'This screen counts only late minutes within the first 30 minutes. Later than 30 minutes is handled on Excess Late Review.',
                 'color' => 'blue',
             ],
             [
-                'band' => 'First 3 days ≤ 30 minutes (any dates)',
-                'action' => 'No deduction (grace). Over-30m days do not use these 3 slots.',
+                'band' => 'First 3 days ≤ 30 minutes',
+                'action' => 'No deduction (grace).',
                 'color' => 'green',
             ],
             [
-                'band' => '4th–5th day ≤ 30 minutes (any dates)',
-                'action' => 'Short leave (0.25 day) each — only on the ≤30m track',
+                'band' => '4th–5th day ≤ 30 minutes',
+                'action' => 'Short leave (0.25 day) each.',
                 'color' => 'amber',
             ],
             [
-                'band' => 'Any day > 30 minutes (e.g. 35m)',
-                'action' => 'Half-day that day. Never counted as grace or short leave.',
-                'color' => 'orange',
-            ],
-            [
                 'band' => '6 or more days ≤ 30 minutes',
-                'action' => 'Every ≤30m late day becomes a half day (grace + short-leave days converted). Over-30m half days stay separate.',
+                'action' => 'Every ≤30m late day becomes a half day (including earlier grace and short-leave days).',
                 'color' => 'rose',
             ],
             [

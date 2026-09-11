@@ -29,6 +29,14 @@ class ApiDataController extends Controller
                 'location' => $company->location,
                 'employees' => $company->employees_count,
                 'established' => $company->established,
+                'nopay_working_days' => $company->nopay_working_days,
+                'slug' => $company->slug,
+                'frontend_host' => $company->frontend_host,
+                'logo_url' => $company->logo_url,
+                'theme_primary' => $company->theme_primary,
+                'theme_secondary' => $company->theme_secondary,
+                'theme_accent' => $company->theme_accent,
+                'late_attendance_policy_enabled' => (bool) ($company->late_attendance_policy_enabled ?? false),
             ];
         });
         return response()->json($companies, 200);

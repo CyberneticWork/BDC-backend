@@ -16,11 +16,21 @@ class company extends Model
         'established',
         'nopay_working_days',
         'default_sports_fund_percentage',
+        'slug',
+        'frontend_host',
+        'logo_url',
+        'theme_primary',
+        'theme_secondary',
+        'theme_accent',
+        'theme_json',
+        'late_attendance_policy_enabled',
     ];
 
     protected $casts = [
         'nopay_working_days' => 'integer',
         'default_sports_fund_percentage' => 'float',
+        'theme_json' => 'array',
+        'late_attendance_policy_enabled' => 'boolean',
     ];
 
     public function departments()

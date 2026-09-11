@@ -13,7 +13,9 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        //
+        $middleware->alias([
+            'cybernetic' => \App\Http\Middleware\EnsureCyberneticAdmin::class,
+        ]);
     })
     ->withSchedule(function (Schedule $schedule): void {
         $minutes = max(1, (int) config('hikvision.poll_interval_minutes', 5));

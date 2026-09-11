@@ -24,6 +24,7 @@ use Carbon\Carbon;
 use App\Models\EmployeeBonus;
 use App\Models\SalaryProcessAudit;
 use App\Models\MonthlyLateDeductionItem;
+use App\Services\ExcessLateService;
 
 class SalaryProcessController extends Controller
 {
@@ -1130,6 +1131,7 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 e.full_name,
                 e.nic,
                 c.name AS company_name,
+                c.id AS company_id,
                 d.name AS department_name,
                 sd.name AS sub_department_name,
                 comp.basic_salary,
@@ -1168,6 +1170,7 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 {$loanInterestDeductSql}
                 MAX(lo.deduct_basic_amount) AS loan_deduct_basic_amount,
                 MAX(lo.deduct_bonus_amount) AS loan_deduct_bonus_amount,
+                MAX(lo.start_from) AS loan_start_from,
                 MAX(lo.with_interest) AS with_interest,
                 MAX(lo.interest_rate_per_annum) AS interest_rate_per_annum,
 
@@ -1519,17 +1522,41 @@ public function getEmployeesByMonthAndCompany(Request $request)
             $leaveShortfallBasicDeduction = $leaveShortfallNoPay['basic_amount'];
             $leaveShortfallBonusDeduction = $leaveShortfallNoPay['bonus_amount'];
 
+            $policyOn = false;
+            try {
+                if (Schema::hasColumn('companies', 'late_attendance_policy_enabled') && !empty($employeeData['company_id'])) {
+                    $policyOn = (bool) DB::table('companies')
+                        ->where('id', $employeeData['company_id'])
+                        ->value('late_attendance_policy_enabled');
+                }
+            } catch (\Throwable $e) {
+                $policyOn = false;
+            }
+
             $lateBonusNoPay = $this->resolveLateComingBonusNoPay(
                 (int) $employeeData['id'],
                 (int) $year,
                 (int) $month,
                 $monthlyLateNoPays,
-                $majorLateNoPaysSql,
+                $policyOn ? 0.0 : $majorLateNoPaysSql,
                 $monthlyBonusTotal,
                 $nopayWorkingDays
             );
             $majorLateDeduction = $lateBonusNoPay['amount'];
             $majorLateNoPays = $lateBonusNoPay['days'];
+
+            $excessLate = ['basic_amount' => 0.0, 'bonus_amount' => 0.0, 'days' => 0.0, 'minutes' => 0];
+            if ($policyOn) {
+                try {
+                    $excessLate = app(ExcessLateService::class)->monthTotalsForSalary(
+                        (int) $employeeData['id'],
+                        (int) $year,
+                        (int) $month
+                    );
+                } catch (\Throwable $e) {
+                    $excessLate = ['basic_amount' => 0.0, 'bonus_amount' => 0.0, 'days' => 0.0, 'minutes' => 0];
+                }
+            }
 
             // Combined NoPay taken from monthly bonus (leave shortfall bonus portion + late NoPay)
             $bonusNopayTotal = round($leaveShortfallBonusDeduction + $majorLateDeduction, 2);
@@ -1583,13 +1610,15 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 + $epfEtfDeductions
                 + $fullDayNoPayDeduction
                 + $leaveShortfallBasicDeduction
-                + $probationDeduction;
+                + $probationDeduction
+                + (float) ($excessLate['basic_amount'] ?? 0);
             $bonusDeductionsTotal = $saturdayNoPayBonusDeduction
                 + $earlyOutNoPayDeduction
                 + $shortLeaveDeduction
                 + $halfDayDeduction
                 + $majorLateDeduction // late NoPay — valued from monthly bonus, taken from bonus
                 + $leaveShortfallBonusDeduction
+                + (float) ($excessLate['bonus_amount'] ?? 0)
                 + $bonusFixedDeductions
                 + $sportsFundDeduction
                 + $staffFundDeduction;
@@ -1639,6 +1668,10 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 'late_nopay_source' => $lateBonusNoPay['source'],
                 'late_nopay_per_day_from_bonus' => $lateBonusNoPay['per_day_from_bonus'],
                 'late_nopay_per_day_from_basic' => $lateBonusNoPay['per_day_from_bonus'],
+                'excess_late_nopay_basic' => round((float) ($excessLate['basic_amount'] ?? 0), 2),
+                'excess_late_nopay_bonus' => round((float) ($excessLate['bonus_amount'] ?? 0), 2),
+                'excess_late_nopay_days' => $excessLate['days'] ?? 0,
+                'excess_late_minutes' => $excessLate['minutes'] ?? 0,
                 // Total NoPay amount deducted from monthly bonus
                 'bonus_nopay_total' => $bonusNopayTotal,
                 'bonus_nopay_from_leave_shortfall' => $leaveShortfallBonusDeduction,
@@ -1823,6 +1856,14 @@ public function getEmployeesByMonthAndCompany(Request $request)
         $loanStatus = strtolower((string) ($employeeData['loan_status'] ?? ''));
         if ($loanStatus !== 'active') {
             return $empty;
+        }
+
+        $startFrom = $employeeData['loan_start_from'] ?? $employeeData['start_from'] ?? null;
+        if ($startFrom) {
+            $startYm = date('Y-m', strtotime((string) $startFrom));
+            if ($startYm && $selectedMonthYear < $startYm) {
+                return $empty;
+            }
         }
 
         $schedule = $employeeData['loan_schedule'] ?? null;

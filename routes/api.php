@@ -12,6 +12,7 @@ use App\Http\Controllers\EnrollmentController;
 use App\Http\Controllers\SalaryController;
 use App\Http\Controllers\ApiDataController;
 use App\Http\Controllers\CompanyController;
+use App\Http\Controllers\CyberneticAdminController;
 use App\Http\Controllers\EmployeeController;
 use App\Http\Controllers\OvertimeController;
 use App\Http\Controllers\TimeCardController;
@@ -64,6 +65,7 @@ use App\Http\Controllers\EmployeeWiseDeductionController;
 use App\Http\Controllers\EmployeeWiseBonusController;
 use App\Http\Controllers\AssignSalaryComponentController;
 use App\Http\Controllers\MonthlyLateDeductionController;
+use App\Http\Controllers\ExcessLateController;
 use App\Models\EmployeeWiseAllowance;
 
 Route::get('/user', function (Request $request) {
@@ -73,6 +75,11 @@ Route::get('/user', function (Request $request) {
 Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     return $request->user();
 });
+
+Route::post('/cybernetic-admin/login', [CyberneticAdminController::class, 'login'])
+    ->middleware('throttle:10,1');
+Route::get('/cybernetic-admin/me', [CyberneticAdminController::class, 'me'])
+    ->middleware('cybernetic');
 
 Route::middleware('auth:sanctum')->get('/logout', function (Request $request) {
     $request->user()->currentAccessToken()->delete();
@@ -129,7 +136,10 @@ Route::get('/deductions/{id}', [DeductionController::class, 'show']);
 Route::get('/leave-masters/{employeeId}/counts', [LeaveMasterController::class, 'getLeaveRecordCountsByEmployee']);
 Route::apiResource('deductions', DeductionController::class);
 Route::apiResource('leave-calendars', LeaveCalenderController::class);
-Route::apiResource('companies', CompanyController::class);
+Route::get('/public/branding', [CompanyController::class, 'publicBranding']);
+Route::post('/companies/{id}/logo', [CompanyController::class, 'uploadLogo'])->middleware('cybernetic');
+Route::post('/companies', [CompanyController::class, 'store'])->middleware('cybernetic');
+Route::apiResource('companies', CompanyController::class)->except(['store']);
 Route::apiResource('departments', DepartmentsController::class)->only(['store', 'update', 'destroy']);
 Route::apiResource('subdepartments', SubDepartmentsController::class);
 
@@ -344,6 +354,8 @@ Route::get('monthly-late-deductions/rules', [MonthlyLateDeductionController::cla
 Route::get('monthly-late-deductions/preview', [MonthlyLateDeductionController::class, 'preview']);
 Route::post('monthly-late-deductions/apply', [MonthlyLateDeductionController::class, 'apply']);
 Route::get('monthly-late-deductions/employees/{employeeId}', [MonthlyLateDeductionController::class, 'employeeDetail']);
+Route::get('excess-late-reviews/preview', [ExcessLateController::class, 'preview']);
+Route::post('excess-late-reviews/decide', [ExcessLateController::class, 'decide']);
 
 // Allowances import/export routes
 Route::get('/allowances/template/download', [AllowancesController::class, 'downloadTemplate']);
