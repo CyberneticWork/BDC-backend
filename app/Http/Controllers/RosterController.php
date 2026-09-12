@@ -2,7 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\employee;
 use App\Models\Roster;
+use App\Services\CompanyProcessSettings;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
@@ -100,6 +102,12 @@ class RosterController extends Controller
             ->whereIn('date_from', $dates)
             ->get();
 
+        $emp = employee::with('organizationAssignment')->find($employeeId);
+        $companyId = $data['company_id'] ?? $emp?->organizationAssignment?->company_id;
+        if (CompanyProcessSettings::usesShiftRoster($companyId)) {
+            $conflicts = $conflicts->filter(fn ($c) => (int) $c->shift_code === (int) $data['shift_code']);
+        }
+
         if ($conflicts->count() > 0 && !$overwrite) {
             $conflictDetails = $conflicts->map(function($c) {
                 return [
@@ -118,7 +126,11 @@ class RosterController extends Controller
         DB::beginTransaction();
         try {
             if ($overwrite) {
-                Roster::where('employee_id', $employeeId)->whereIn('date_from', $dates)->delete();
+                $del = Roster::where('employee_id', $employeeId)->whereIn('date_from', $dates);
+                if (CompanyProcessSettings::usesShiftRoster($companyId)) {
+                    $del->where('shift_code', $data['shift_code']);
+                }
+                $del->delete();
             }
 
             $rosterId = (int) Roster::max('roster_id') + 1;
@@ -190,6 +202,10 @@ class RosterController extends Controller
 
             if (!$overwrite) {
                 $conflicts = Roster::with('shift')->where('employee_id', $employeeId)->whereIn('date_from', $dates)->get();
+                $companyId = $validated['company_id'] ?? optional(employee::find($employeeId)?->organizationAssignment)->company_id;
+                if (CompanyProcessSettings::usesShiftRoster($companyId)) {
+                    $conflicts = $conflicts->filter(fn ($c) => (int) $c->shift_code === (int) $validated['shift_code']);
+                }
                 if ($conflicts->count() > 0) {
                     $emp = \App\Models\employee::find($employeeId);
                     $employeeName = $emp->full_name ?? $emp->name_with_initials ?? $emp->first_name ?? "Emp $employeeId";
@@ -225,7 +241,12 @@ class RosterController extends Controller
 
             foreach ($validatedEntries as $item) {
                 if ($overwrite) {
-                    Roster::where('employee_id', $item['employee_id'])->whereIn('date_from', $item['dates'])->delete();
+                    $del = Roster::where('employee_id', $item['employee_id'])->whereIn('date_from', $item['dates']);
+                    $companyId = $item['data']['company_id'] ?? optional(employee::find($item['employee_id'])?->organizationAssignment)->company_id;
+                    if (CompanyProcessSettings::usesShiftRoster($companyId)) {
+                        $del->where('shift_code', $item['data']['shift_code']);
+                    }
+                    $del->delete();
                 }
 
                 foreach ($item['dates'] as $day) {

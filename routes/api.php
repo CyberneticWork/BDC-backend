@@ -12,6 +12,7 @@ use App\Http\Controllers\EnrollmentController;
 use App\Http\Controllers\SalaryController;
 use App\Http\Controllers\ApiDataController;
 use App\Http\Controllers\CompanyController;
+use App\Http\Controllers\MediaUploadController;
 use App\Http\Controllers\CyberneticAdminController;
 use App\Http\Controllers\EmployeeController;
 use App\Http\Controllers\OvertimeController;
@@ -80,6 +81,7 @@ Route::post('/cybernetic-admin/login', [CyberneticAdminController::class, 'login
     ->middleware('throttle:10,1');
 Route::get('/cybernetic-admin/me', [CyberneticAdminController::class, 'me'])
     ->middleware('cybernetic');
+Route::get('/cybernetic-admin/process-catalog', [CyberneticAdminController::class, 'processCatalog']);
 
 Route::middleware('auth:sanctum')->get('/logout', function (Request $request) {
     $request->user()->currentAccessToken()->delete();
@@ -137,6 +139,10 @@ Route::get('/leave-masters/{employeeId}/counts', [LeaveMasterController::class, 
 Route::apiResource('deductions', DeductionController::class);
 Route::apiResource('leave-calendars', LeaveCalenderController::class);
 Route::get('/public/branding', [CompanyController::class, 'publicBranding']);
+Route::get('/public/company-logo/{id}', [CompanyController::class, 'publicLogo']);
+Route::get('/public/firebase-status', [MediaUploadController::class, 'status']);
+Route::post('/media/firebase', [MediaUploadController::class, 'store']);
+Route::post('/companies/{id}/activate-portal', [CompanyController::class, 'activatePortal'])->middleware('cybernetic');
 Route::post('/companies/{id}/logo', [CompanyController::class, 'uploadLogo'])->middleware('cybernetic');
 Route::post('/companies', [CompanyController::class, 'store'])->middleware('cybernetic');
 Route::apiResource('companies', CompanyController::class)->except(['store']);

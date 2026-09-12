@@ -18,12 +18,16 @@ class company extends Model
         'default_sports_fund_percentage',
         'slug',
         'frontend_host',
+        'org_group',
         'logo_url',
         'theme_primary',
         'theme_secondary',
         'theme_accent',
         'theme_json',
         'late_attendance_policy_enabled',
+        'portal_active',
+        'attendance_process',
+        'process_config',
     ];
 
     protected $casts = [
@@ -31,6 +35,8 @@ class company extends Model
         'default_sports_fund_percentage' => 'float',
         'theme_json' => 'array',
         'late_attendance_policy_enabled' => 'boolean',
+        'portal_active' => 'boolean',
+        'process_config' => 'array',
     ];
 
     public function departments()

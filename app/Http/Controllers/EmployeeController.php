@@ -488,7 +488,10 @@ class EmployeeController extends Controller
 
         $profilePicturePath = null;
         try {
-            if ($request->hasFile('profile_picture')) {
+            if ($request->filled('profile_picture_url')) {
+                $profilePicturePath = $request->input('profile_picture_url');
+                $personal['profile_picture_path'] = $profilePicturePath;
+            } elseif ($request->hasFile('profile_picture')) {
                 $profilePicturePath = $request->file('profile_picture')->store('employee/profile_pictures', 'public');
                 $personal['profile_picture_path'] = $profilePicturePath;
             }
@@ -620,6 +623,8 @@ class EmployeeController extends Controller
                     ]);
                 }
             }
+
+            $this->storeRemoteDocuments($employee->id, $request);
 
             // Create contact details
             contact_detail::create([
@@ -1127,9 +1132,12 @@ class EmployeeController extends Controller
 
         try {
             $profilePicturePath = $employee->profile_photo_path;
-            if ($request->hasFile('profile_picture')) {
+            if ($request->filled('profile_picture_url')) {
+                $profilePicturePath = $request->input('profile_picture_url');
+                $personal['profile_picture_path'] = $profilePicturePath;
+            } elseif ($request->hasFile('profile_picture')) {
                 // Delete old profile picture if exists
-                if ($profilePicturePath && Storage::disk('public')->exists($profilePicturePath)) {
+                if ($profilePicturePath && $this->isLocalMediaPath($profilePicturePath) && Storage::disk('public')->exists($profilePicturePath)) {
                     Storage::disk('public')->delete($profilePicturePath);
                 }
 
@@ -1240,6 +1248,8 @@ class EmployeeController extends Controller
                     ]);
                 }
             }
+
+            $this->storeRemoteDocuments($employee->id, $request);
 
             // Update contact details
             if ($employee->contactDetail) {
@@ -1441,7 +1451,7 @@ class EmployeeController extends Controller
 
         try {
             $employee = employee::findOrFail($id);
-            if ($employee->profile_photo_path && Storage::disk('public')->exists($employee->profile_photo_path)) {
+            if ($employee->profile_photo_path && $this->isLocalMediaPath($employee->profile_photo_path) && Storage::disk('public')->exists($employee->profile_photo_path)) {
                 Storage::disk('public')->delete($employee->profile_photo_path);
             }
             $path = $request->file('profile_photo')->store('employee/profile_pictures', 'public');
@@ -1451,5 +1461,37 @@ class EmployeeController extends Controller
             Log::error('Profile picture upload error: ' . $e->getMessage());
             return response()->json(['message' => 'Upload failed', 'error' => $e->getMessage()], 500);
         }
+    }
+
+    private function storeRemoteDocuments(int $employeeId, Request $request): void
+    {
+        $remote = $request->input('documents_remote');
+        if (is_string($remote)) {
+            $remote = json_decode($remote, true);
+        }
+        if (!is_array($remote)) {
+            return;
+        }
+
+        foreach ($remote as $row) {
+            $url = trim((string) ($row['url'] ?? ''));
+            if ($url === '') {
+                continue;
+            }
+            documents::create([
+                'employee_id' => $employeeId,
+                'document_type' => $row['type'] ?? 'unknown',
+                'document_name' => $row['name'] ?? 'document',
+                'document_path' => $url,
+            ]);
+        }
+    }
+
+    private function isLocalMediaPath(?string $path): bool
+    {
+        if (!$path) {
+            return false;
+        }
+        return !preg_match('#^https?://#i', $path);
     }
 }
