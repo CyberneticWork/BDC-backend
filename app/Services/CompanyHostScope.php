@@ -15,45 +15,42 @@ class CompanyHostScope
             return $query;
         }
 
-        $seedId = null;
-
-        if ($request->filled('company_id')) {
-            $seedId = (int) $request->query('company_id');
-        }
-
-        if (!$seedId && $request->filled('slug') && Schema::hasColumn('companies', 'slug')) {
-            $seedId = company::query()
-                ->whereRaw('LOWER(slug) = ?', [strtolower((string) $request->query('slug'))])
-                ->value('id');
-        }
-
         $host = self::resolveHost($request);
         $local = in_array($host, ['localhost', '127.0.0.1', '::1', ''], true);
 
-        if (!$seedId && $host !== '' && Schema::hasColumn('companies', 'frontend_host')) {
-            $seedId = company::query()
+        $matchedId = null;
+        if ($host !== '' && Schema::hasColumn('companies', 'frontend_host')) {
+            $matchedId = company::query()
                 ->get(['id', 'frontend_host'])
                 ->first(fn ($row) => self::normalizeHost((string) $row->frontend_host) === $host)
                 ?->id;
         }
 
-        if (!$seedId && $host !== '' && !$local) {
-            $seedId = self::seedIdFromKnownPortalHost($host);
+        if ($matchedId && !self::isSharedPortalHost($host, $local)) {
+            return self::expandGroup($query, (int) $matchedId);
         }
 
-        if (!$seedId && Schema::hasColumn('companies', 'portal_active')) {
-            $seedId = company::query()->where('portal_active', true)->orderByDesc('updated_at')->value('id');
+        if (!$local && str_contains($host, 'bsky')) {
+            $bskyId = self::blueSkyCompanyId();
+            if ($bskyId) {
+                return self::expandGroup($query, $bskyId);
+            }
         }
 
-        if (!$seedId) {
-            $seedId = self::firstSpmCompanyId();
-        }
-
-        if (!$seedId) {
+        if (self::isSharedPortalHost($host, $local)) {
             return $query;
         }
 
-        return self::expandGroup($query, (int) $seedId);
+        if ($request->filled('slug') && Schema::hasColumn('companies', 'slug')) {
+            $slugId = company::query()
+                ->whereRaw('LOWER(slug) = ?', [strtolower((string) $request->query('slug'))])
+                ->value('id');
+            if ($slugId) {
+                return self::expandGroup($query, (int) $slugId);
+            }
+        }
+
+        return $query;
     }
 
     public static function expandGroup(Builder $query, int $companyId): Builder
@@ -82,43 +79,30 @@ class CompanyHostScope
         return $query->where('id', $companyId);
     }
 
-    private static function seedIdFromKnownPortalHost(string $host): ?int
+    private static function isSharedPortalHost(string $host, bool $local): bool
     {
-        if (str_contains($host, 'bsky')) {
-            $id = company::query()
-                ->whereRaw("UPPER(TRIM(company_code)) IN ('B/SKY','B-SKY','BSKY')")
-                ->value('id');
-            if ($id) {
-                return (int) $id;
-            }
-            if (Schema::hasColumn('companies', 'org_group')) {
-                $id = company::query()->whereRaw("LOWER(TRIM(org_group)) = 'bsky'")->value('id');
-                if ($id) {
-                    return (int) $id;
-                }
-            }
+        if ($local) {
+            return true;
         }
 
-        if (str_contains($host, 'spm')) {
-            return self::firstSpmCompanyId();
-        }
-
-        return null;
+        return str_contains($host, 'spmhr') || str_contains($host, 'apispmhr');
     }
 
-    private static function firstSpmCompanyId(): ?int
+    private static function blueSkyCompanyId(): ?int
     {
+        $id = company::query()
+            ->whereRaw("UPPER(REPLACE(TRIM(company_code), ' ', '')) IN ('B/SKY','B-SKY','BSKY')")
+            ->value('id');
+        if ($id) {
+            return (int) $id;
+        }
         if (Schema::hasColumn('companies', 'org_group')) {
-            $id = company::query()->whereRaw("LOWER(TRIM(org_group)) = 'spm'")->orderBy('id')->value('id');
+            $id = company::query()->whereRaw("LOWER(TRIM(org_group)) = 'bsky'")->value('id');
             if ($id) {
                 return (int) $id;
             }
         }
-
-        $id = company::query()
-            ->whereRaw("UPPER(TRIM(company_code)) LIKE 'SPM%'")
-            ->orderBy('id')
-            ->value('id');
+        $id = company::query()->whereRaw("LOWER(name) LIKE '%blue sky%'")->value('id');
 
         return $id ? (int) $id : null;
     }
