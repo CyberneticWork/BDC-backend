@@ -30,11 +30,15 @@ class CompanyHostScope
         $host = self::resolveHost($request);
         $local = in_array($host, ['localhost', '127.0.0.1', '::1', ''], true);
 
-        if (!$seedId && $host !== '' && !$local && Schema::hasColumn('companies', 'frontend_host')) {
+        if (!$seedId && $host !== '' && Schema::hasColumn('companies', 'frontend_host')) {
             $seedId = company::query()
                 ->get(['id', 'frontend_host'])
                 ->first(fn ($row) => self::normalizeHost((string) $row->frontend_host) === $host)
                 ?->id;
+        }
+
+        if (!$seedId && $host !== '' && !$local) {
+            $seedId = self::seedIdFromKnownPortalHost($host);
         }
 
         if (!$seedId && Schema::hasColumn('companies', 'portal_active')) {
@@ -42,13 +46,11 @@ class CompanyHostScope
         }
 
         if (!$seedId) {
-            if ($local) {
-                return $query->whereRaw('1 = 0');
-            }
+            $seedId = self::firstSpmCompanyId();
+        }
 
-            return $query->where(function ($q) {
-                $q->whereNull('frontend_host')->orWhere('frontend_host', '');
-            });
+        if (!$seedId) {
+            return $query;
         }
 
         return self::expandGroup($query, (int) $seedId);
@@ -78,6 +80,47 @@ class CompanyHostScope
         }
 
         return $query->where('id', $companyId);
+    }
+
+    private static function seedIdFromKnownPortalHost(string $host): ?int
+    {
+        if (str_contains($host, 'bsky')) {
+            $id = company::query()
+                ->whereRaw("UPPER(TRIM(company_code)) IN ('B/SKY','B-SKY','BSKY')")
+                ->value('id');
+            if ($id) {
+                return (int) $id;
+            }
+            if (Schema::hasColumn('companies', 'org_group')) {
+                $id = company::query()->whereRaw("LOWER(TRIM(org_group)) = 'bsky'")->value('id');
+                if ($id) {
+                    return (int) $id;
+                }
+            }
+        }
+
+        if (str_contains($host, 'spm')) {
+            return self::firstSpmCompanyId();
+        }
+
+        return null;
+    }
+
+    private static function firstSpmCompanyId(): ?int
+    {
+        if (Schema::hasColumn('companies', 'org_group')) {
+            $id = company::query()->whereRaw("LOWER(TRIM(org_group)) = 'spm'")->orderBy('id')->value('id');
+            if ($id) {
+                return (int) $id;
+            }
+        }
+
+        $id = company::query()
+            ->whereRaw("UPPER(TRIM(company_code)) LIKE 'SPM%'")
+            ->orderBy('id')
+            ->value('id');
+
+        return $id ? (int) $id : null;
     }
 
     public static function resolveHost(Request $request): string
