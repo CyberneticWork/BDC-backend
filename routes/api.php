@@ -17,9 +17,11 @@ use App\Http\Controllers\CyberneticAdminController;
 use App\Http\Controllers\EmployeeController;
 use App\Http\Controllers\OvertimeController;
 use App\Http\Controllers\TimeCardController;
+use App\Http\Controllers\TimeCardApprovalController;
 use App\Http\Controllers\HikvisionController;
 use App\Http\Controllers\AttendanceExceptionController;
 use App\Http\Controllers\ShiftHoursReportController;
+use App\Http\Controllers\MonthlyHoursReportController;
 use App\Http\Controllers\DeductionController;
 use App\Http\Controllers\AllowancesController;
 use App\Http\Controllers\DepartmentsController;
@@ -396,8 +398,15 @@ Route::get('/attendance/exceptions', [AttendanceExceptionController::class, 'ind
 Route::put('/attendance/exceptions/{id}', [AttendanceExceptionController::class, 'updateStatus']);
 Route::post('/attendance/exceptions/bulk-status', [AttendanceExceptionController::class, 'bulkUpdateStatus']);
 
+Route::get('/time-cards/pending-approvals', [TimeCardApprovalController::class, 'pending']);
+Route::put('/time-cards/{id}/approval', [TimeCardApprovalController::class, 'updateStatus']);
+Route::post('/time-cards/bulk-approval', [TimeCardApprovalController::class, 'bulkUpdateStatus']);
+Route::get('/reports/time-cards/audit', [TimeCardApprovalController::class, 'audit']);
+Route::get('/reports/time-cards/deleted', [TimeCardApprovalController::class, 'deleted']);
+
 // Within-shift hours & Extra hours reports
 Route::get('/reports/shift-hours', [ShiftHoursReportController::class, 'index']);
+Route::get('/reports/monthly-hours', [MonthlyHoursReportController::class, 'index']);
 // ✅ special route FIRST
 //Route::get('/loans/employee-by-number/{number}', [LoanController::class, 'getEmployeeByNumber']);
 

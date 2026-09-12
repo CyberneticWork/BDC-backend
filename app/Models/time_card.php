@@ -22,6 +22,8 @@ class time_card extends Model
         'approval_status',
         'fingerprint_clock',
         'actual_date',
+        'entry_source',
+        'created_by',
         // --- අලුතින් එකතු කළ කොටස ---
         'reason', 
         'break_status'

@@ -5,6 +5,7 @@ namespace App\Services\Overtime;
 use App\Models\employee;
 use App\Models\shifts;
 use App\Models\ShiftOvertimeRate;
+use App\Services\CompanyProcessSettings;
 use Carbon\Carbon;
 
 class OvertimeCalculator
@@ -39,7 +40,7 @@ class OvertimeCalculator
         // 1. HOLIDAY LOGIC
         // ---------------------------------------------------------
         if ($isHoliday) {
-            return $this->calculateHoliday($workStart, $workEnd, $shiftStart, $shiftEnd, $morningOtLimit, $eveningOtLimit, $comp);
+            return $this->calculateHoliday($workStart, $workEnd, $shiftStart, $shiftEnd, $morningOtLimit, $eveningOtLimit, $comp, $employee);
         }
 
         // ---------------------------------------------------------
@@ -52,7 +53,10 @@ class OvertimeCalculator
         if ($morningOtLimit && $workStart->lt($shiftStart)) {
             $calcStart = $workStart->max($morningOtLimit);
             if ($calcStart->lt($shiftStart)) {
-                $morningHrs = round((floor($calcStart->diffInMinutes($shiftStart) / 30) * 30) / 60, 2);
+                $morningHrs = CompanyProcessSettings::otHoursFromMinutes(
+                    (int) $calcStart->diffInMinutes($shiftStart),
+                    $employee
+                );
             }
         }
 
@@ -60,7 +64,10 @@ class OvertimeCalculator
         if ($eveningOtLimit && $workEnd->gt($shiftEnd)) {
             $calcEnd = $workEnd->min($eveningOtLimit);
             if ($calcEnd->gt($shiftEnd)) {
-                $eveningHrs = round((floor($shiftEnd->diffInMinutes($calcEnd) / 30) * 30) / 60, 2);
+                $eveningHrs = CompanyProcessSettings::otHoursFromMinutes(
+                    (int) $shiftEnd->diffInMinutes($calcEnd),
+                    $employee
+                );
             }
         }
 
@@ -89,12 +96,15 @@ class OvertimeCalculator
         ];
     }
 
-    private function calculateHoliday($ws, $we, $ss, $se, $mLimit, $eLimit, $comp) {
+    private function calculateHoliday($ws, $we, $ss, $se, $mLimit, $eLimit, $comp, $employee) {
         $finalStart = $mLimit ? $ws->max($mLimit) : $ws;
         $finalEnd = $eLimit ? $we->min($eLimit) : $we;
         if ($finalEnd->lte($finalStart)) return $this->zeroBreakdown();
 
-        $totalHrs = round((floor($finalStart->diffInMinutes($finalEnd) / 30) * 30) / 60, 2);
+        $totalHrs = CompanyProcessSettings::otHoursFromMinutes(
+            (int) $finalStart->diffInMinutes($finalEnd),
+            $employee
+        );
 
         // Holiday සඳහා සාමාන්‍යයෙන් Basic එකෙන් ගණනය වේ (නැතිනම් Compensation Rate එකක් දිය හැක)
         $baseRate = round(($comp?->basic_salary ?? 0) / 240, 6);
@@ -103,7 +113,10 @@ class OvertimeCalculator
         $overlapS = $finalStart->max($ss);
         $overlapE = $finalEnd->min($se);
         if ($overlapS->lt($overlapE)) {
-            $shiftHrs = round((floor($overlapS->diffInMinutes($overlapE) / 30) * 30) / 60, 2);
+            $shiftHrs = CompanyProcessSettings::otHoursFromMinutes(
+                (int) $overlapS->diffInMinutes($overlapE),
+                $employee
+            );
         }
 
         $outsideHrs = max(0, $totalHrs - $shiftHrs);
@@ -134,6 +147,7 @@ namespace App\Services\Overtime;
 use App\Models\employee;
 use App\Models\shifts;
 use App\Models\ShiftOvertimeRate;
+use App\Services\CompanyProcessSettings;
 use Carbon\Carbon;
 
 class OvertimeCalculator

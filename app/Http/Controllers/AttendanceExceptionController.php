@@ -6,6 +6,7 @@ use App\Models\employee;
 use App\Models\Roster;
 use App\Models\shifts;
 use App\Models\time_card;
+use App\Services\TimeCardAuditService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 
@@ -110,6 +111,9 @@ class AttendanceExceptionController extends Controller
             $card->reason = $validated['reason'];
         }
         $card->save();
+
+        $action = $validated['approval_status'] === 'Rejected' ? 'rejected' : 'approved';
+        TimeCardAuditService::log($card, $action, $validated['reason'] ?? null, null, TimeCardAuditService::snapshot($card), $card->entry_source ?? 'device');
 
         return response()->json([
             'message' => 'Approval status updated',

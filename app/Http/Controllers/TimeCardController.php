@@ -13,9 +13,12 @@ use App\Models\time_card;
 use App\Services\CompanyProcessSettings;
 use App\Services\Overtime\OvertimeCalculator;
 use App\Services\RosterShiftResolver;
+use App\Services\TimeCardAuditService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Validator;
 use Maatwebsite\Excel\Facades\Excel;
 
@@ -225,19 +228,30 @@ class TimeCardController extends Controller
 
         $fingerprintClock = now();
 
-        $needsApproval = in_array($status, ['Late Coming', 'Early OUT'], true);
-
-        $timeCard = time_card::create([
+        $payload = [
             'employee_id' => $employee->id,
             'time' => $storeTime,
             'date' => $validated['date'],
             'working_hours' => $working_hours,
             'entry' => $entryType,
             'status' => $status,
-            'approval_status' => $needsApproval ? 'Pending' : 'Active',
+            'approval_status' => 'Pending',
             'fingerprint_clock' => $fingerprintClock,
             'actual_date' => $actual_date,
-        ]);
+        ];
+        $source = $request->input('entry_source', 'manual');
+        if (!in_array($source, ['manual', 'import'], true)) {
+            $source = 'manual';
+        }
+        if (Schema::hasColumn('time_cards', 'entry_source')) {
+            $payload['entry_source'] = $source;
+        }
+        if (Schema::hasColumn('time_cards', 'created_by')) {
+            $payload['created_by'] = Auth::id();
+        }
+
+        $timeCard = time_card::create($payload);
+        TimeCardAuditService::log($timeCard, 'created', $request->input('reason'), null, TimeCardAuditService::snapshot($timeCard), $source);
 
         if (in_array($status, ['OUT', 'Early OUT']) && $pairedInCard) {
             $referenceDate = $actual_date ?? $pairedInCard->date;
@@ -367,7 +381,7 @@ class TimeCardController extends Controller
 
         $needsApproval = in_array($status, ['Late Coming', 'Early OUT'], true);
 
-        $timeCard = time_card::create([
+        $payload = [
             'employee_id' => $employee->id,
             'time' => $storeTime,
             'date' => $request->date,
@@ -377,7 +391,13 @@ class TimeCardController extends Controller
             'approval_status' => $needsApproval ? 'Pending' : 'Active',
             'fingerprint_clock' => $fingerprintClock,
             'actual_date' => $actual_date,
-        ]);
+        ];
+        if (Schema::hasColumn('time_cards', 'entry_source')) {
+            $payload['entry_source'] = 'device';
+        }
+
+        $timeCard = time_card::create($payload);
+        TimeCardAuditService::log($timeCard, 'created', null, null, TimeCardAuditService::snapshot($timeCard), 'device');
 
         if (in_array($status, ['OUT', 'Early OUT']) && $pairedInCard) {
             $referenceDate = $actual_date ?? $pairedInCard->date;
@@ -413,9 +433,11 @@ class TimeCardController extends Controller
             'time' => 'required',
             'entry' => 'required|in:0,1,2',
             'status' => 'required|in:IN,Late Coming,OUT,Absent,Early OUT',
+            'reason' => 'nullable|string|max:500',
         ]);
 
         $timeCard = time_card::findOrFail($id);
+        $oldSnapshot = TimeCardAuditService::snapshot($timeCard);
         $employee = $timeCard->employee;
 
         if (!$employee) {
@@ -521,7 +543,16 @@ class TimeCardController extends Controller
             'entry' => $entryType,
             'status' => $finalStatus,
             'actual_date' => $actual_date,
+            'approval_status' => 'Pending',
         ]);
+        TimeCardAuditService::log(
+            $timeCard,
+            'adjusted',
+            $validated['reason'] ?? 'Time card adjusted from Time Card screen',
+            $oldSnapshot,
+            TimeCardAuditService::snapshot($timeCard->fresh()),
+            $timeCard->entry_source ?? 'manual'
+        );
 
         if (in_array($finalStatus, ['OUT', 'EARLY OUT'])) {
             if ($pairedInCard) {
@@ -553,9 +584,24 @@ class TimeCardController extends Controller
         ]);
     }
 
-    public function destroy($id)
+    public function destroy(Request $request, $id)
     {
+        $reason = trim((string) ($request->input('reason') ?: $request->query('reason')));
+        if (strlen($reason) < 3) {
+            return response()->json([
+                'message' => 'A delete reason is required (at least 3 characters).',
+            ], 422);
+        }
+
         $timeCard = time_card::findOrFail($id);
+        TimeCardAuditService::log(
+            $timeCard,
+            'deleted',
+            $reason,
+            TimeCardAuditService::snapshot($timeCard),
+            null,
+            $timeCard->entry_source ?? 'manual'
+        );
 
         over_time::where('time_cards_id', $timeCard->id)
             ->whereNull('deleted_at')
@@ -766,8 +812,9 @@ class TimeCardController extends Controller
             $totalHolidayHours = $hShiftHours + $hOutsideHours;
             $totalHolidayAmount = $hShiftAmount + $hOutsideAmount;
 
-            // Client threshold validation: Must be strictly greater than 30 minutes (0.5 hours)
-            if ($totalHolidayHours <= 0.5) {
+            // Client threshold: current OT keeps 30-minute (0.5h) minimum. Minute-band OT stores 0.30 / 0.45.
+            $minHours = CompanyProcessSettings::usesMinuteBandOt($employee) ? 0.0 : 0.5;
+            if ($totalHolidayHours <= $minHours) {
                 return;
             }
 
@@ -803,8 +850,8 @@ class TimeCardController extends Controller
                 'total'           => 0.0,
             ], $breakdown['amounts'] ?? []);
 
-            // Client threshold validation: Must be strictly greater than 30 minutes (0.5 hours)
-            if ($hours['total'] <= 0.5) {
+            $minHours = CompanyProcessSettings::usesMinuteBandOt($employee) ? 0.0 : 0.5;
+            if ($hours['total'] <= $minHours) {
                 return;
             }
 
@@ -992,14 +1039,20 @@ class TimeCardController extends Controller
 
                 $statusUpper = strtoupper($status);
                 if (in_array($statusUpper, ['IN', 'OUT', 'EARLY OUT', 'LATE COMING'])) {
-                    time_card::create([
+                    $payload = [
                         'employee_id' => $employee->id,
                         'time' => $rawTime,
                         'date' => $date,
                         'entry' => (int)$entry,
                         'status' => $statusUpper,
-                        'actual_date' => $date
-                    ]);
+                        'actual_date' => $date,
+                        'approval_status' => 'Pending',
+                    ];
+                    if (Schema::hasColumn('time_cards', 'entry_source')) {
+                        $payload['entry_source'] = 'import';
+                    }
+                    $card = time_card::create($payload);
+                    TimeCardAuditService::log($card, 'created', 'Imported from Excel', null, TimeCardAuditService::snapshot($card), 'import');
                     $results['imported']++;
                 }
             }
