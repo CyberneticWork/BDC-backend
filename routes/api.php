@@ -12,13 +12,16 @@ use App\Http\Controllers\EnrollmentController;
 use App\Http\Controllers\SalaryController;
 use App\Http\Controllers\ApiDataController;
 use App\Http\Controllers\CompanyController;
+use App\Http\Controllers\MediaUploadController;
 use App\Http\Controllers\CyberneticAdminController;
 use App\Http\Controllers\EmployeeController;
 use App\Http\Controllers\OvertimeController;
 use App\Http\Controllers\TimeCardController;
+use App\Http\Controllers\TimeCardApprovalController;
 use App\Http\Controllers\HikvisionController;
 use App\Http\Controllers\AttendanceExceptionController;
 use App\Http\Controllers\ShiftHoursReportController;
+use App\Http\Controllers\MonthlyHoursReportController;
 use App\Http\Controllers\DeductionController;
 use App\Http\Controllers\AllowancesController;
 use App\Http\Controllers\DepartmentsController;
@@ -80,6 +83,7 @@ Route::post('/cybernetic-admin/login', [CyberneticAdminController::class, 'login
     ->middleware('throttle:10,1');
 Route::get('/cybernetic-admin/me', [CyberneticAdminController::class, 'me'])
     ->middleware('cybernetic');
+Route::get('/cybernetic-admin/process-catalog', [CyberneticAdminController::class, 'processCatalog']);
 
 Route::middleware('auth:sanctum')->get('/logout', function (Request $request) {
     $request->user()->currentAccessToken()->delete();
@@ -137,6 +141,10 @@ Route::get('/leave-masters/{employeeId}/counts', [LeaveMasterController::class, 
 Route::apiResource('deductions', DeductionController::class);
 Route::apiResource('leave-calendars', LeaveCalenderController::class);
 Route::get('/public/branding', [CompanyController::class, 'publicBranding']);
+Route::get('/public/company-logo/{id}', [CompanyController::class, 'publicLogo']);
+Route::get('/public/firebase-status', [MediaUploadController::class, 'status']);
+Route::post('/media/firebase', [MediaUploadController::class, 'store']);
+Route::post('/companies/{id}/activate-portal', [CompanyController::class, 'activatePortal'])->middleware('cybernetic');
 Route::post('/companies/{id}/logo', [CompanyController::class, 'uploadLogo'])->middleware('cybernetic');
 Route::post('/companies', [CompanyController::class, 'store'])->middleware('cybernetic');
 Route::apiResource('companies', CompanyController::class)->except(['store']);
@@ -390,8 +398,15 @@ Route::get('/attendance/exceptions', [AttendanceExceptionController::class, 'ind
 Route::put('/attendance/exceptions/{id}', [AttendanceExceptionController::class, 'updateStatus']);
 Route::post('/attendance/exceptions/bulk-status', [AttendanceExceptionController::class, 'bulkUpdateStatus']);
 
+Route::get('/time-cards/pending-approvals', [TimeCardApprovalController::class, 'pending']);
+Route::put('/time-cards/{id}/approval', [TimeCardApprovalController::class, 'updateStatus']);
+Route::post('/time-cards/bulk-approval', [TimeCardApprovalController::class, 'bulkUpdateStatus']);
+Route::get('/reports/time-cards/audit', [TimeCardApprovalController::class, 'audit']);
+Route::get('/reports/time-cards/deleted', [TimeCardApprovalController::class, 'deleted']);
+
 // Within-shift hours & Extra hours reports
 Route::get('/reports/shift-hours', [ShiftHoursReportController::class, 'index']);
+Route::get('/reports/monthly-hours', [MonthlyHoursReportController::class, 'index']);
 // ✅ special route FIRST
 //Route::get('/loans/employee-by-number/{number}', [LoanController::class, 'getEmployeeByNumber']);
 

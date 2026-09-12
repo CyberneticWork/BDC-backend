@@ -39,6 +39,18 @@ class CyberneticAdminController extends Controller
         return response()->json([
             'role' => 'cybernetic_admin',
             'name' => 'Cybernetic Admin',
+            'process_catalog' => \App\Services\CompanyProcessSettings::catalog(),
+        ]);
+    }
+
+    public function processCatalog()
+    {
+        return response()->json([
+            'data' => \App\Services\CompanyProcessSettings::catalog(),
+            'attendance_process_options' => [
+                \App\Services\CompanyProcessSettings::SPM_STANDARD,
+                \App\Services\CompanyProcessSettings::SHIFT_ROSTER,
+            ],
         ]);
     }
 }

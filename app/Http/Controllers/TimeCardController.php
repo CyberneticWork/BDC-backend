@@ -10,10 +10,15 @@ use App\Models\over_time;
 use App\Models\Roster;
 use App\Models\shifts;
 use App\Models\time_card;
+use App\Services\CompanyProcessSettings;
 use App\Services\Overtime\OvertimeCalculator;
+use App\Services\RosterShiftResolver;
+use App\Services\TimeCardAuditService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Validator;
 use Maatwebsite\Excel\Facades\Excel;
 
@@ -21,8 +26,10 @@ class TimeCardController extends Controller
 {
     protected OvertimeCalculator $overtimeCalculator;
 
-    public function __construct(OvertimeCalculator $overtimeCalculator)
-    {
+    public function __construct(
+        OvertimeCalculator $overtimeCalculator,
+        private RosterShiftResolver $rosterResolver,
+    ) {
         $this->overtimeCalculator = $overtimeCalculator;
     }
 
@@ -115,6 +122,10 @@ class TimeCardController extends Controller
 
         $storeTime = $inputTime->format('H:i:s');
 
+        $kind = (strtoupper((string)$validated['status']) === 'OUT' || strtoupper((string)$validated['status']) === 'EARLY OUT') ? 'out' : 'in';
+        [$matchedRoster, $matchedShift] = $this->rosterResolver->match($employee, $validated['date'], $storeTime, $kind);
+        if ($matchedShift) { $roster = $matchedRoster; $shift = $matchedShift; }
+
         $entryType = (int) $validated['entry'];
         $status = strtoupper($validated['status']);
         $working_hours = null;
@@ -191,7 +202,7 @@ class TimeCardController extends Controller
                 $inDateTime = Carbon::parse($inDate . ' ' . $lastInCard->time);
                 $outDateTime = Carbon::parse($outDate . ' ' . $storeTime);
 
-                $working_hours = round($inDateTime->floatDiffInHours($outDateTime), 2);
+                $working_hours = $this->computeWorkingHours($employee, $inDateTime, $outDateTime, $shift);
 
                 $shiftStartDT = Carbon::parse($inDate . ' ' . $shift->start_time);
                 $shiftEndDT = Carbon::parse($inDate . ' ' . $shift->end_time);
@@ -217,19 +228,30 @@ class TimeCardController extends Controller
 
         $fingerprintClock = now();
 
-        $needsApproval = in_array($status, ['Late Coming', 'Early OUT'], true);
-
-        $timeCard = time_card::create([
+        $payload = [
             'employee_id' => $employee->id,
             'time' => $storeTime,
             'date' => $validated['date'],
             'working_hours' => $working_hours,
             'entry' => $entryType,
             'status' => $status,
-            'approval_status' => $needsApproval ? 'Pending' : 'Active',
+            'approval_status' => 'Pending',
             'fingerprint_clock' => $fingerprintClock,
             'actual_date' => $actual_date,
-        ]);
+        ];
+        $source = $request->input('entry_source', 'manual');
+        if (!in_array($source, ['manual', 'import'], true)) {
+            $source = 'manual';
+        }
+        if (Schema::hasColumn('time_cards', 'entry_source')) {
+            $payload['entry_source'] = $source;
+        }
+        if (Schema::hasColumn('time_cards', 'created_by')) {
+            $payload['created_by'] = Auth::id();
+        }
+
+        $timeCard = time_card::create($payload);
+        TimeCardAuditService::log($timeCard, 'created', $request->input('reason'), null, TimeCardAuditService::snapshot($timeCard), $source);
 
         if (in_array($status, ['OUT', 'Early OUT']) && $pairedInCard) {
             $referenceDate = $actual_date ?? $pairedInCard->date;
@@ -280,6 +302,11 @@ class TimeCardController extends Controller
 
         $inputTime = Carbon::createFromFormat('H:i:s', $request->time);
         $storeTime = $inputTime->format('H:i:s');
+        [$matchedRoster, $matchedShift] = $this->rosterResolver->match($employee, $request->date, $storeTime, 'in');
+        if ($matchedShift) {
+            $roster = $matchedRoster;
+            $shift = $matchedShift;
+        }
 
         $recentCard = time_card::where('employee_id', $employee->id)
             ->where('date', $request->date)
@@ -318,7 +345,7 @@ class TimeCardController extends Controller
             if ($lastInDate->eq($currentDate)) {
                 $inTime = Carbon::parse($lastCard->time);
                 $outTime = $inputTime;
-                $working_hours = round($inTime->floatDiffInHours($outTime), 2);
+                $working_hours = $this->computeWorkingHours($employee, $inTime, $outTime, $shift);
 
                 $shiftStartDT = Carbon::parse($request->date . ' ' . $shift->start_time);
                 $shiftEndDT = Carbon::parse($request->date . ' ' . $shift->end_time);
@@ -338,7 +365,7 @@ class TimeCardController extends Controller
             } else {
                 $inDateTime = Carbon::parse($lastCard->date . ' ' . $lastCard->time);
                 $outDateTime = Carbon::parse($request->date . ' ' . $request->time);
-                $working_hours = round($inDateTime->floatDiffInHours($outDateTime), 2);
+                $working_hours = $this->computeWorkingHours($employee, $inDateTime, $outDateTime, $shift);
 
                 $entryType = 2;
                 $status = 'OUT';
@@ -354,7 +381,7 @@ class TimeCardController extends Controller
 
         $needsApproval = in_array($status, ['Late Coming', 'Early OUT'], true);
 
-        $timeCard = time_card::create([
+        $payload = [
             'employee_id' => $employee->id,
             'time' => $storeTime,
             'date' => $request->date,
@@ -364,7 +391,13 @@ class TimeCardController extends Controller
             'approval_status' => $needsApproval ? 'Pending' : 'Active',
             'fingerprint_clock' => $fingerprintClock,
             'actual_date' => $actual_date,
-        ]);
+        ];
+        if (Schema::hasColumn('time_cards', 'entry_source')) {
+            $payload['entry_source'] = 'device';
+        }
+
+        $timeCard = time_card::create($payload);
+        TimeCardAuditService::log($timeCard, 'created', null, null, TimeCardAuditService::snapshot($timeCard), 'device');
 
         if (in_array($status, ['OUT', 'Early OUT']) && $pairedInCard) {
             $referenceDate = $actual_date ?? $pairedInCard->date;
@@ -400,9 +433,11 @@ class TimeCardController extends Controller
             'time' => 'required',
             'entry' => 'required|in:0,1,2',
             'status' => 'required|in:IN,Late Coming,OUT,Absent,Early OUT',
+            'reason' => 'nullable|string|max:500',
         ]);
 
         $timeCard = time_card::findOrFail($id);
+        $oldSnapshot = TimeCardAuditService::snapshot($timeCard);
         $employee = $timeCard->employee;
 
         if (!$employee) {
@@ -490,7 +525,7 @@ class TimeCardController extends Controller
                 $inDateTime = Carbon::parse($inDate . ' ' . $lastInCard->time);
                 $outDateTime = Carbon::parse($outDate . ' ' . $storeTime);
 
-                $working_hours = round($inDateTime->floatDiffInHours($outDateTime), 2);
+                $working_hours = $this->computeWorkingHours($employee, $inDateTime, $outDateTime, $shift);
                 $actual_date = ($inDate !== $outDate) ? $inDate : null;
             }
         } elseif (in_array($finalStatus, ['IN', 'LATE COMING'])) {
@@ -508,7 +543,16 @@ class TimeCardController extends Controller
             'entry' => $entryType,
             'status' => $finalStatus,
             'actual_date' => $actual_date,
+            'approval_status' => 'Pending',
         ]);
+        TimeCardAuditService::log(
+            $timeCard,
+            'adjusted',
+            $validated['reason'] ?? 'Time card adjusted from Time Card screen',
+            $oldSnapshot,
+            TimeCardAuditService::snapshot($timeCard->fresh()),
+            $timeCard->entry_source ?? 'manual'
+        );
 
         if (in_array($finalStatus, ['OUT', 'EARLY OUT'])) {
             if ($pairedInCard) {
@@ -540,9 +584,24 @@ class TimeCardController extends Controller
         ]);
     }
 
-    public function destroy($id)
+    public function destroy(Request $request, $id)
     {
+        $reason = trim((string) ($request->input('reason') ?: $request->query('reason')));
+        if (strlen($reason) < 3) {
+            return response()->json([
+                'message' => 'A delete reason is required (at least 3 characters).',
+            ], 422);
+        }
+
         $timeCard = time_card::findOrFail($id);
+        TimeCardAuditService::log(
+            $timeCard,
+            'deleted',
+            $reason,
+            TimeCardAuditService::snapshot($timeCard),
+            null,
+            $timeCard->entry_source ?? 'manual'
+        );
 
         over_time::where('time_cards_id', $timeCard->id)
             ->whereNull('deleted_at')
@@ -556,95 +615,23 @@ class TimeCardController extends Controller
         return response()->json(['message' => 'Time card soft-deleted successfully']);
     }
 
-    private function resolveRosterAndShift(employee $employee, string $date): array
+    private function resolveRosterAndShift(employee $employee, string $date, ?string $time = null, string $kind = 'in'): array
     {
-        $org = $employee->organizationAssignment;
-        if (!$org) {
-            return [null, null];
+        if ($time) {
+            return $this->rosterResolver->match($employee, $date, $time, $kind);
         }
 
-        $applyActiveStatus = function ($query) {
-            if (\Illuminate\Support\Facades\Schema::hasColumn('rosters', 'status')) {
-                $query->where(function ($q) {
-                    $q->whereNull('status')->orWhere('status', 'Active');
-                });
-            }
-            return $query;
-        };
+        return $this->rosterResolver->primary($employee, $date);
+    }
 
-        $rosterQuery = roster::where('employee_id', $employee->id)
-            ->whereNull('deleted_at');
-        $applyActiveStatus($rosterQuery);
-        $roster = $rosterQuery
-            ->where(function ($q) use ($date) {
-                $q->whereNull('date_from')->orWhere('date_from', '<=', $date);
-            })
-            ->where(function ($q) use ($date) {
-                $q->whereNull('date_to')->orWhere('date_to', '>=', $date);
-            })
-            ->orderByDesc('id')
-            ->first();
-
-        if (!$roster && $org->sub_department_id) {
-            $rosterQuery = roster::where('sub_department_id', $org->sub_department_id)
-                ->whereNull('employee_id')
-                ->whereNull('deleted_at');
-            $applyActiveStatus($rosterQuery);
-            $roster = $rosterQuery
-                ->where(function ($q) use ($date) {
-                    $q->where(function ($nested) use ($date) {
-                        $nested->whereNull('date_from')->orWhere('date_from', '<=', $date);
-                    });
-                    $q->where(function ($nested) use ($date) {
-                        $nested->whereNull('date_to')->orWhere('date_to', '>=', $date);
-                    });
-                })
-                ->orderByDesc('id')
-                ->first();
+    private function computeWorkingHours(employee $employee, Carbon $inDateTime, Carbon $outDateTime, ?shifts $shift): float
+    {
+        $raw = round($inDateTime->floatDiffInHours($outDateTime), 2);
+        if (!$shift || !CompanyProcessSettings::usesShiftRoster($employee)) {
+            return $raw;
         }
 
-        if (!$roster && $org->department_id) {
-            $rosterQuery = roster::where('department_id', $org->department_id)
-                ->whereNull('employee_id')
-                ->whereNull('sub_department_id')
-                ->whereNull('deleted_at');
-            $applyActiveStatus($rosterQuery);
-            $roster = $rosterQuery
-                ->where(function ($q) use ($date) {
-                    $q->where(function ($nested) use ($date) {
-                        $nested->whereNull('date_from')->orWhere('date_from', '<=', $date);
-                    });
-                    $q->where(function ($nested) use ($date) {
-                        $nested->whereNull('date_to')->orWhere('date_to', '>=', $date);
-                    });
-                })
-                ->orderByDesc('id')
-                ->first();
-        }
-
-        if (!$roster && $org->company_id) {
-            $rosterQuery = roster::where('company_id', $org->company_id)
-                ->whereNull('employee_id')
-                ->whereNull('sub_department_id')
-                ->whereNull('department_id')
-                ->whereNull('deleted_at');
-            $applyActiveStatus($rosterQuery);
-            $roster = $rosterQuery
-                ->where(function ($q) use ($date) {
-                    $q->where(function ($nested) use ($date) {
-                        $nested->whereNull('date_from')->orWhere('date_from', '<=', $date);
-                    });
-                    $q->where(function ($nested) use ($date) {
-                        $nested->whereNull('date_to')->orWhere('date_to', '>=', $date);
-                    });
-                })
-                ->orderByDesc('id')
-                ->first();
-        }
-
-        $shift = $roster ? shifts::find($roster->shift_code) : null;
-
-        return [$roster, $shift];
+        return $this->rosterResolver->clippedHours($inDateTime, $outDateTime, $shift);
     }
 
     private function resolveInStatus(string $date, string $time, ?shifts $shift, int $graceMinutes = 0): string
@@ -662,7 +649,7 @@ class TimeCardController extends Controller
     }
 
     /**
-     * 🔥 පන්ච් එක වදින වෙලාවෙම Holiday OT (Shift vs Outside) වෙන් කරන කොටස
+     * ðŸ”¥ à¶´à¶±à·Šà¶ à·Š à¶‘à¶š à·€à¶¯à·’à¶± à·€à·™à¶½à·à·€à·™à¶¸ Holiday OT (Shift vs Outside) à·€à·™à¶±à·Š à¶šà¶»à¶± à¶šà·œà¶§à·ƒ
      */
     // private function processOvertimeForOutPunch(
     //     employee $employee,
@@ -687,7 +674,7 @@ class TimeCardController extends Controller
 
     //     $isHoliday = $this->isHoliday($employee, $targetDate);
 
-    //     // 1. අපි හදපු Calculator එකට දත්ත යවමු
+    //     // 1. à¶…à¶´à·’ à·„à¶¯à¶´à·” Calculator à¶‘à¶šà¶§ à¶¯à¶­à·Šà¶­ à¶ºà·€à¶¸à·”
     //     $breakdown = $this->overtimeCalculator->calculate(
     //         $employee,
     //         $resolvedShift,
@@ -697,7 +684,7 @@ class TimeCardController extends Controller
     //     );
 
     //     if ($isHoliday) {
-    //         // 🔥 අලුත් දත්ත (Shift පැය සහ Outside පැය) Calculator එකෙන්ම ගමු
+    //         // ðŸ”¥ à¶…à¶½à·”à¶­à·Š à¶¯à¶­à·Šà¶­ (Shift à¶´à·à¶º à·ƒà·„ Outside à¶´à·à¶º) Calculator à¶‘à¶šà·™à¶±à·Šà¶¸ à¶œà¶¸à·”
     //         $hShiftHours = (float)($breakdown['hours']['holiday_shift_hours'] ?? 0);
     //         $hOutsideHours = (float)($breakdown['hours']['holiday_outside_hours'] ?? 0);
     //         $hShiftAmount = (float)($breakdown['amounts']['holiday_shift_amount'] ?? 0);
@@ -727,7 +714,7 @@ class TimeCardController extends Controller
     //             'status' => 'pending',
     //         ]);
     //     } else {
-    //         // සාමාන්‍ය දින සඳහා (Normal Days)
+    //         // à·ƒà·à¶¸à·à¶±à·Šâ€à¶º à¶¯à·’à¶± à·ƒà¶³à·„à· (Normal Days)
     //         $hours = array_merge([
     //             'morning_regular' => 0.0,
     //             'evening_regular' => 0.0,
@@ -759,7 +746,7 @@ class TimeCardController extends Controller
 
     /**
      * Process and record overtime data upon an OUT/Early OUT punch.
-     * * 🔥 පන්ච් එක වදින වෙලාවෙම Holiday OT (Shift vs Outside) වෙන් කරන කොටස
+     * * ðŸ”¥ à¶´à¶±à·Šà¶ à·Š à¶‘à¶š à·€à¶¯à·’à¶± à·€à·™à¶½à·à·€à·™à¶¸ Holiday OT (Shift vs Outside) à·€à·™à¶±à·Š à¶šà¶»à¶± à¶šà·œà¶§à·ƒ
      * Note: Core calculation logic and array structures are strictly preserved as per client requirements.
      * Client Rule: OT is only credited if total OT exceeds 30 minutes (0.5 hours).
      * If it exceeds 30 minutes, the entire duration is awarded.
@@ -778,9 +765,11 @@ class TimeCardController extends Controller
 
         $targetDate = $referenceDate ?? $inCard->date;
 
-        // 2. Resolve the applicable shift
-        [, $resolvedShift] = $this->resolveRosterAndShift($employee, $targetDate);
-        $resolvedShift = $resolvedShift ?? $fallbackShift;
+        $resolvedShift = $fallbackShift;
+        if (!$resolvedShift || !CompanyProcessSettings::usesShiftRoster($employee)) {
+            [, $resolved] = $this->resolveRosterAndShift($employee, $targetDate, $inCard->time ?? null, 'in');
+            $resolvedShift = $resolved ?? $fallbackShift;
+        }
 
         if (!$resolvedShift) {
             return;
@@ -803,7 +792,7 @@ class TimeCardController extends Controller
         // 5. Execute external calculator breakdown
         $isHoliday = $this->isHoliday($employee, $targetDate);
 
-        // අපි හදපු Calculator එකට දත්ත යවමු
+        // à¶…à¶´à·’ à·„à¶¯à¶´à·” Calculator à¶‘à¶šà¶§ à¶¯à¶­à·Šà¶­ à¶ºà·€à¶¸à·”
         $breakdown = $this->overtimeCalculator->calculate(
             $employee,
             $resolvedShift,
@@ -814,7 +803,7 @@ class TimeCardController extends Controller
 
         // 6. Map data and persist records based on day classification
         if ($isHoliday) {
-            // 🔥 අලුත් දත්ත (Shift පැය සහ Outside පැය) Calculator එකෙන්ම ගමු
+            // ðŸ”¥ à¶…à¶½à·”à¶­à·Š à¶¯à¶­à·Šà¶­ (Shift à¶´à·à¶º à·ƒà·„ Outside à¶´à·à¶º) Calculator à¶‘à¶šà·™à¶±à·Šà¶¸ à¶œà¶¸à·”
             $hShiftHours = (float)($breakdown['hours']['holiday_shift_hours'] ?? 0);
             $hOutsideHours = (float)($breakdown['hours']['holiday_outside_hours'] ?? 0);
             $hShiftAmount = (float)($breakdown['amounts']['holiday_shift_amount'] ?? 0);
@@ -823,8 +812,9 @@ class TimeCardController extends Controller
             $totalHolidayHours = $hShiftHours + $hOutsideHours;
             $totalHolidayAmount = $hShiftAmount + $hOutsideAmount;
 
-            // Client threshold validation: Must be strictly greater than 30 minutes (0.5 hours)
-            if ($totalHolidayHours <= 0.5) {
+            // Client threshold: current OT keeps 30-minute (0.5h) minimum. Minute-band OT stores 0.30 / 0.45.
+            $minHours = CompanyProcessSettings::usesMinuteBandOt($employee) ? 0.0 : 0.5;
+            if ($totalHolidayHours <= $minHours) {
                 return;
             }
 
@@ -847,7 +837,7 @@ class TimeCardController extends Controller
                 'status'                => 'pending',
             ]);
         } else {
-            // සාමාන්‍ය දින සඳහා (Normal Days)
+            // à·ƒà·à¶¸à·à¶±à·Šâ€à¶º à¶¯à·’à¶± à·ƒà¶³à·„à· (Normal Days)
             $hours = array_merge([
                 'morning_regular' => 0.0,
                 'evening_regular' => 0.0,
@@ -860,8 +850,8 @@ class TimeCardController extends Controller
                 'total'           => 0.0,
             ], $breakdown['amounts'] ?? []);
 
-            // Client threshold validation: Must be strictly greater than 30 minutes (0.5 hours)
-            if ($hours['total'] <= 0.5) {
+            $minHours = CompanyProcessSettings::usesMinuteBandOt($employee) ? 0.0 : 0.5;
+            if ($hours['total'] <= $minHours) {
                 return;
             }
 
@@ -1049,14 +1039,20 @@ class TimeCardController extends Controller
 
                 $statusUpper = strtoupper($status);
                 if (in_array($statusUpper, ['IN', 'OUT', 'EARLY OUT', 'LATE COMING'])) {
-                    time_card::create([
+                    $payload = [
                         'employee_id' => $employee->id,
                         'time' => $rawTime,
                         'date' => $date,
                         'entry' => (int)$entry,
                         'status' => $statusUpper,
-                        'actual_date' => $date
-                    ]);
+                        'actual_date' => $date,
+                        'approval_status' => 'Pending',
+                    ];
+                    if (Schema::hasColumn('time_cards', 'entry_source')) {
+                        $payload['entry_source'] = 'import';
+                    }
+                    $card = time_card::create($payload);
+                    TimeCardAuditService::log($card, 'created', 'Imported from Excel', null, TimeCardAuditService::snapshot($card), 'import');
                     $results['imported']++;
                 }
             }
@@ -1506,7 +1502,7 @@ class TimeCardController extends Controller
                 $inDateTime = Carbon::parse($inDate . ' ' . $lastInCard->time);
                 $outDateTime = Carbon::parse($outDate . ' ' . $storeTime);
 
-                $working_hours = round($inDateTime->floatDiffInHours($outDateTime), 2);
+                $working_hours = $this->computeWorkingHours($employee, $inDateTime, $outDateTime, $shift);
 
                 $shiftStartDT = Carbon::parse($inDate . ' ' . $shift->start_time);
                 $shiftEndDT = Carbon::parse($inDate . ' ' . $shift->end_time);
@@ -1592,6 +1588,11 @@ class TimeCardController extends Controller
 
         $inputTime = Carbon::createFromFormat('H:i:s', $request->time);
         $storeTime = $inputTime->format('H:i:s');
+        [$matchedRoster, $matchedShift] = $this->rosterResolver->match($employee, $request->date, $storeTime, 'in');
+        if ($matchedShift) {
+            $roster = $matchedRoster;
+            $shift = $matchedShift;
+        }
 
         $recentCard = time_card::where('employee_id', $employee->id)
             ->where('date', $request->date)
@@ -1630,7 +1631,7 @@ class TimeCardController extends Controller
             if ($lastInDate->eq($currentDate)) {
                 $inTime = Carbon::parse($lastCard->time);
                 $outTime = $inputTime;
-                $working_hours = round($inTime->floatDiffInHours($outTime), 2);
+                $working_hours = $this->computeWorkingHours($employee, $inTime, $outTime, $shift);
 
                 $shiftStartDT = Carbon::parse($request->date . ' ' . $shift->start_time);
                 $shiftEndDT = Carbon::parse($request->date . ' ' . $shift->end_time);
@@ -1650,7 +1651,7 @@ class TimeCardController extends Controller
             } else {
                 $inDateTime = Carbon::parse($lastCard->date . ' ' . $lastCard->time);
                 $outDateTime = Carbon::parse($request->date . ' ' . $request->time);
-                $working_hours = round($inDateTime->floatDiffInHours($outDateTime), 2);
+                $working_hours = $this->computeWorkingHours($employee, $inDateTime, $outDateTime, $shift);
 
                 $entryType = 2;
                 $status = 'OUT';
@@ -1799,7 +1800,7 @@ class TimeCardController extends Controller
                 $inDateTime = Carbon::parse($inDate . ' ' . $lastInCard->time);
                 $outDateTime = Carbon::parse($outDate . ' ' . $storeTime);
 
-                $working_hours = round($inDateTime->floatDiffInHours($outDateTime), 2);
+                $working_hours = $this->computeWorkingHours($employee, $inDateTime, $outDateTime, $shift);
                 $actual_date = ($inDate !== $outDate) ? $inDate : null;
             }
         } elseif (in_array($finalStatus, ['IN', 'LATE COMING'])) {
@@ -2000,7 +2001,7 @@ class TimeCardController extends Controller
         $nightSpecialRate = (float) ($comp->ot_night_rate_special ?? $nightRate);
 
         // ============================================================
-        // 🔥 HOLIDAY OT FIX: අලුත් ක්‍රමය (Basic/240)
+        // ðŸ”¥ HOLIDAY OT FIX: à¶…à¶½à·”à¶­à·Š à¶šà·Šâ€à¶»à¶¸à¶º (Basic/240)
         // ============================================================
         if ($isHoliday && isset($breakdown['amounts']['holiday'])) {
             $hHours = (float) ($breakdown['hours']['holiday'] ?? 0);
@@ -2395,7 +2396,7 @@ class TimeCardController extends Controller
 
                             $inDateTime = Carbon::parse($inDate . ' ' . $lastInCard->time);
                             $outDateTime = Carbon::parse($outDate . ' ' . $time);
-                            $working_hours = round($inDateTime->floatDiffInHours($outDateTime), 2);
+                            $working_hours = $this->computeWorkingHours($employee, $inDateTime, $outDateTime, $shift);
 
                             $shiftStartDT = Carbon::parse($inDate . ' ' . $shift->start_time);
                             $shiftEndDT = Carbon::parse($inDate . ' ' . $shift->end_time);

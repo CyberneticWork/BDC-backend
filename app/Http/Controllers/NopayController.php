@@ -9,6 +9,7 @@ use App\Models\Roster;
 use App\Models\shifts;
 use App\Models\time_card;
 use App\Models\leaveCalendar;
+use App\Services\RosterShiftResolver;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -16,6 +17,9 @@ use Illuminate\Support\Facades\Validator;
 
 class NopayController extends Controller
 {
+    public function __construct(private RosterShiftResolver $rosterResolver)
+    {
+    }
     public function index(Request $request)
     {
         $query = NoPayRecord::with(['employee', 'processedBy'])
@@ -48,10 +52,10 @@ class NopayController extends Controller
             });
         }
 
-        // Exclude NoPay before joining date — those days do not need to be filled
+        // Exclude NoPay before joining date â€” those days do not need to be filled
         $this->applyJoiningDateFilter($query);
 
-        // Search Filter (දැන් Employee ID, Name සහ NIC වලින් සර්ච් කළ හැක)
+        // Search Filter (à¶¯à·à¶±à·Š Employee ID, Name à·ƒà·„ NIC à·€à¶½à·’à¶±à·Š à·ƒà¶»à·Šà¶ à·Š à¶šà·… à·„à·à¶š)
         if ($request->filled('search')) {
             $search = $request->search;
             $query->where(function ($mainQuery) use ($search) {
@@ -249,7 +253,7 @@ class NopayController extends Controller
                 continue;
             }
 
-            // සේවකයා වැඩට බැඳුණු දිනයට කලින් දවස් වලට No Pay හදන්නේ නෑ (fill කරන්නත් ඕනේ නෑ)
+            // à·ƒà·šà·€à¶šà¶ºà· à·€à·à¶©à¶§ à¶¶à·à¶³à·”à¶«à·” à¶¯à·’à¶±à¶ºà¶§ à¶šà¶½à·’à¶±à·Š à¶¯à·€à·ƒà·Š à·€à¶½à¶§ No Pay à·„à¶¯à¶±à·Šà¶±à·š à¶±à·‘ (fill à¶šà¶»à¶±à·Šà¶±à¶­à·Š à¶•à¶±à·š à¶±à·‘)
             if ($this->isBeforeJoiningDate($employee, $date)) {
                 NoPayRecord::where('employee_id', $employee->id)->where('date', $date)->delete();
                 $skipped[] = [
@@ -314,7 +318,10 @@ class NopayController extends Controller
                 continue;
             }
 
-            $dayResult = $this->buildNoPayForEmployeeDay($employee, $date, $shift, $status);
+            $dayResult = [];
+            foreach ($this->rosterResolver->assignmentsFor($employee, $date) as $item) {
+                $dayResult = array_merge($dayResult, $this->buildNoPayForEmployeeDay($employee, $date, $item['shift'], $status));
+            }
 
             if (!empty($dayResult)) {
                 foreach ($dayResult as $record) {
@@ -390,7 +397,7 @@ class NopayController extends Controller
                     continue;
                 }
 
-                // සේවකයා වැඩට බැඳුණු දිනයට කලින් දවස් — No Pay නෑ, fill කරන්නත් ඕනේ නෑ
+                // à·ƒà·šà·€à¶šà¶ºà· à·€à·à¶©à¶§ à¶¶à·à¶³à·”à¶«à·” à¶¯à·’à¶±à¶ºà¶§ à¶šà¶½à·’à¶±à·Š à¶¯à·€à·ƒà·Š â€” No Pay à¶±à·‘, fill à¶šà¶»à¶±à·Šà¶±à¶­à·Š à¶•à¶±à·š à¶±à·‘
                 if ($this->isBeforeJoiningDate($employee, $dateString)) {
                     NoPayRecord::where('employee_id', $employee->id)->where('date', $dateString)->delete();
                     $allSkipped[] = ['date' => $dateString, 'employee_id' => $employee->id, 'reason' => 'Before date of joining'];
@@ -451,7 +458,7 @@ class NopayController extends Controller
     }
 
     // =================================================================
-    // GET NO PAY STATS (දැන් Search Filter එකත් එක්කම නිවැරදිව වැඩ කරයි)
+    // GET NO PAY STATS (à¶¯à·à¶±à·Š Search Filter à¶‘à¶šà¶­à·Š à¶‘à¶šà·Šà¶šà¶¸ à¶±à·’à·€à·à¶»à¶¯à·’à·€ à·€à·à¶© à¶šà¶»à¶ºà·’)
     // =================================================================
     public function getNoPayStats(Request $request)
     {
@@ -479,7 +486,7 @@ class NopayController extends Controller
             });
         }
 
-        // Stats වලටත් අනිවාර්යයෙන්ම Search Filter එක දාන්න ඕනේ!
+        // Stats à·€à¶½à¶§à¶­à·Š à¶…à¶±à·’à·€à·à¶»à·Šà¶ºà¶ºà·™à¶±à·Šà¶¸ Search Filter à¶‘à¶š à¶¯à·à¶±à·Šà¶± à¶•à¶±à·š!
         if ($request->filled('search')) {
             $search = $request->search;
             $query->where(function ($mainQuery) use ($search) {
@@ -642,6 +649,7 @@ class NopayController extends Controller
                     NoPayRecord::where('employee_id', $employee->id)
                         ->where('date', $date)
                         ->where('type', 'LATE_IN')
+                        ->where('start_time', $shiftStart->format('H:i:s'))
                         ->delete();
                 }
             }
@@ -698,6 +706,7 @@ class NopayController extends Controller
         $allRows = NoPayRecord::where('employee_id', $employeeId)
             ->where('date', $date)
             ->where('type', $type)
+            ->where('start_time', $from->format('H:i:s'))
             ->orderByRaw("CASE WHEN status = 'Approved' THEN 0 ELSE 1 END")
             ->orderByDesc('id')
             ->get();
@@ -712,6 +721,7 @@ class NopayController extends Controller
         $existing = NoPayRecord::where('employee_id', $employeeId)
             ->where('date', $date)
             ->where('type', $type)
+            ->where('start_time', $from->format('H:i:s'))
             ->first();
 
         if ($existing) {
@@ -746,6 +756,7 @@ class NopayController extends Controller
 
     protected function resolveRosterAndShift(employee $employee, string $date): array
     {
+        return $this->rosterResolver->primary($employee, $date);
         $org = $employee->organizationAssignment;
         if (!$org) {
             return [null, null];
@@ -1293,7 +1304,7 @@ class NopayController extends Controller
                 //$skipped[] = ['employee_id' => $employee->id, 'reason' => 'NoPay inactive in compensation'];
                 $skipped[] = [
     'employee_id' => $employee->id, 
-    'attendance_employee_no' => $employee->attendance_employee_no, // අලුතින් එක් කළා
+    'attendance_employee_no' => $employee->attendance_employee_no, // à¶…à¶½à·”à¶­à·’à¶±à·Š à¶‘à¶šà·Š à¶šà·…à·
     'reason' => 'NoPay inactive in compensation'
 ];
                 continue;
@@ -1307,7 +1318,7 @@ class NopayController extends Controller
                 //$skipped[] = ['employee_id' => $employee->id, 'reason' => 'Employee day off'];
                 $skipped[] = [
     'employee_id' => $employee->id, 
-    'attendance_employee_no' => $employee->attendance_employee_no, // අලුතින් එක් කළා
+    'attendance_employee_no' => $employee->attendance_employee_no, // à¶…à¶½à·”à¶­à·’à¶±à·Š à¶‘à¶šà·Š à¶šà·…à·
     'reason' => 'Employee day off'
 ];
                 continue;
@@ -1348,7 +1359,10 @@ class NopayController extends Controller
                 continue;
             }
 
-            $dayResult = $this->buildNoPayForEmployeeDay($employee, $date, $shift, $status);
+            $dayResult = [];
+            foreach ($this->rosterResolver->assignmentsFor($employee, $date) as $item) {
+                $dayResult = array_merge($dayResult, $this->buildNoPayForEmployeeDay($employee, $date, $item['shift'], $status));
+            }
 
             if (!empty($dayResult)) {
                 foreach ($dayResult as $record) {
@@ -1512,35 +1526,35 @@ class NopayController extends Controller
             return in_array($card->entry, [0, 2]) || in_array($st, ['out', 'early out', 'early_out']);
         });
 
-        // IN හෝ OUT එකක් හරි තියෙනවා නම්, පරණ Full Day No Pay එක මකා දමන්න
+        // IN à·„à· OUT à¶‘à¶šà¶šà·Š à·„à¶»à·’ à¶­à·’à¶ºà·™à¶±à·€à· à¶±à¶¸à·Š, à¶´à¶»à¶« Full Day No Pay à¶‘à¶š à¶¸à¶šà· à¶¯à¶¸à¶±à·Šà¶±
         if ($inCard || $outCard) {
             NoPayRecord::where('employee_id', $employee->id)
                 ->where('date', $date)
                 ->whereIn('type', ['FULL_DAY', 'PARTIAL_ABSENT'])
                 ->delete();
         } 
-        // සම්පූර්ණ දවසම absent නම් (IN එකකුත් නෑ, OUT එකකුත් නෑ)
+        // à·ƒà¶¸à·Šà¶´à·–à¶»à·Šà¶« à¶¯à·€à·ƒà¶¸ absent à¶±à¶¸à·Š (IN à¶‘à¶šà¶šà·”à¶­à·Š à¶±à·‘, OUT à¶‘à¶šà¶šà·”à¶­à·Š à¶±à·‘)
         else {
-            // Full Day Absent නම් පරණ Late In / Early Out මකන්න
+            // Full Day Absent à¶±à¶¸à·Š à¶´à¶»à¶« Late In / Early Out à¶¸à¶šà¶±à·Šà¶±
             NoPayRecord::where('employee_id', $employee->id)
                 ->where('date', $date)
                 ->whereIn('type', ['LATE_IN', 'EARLY_OUT'])
                 ->delete();
 
-            // 1. එදා දවසට අනුමත වුණු නිවාඩු ප්‍රමාණය කොච්චරද කියලා බලනවා
+            // 1. à¶‘à¶¯à· à¶¯à·€à·ƒà¶§ à¶…à¶±à·”à¶¸à¶­ à·€à·”à¶«à·” à¶±à·’à·€à·à¶©à·” à¶´à·Šâ€à¶»à¶¸à·à¶«à¶º à¶šà·œà¶ à·Šà¶ à¶»à¶¯ à¶šà·’à¶ºà¶½à· à¶¶à¶½à¶±à·€à·
             $approvedLeaveDuration = $this->getApprovedLeaveDuration($employee->id, $date);
             
-            // 2. අනුමත නිවාඩුවක් තියෙනවා නම් ඒක 1 න් අඩු කරනවා (උදා: Half day නම් 1 - 0.5 = 0.5)
+            // 2. à¶…à¶±à·”à¶¸à¶­ à¶±à·’à·€à·à¶©à·”à·€à¶šà·Š à¶­à·’à¶ºà·™à¶±à·€à· à¶±à¶¸à·Š à¶’à¶š 1 à¶±à·Š à¶…à¶©à·” à¶šà¶»à¶±à·€à· (à¶‹à¶¯à·: Half day à¶±à¶¸à·Š 1 - 0.5 = 0.5)
             $noPayAmount = 1 - $approvedLeaveDuration;
 
-            // ඉතුරු No Pay වෙන්න ඕනේ ප්‍රමාණයක් තියෙනවා නම් විතරක් No Pay Record එක හදනවා
+            // à¶‰à¶­à·”à¶»à·” No Pay à·€à·™à¶±à·Šà¶± à¶•à¶±à·š à¶´à·Šâ€à¶»à¶¸à·à¶«à¶ºà¶šà·Š à¶­à·’à¶ºà·™à¶±à·€à· à¶±à¶¸à·Š à·€à·’à¶­à¶»à¶šà·Š No Pay Record à¶‘à¶š à·„à¶¯à¶±à·€à·
             if ($noPayAmount > 0) {
                 $existing = NoPayRecord::where('employee_id', $employee->id)
                     ->where('date', $date)
                     ->whereIn('type', ['FULL_DAY', 'PARTIAL_ABSENT'])
                     ->first();
 
-                // Full Day ද නැත්නම් Partial ද කියලා තීරණය කරනවා
+                // Full Day à¶¯ à¶±à·à¶­à·Šà¶±à¶¸à·Š Partial à¶¯ à¶šà·’à¶ºà¶½à· à¶­à·“à¶»à¶«à¶º à¶šà¶»à¶±à·€à·
                 $type = $noPayAmount == 1 ? 'FULL_DAY' : 'PARTIAL_ABSENT';
                 
                 $leaveTypeStr = "";
@@ -1553,7 +1567,7 @@ class NopayController extends Controller
                     : "Automatic partial no-pay: no attendance, but had {$leaveTypeStr} approved leave.";
 
                 $data = [
-                    'no_pay_count' => $noPayAmount, // 0.25, 0.5, 0.75 හෝ 1.0 විදිහට හරියටම සේව් වෙනවා
+                    'no_pay_count' => $noPayAmount, // 0.25, 0.5, 0.75 à·„à· 1.0 à·€à·’à¶¯à·’à·„à¶§ à·„à¶»à·’à¶ºà¶§à¶¸ à·ƒà·šà·€à·Š à·€à·™à¶±à·€à·
                     'description' => $desc,
                     'processed_by' => Auth::id(),
                     'hours' => round($shiftHours * $noPayAmount, 2),
@@ -1577,7 +1591,7 @@ class NopayController extends Controller
             return $records; 
         }
 
-        // LATE IN (පරක්කු වෙලා ආවම)
+        // LATE IN (à¶´à¶»à¶šà·Šà¶šà·” à·€à·™à¶½à· à¶†à·€à¶¸)
         if ($inCard) {
             $actualIn = Carbon::parse($inCard->date . ' ' . $inCard->time);
             
@@ -1604,12 +1618,13 @@ class NopayController extends Controller
                     NoPayRecord::where('employee_id', $employee->id)
                         ->where('date', $date)
                         ->where('type', 'LATE_IN')
+                        ->where('start_time', $shiftStart->format('H:i:s'))
                         ->delete();
                 }
             }
         }
 
-        // EARLY OUT (කලින් ගියාම)
+        // EARLY OUT (à¶šà¶½à·’à¶±à·Š à¶œà·’à¶ºà·à¶¸)
         if ($outCard) {
             $actualOut = Carbon::parse($outCard->date . ' ' . $outCard->time);
 
@@ -1661,6 +1676,7 @@ class NopayController extends Controller
         $allRows = NoPayRecord::where('employee_id', $employeeId)
             ->where('date', $date)
             ->where('type', $type)
+            ->where('start_time', $from->format('H:i:s'))
             ->orderByRaw("CASE WHEN status = 'Approved' THEN 0 ELSE 1 END")
             ->orderByDesc('id')
             ->get();
@@ -1675,6 +1691,7 @@ class NopayController extends Controller
         $existing = NoPayRecord::where('employee_id', $employeeId)
             ->where('date', $date)
             ->where('type', $type)
+            ->where('start_time', $from->format('H:i:s'))
             ->first();
 
         if ($existing) {
@@ -1777,7 +1794,7 @@ class NopayController extends Controller
         return [$roster, $shift];
     }
 
-    // අලුතින් එකතු කළ Function එක (අනුමත නිවාඩු ප්‍රමාණය හරියටම ගණනය කරන්න)
+    // à¶…à¶½à·”à¶­à·’à¶±à·Š à¶‘à¶šà¶­à·” à¶šà·… Function à¶‘à¶š (à¶…à¶±à·”à¶¸à¶­ à¶±à·’à·€à·à¶©à·” à¶´à·Šâ€à¶»à¶¸à·à¶«à¶º à·„à¶»à·’à¶ºà¶§à¶¸ à¶œà¶«à¶±à¶º à¶šà¶»à¶±à·Šà¶±)
     protected function getApprovedLeaveDuration(int $employeeId, string $date): float
     {
         $leaves = leave_master::where('employee_id', $employeeId)
@@ -1802,7 +1819,7 @@ class NopayController extends Controller
             }
         }
         
-        return min($totalDuration, 1); // දවසකට උපරිම නිවාඩුව 1 යි
+        return min($totalDuration, 1); // à¶¯à·€à·ƒà¶šà¶§ à¶‹à¶´à¶»à·’à¶¸ à¶±à·’à·€à·à¶©à·”à·€ 1 à¶ºà·’
     }
 
     protected function hasApprovedFullDayLeave(int $employeeId, string $date): bool
@@ -1983,7 +2000,7 @@ class NopayController extends Controller
             return 'Full Day';
         }
 
-        // අලුතින් එකතු කළ Partial Absent (Half Day / Short Leave) කොටස
+        // à¶…à¶½à·”à¶­à·’à¶±à·Š à¶‘à¶šà¶­à·” à¶šà·… Partial Absent (Half Day / Short Leave) à¶šà·œà¶§à·ƒ
         if ($record->type === 'PARTIAL_ABSENT') {
             return $record->no_pay_count . ' Days'; 
         }

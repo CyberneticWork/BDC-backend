@@ -20,10 +20,12 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Schema;
 use Carbon\Carbon;
 use Illuminate\Database\QueryException;
 use Illuminate\Validation\Rule;
 use App\Models\PerformanceAppraisal;
+use App\Services\CompanyHostScope;
 
 /**
  * @method static \Illuminate\Contracts\Auth\Guard|\Illuminate\Contracts\Auth\StatefulGuard auth()
@@ -62,9 +64,20 @@ class PmsController extends Controller
     /**
      * Get all companies.
      */
-    public function getCompanies()
+    public function getCompanies(Request $request)
     {
-        $companies = company::select('id', 'name')->get();
+        $cols = ['id', 'name'];
+        if (Schema::hasColumn('companies', 'frontend_host')) {
+            $cols[] = 'frontend_host';
+        }
+        if (Schema::hasColumn('companies', 'org_group')) {
+            $cols[] = 'org_group';
+        }
+
+        $companies = CompanyHostScope::apply(company::query(), $request)
+            ->select($cols)
+            ->get();
+
         return response()->json($companies);
     }
 

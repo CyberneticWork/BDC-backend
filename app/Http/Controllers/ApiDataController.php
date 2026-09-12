@@ -12,12 +12,14 @@ use App\Models\designation;
 use Illuminate\Http\Request;
 use App\Models\sub_departments;
 use App\Models\organization_assignment;
+use App\Services\CompanyHostScope;
 
 class ApiDataController extends Controller
 {
-    public function companies()
+    public function companies(Request $request)
     {
-        $companies = company::withCount('employees')->get()->map(function ($company) {
+        $query = CompanyHostScope::apply(company::query(), $request);
+        $companies = $query->withCount('employees')->get()->map(function ($company) {
             $displayName = trim(($company->company_code ? $company->company_code : '') . ($company->company_code && $company->name ? ' - ' : '') . ($company->name ?: ''));
 
             return [
@@ -32,19 +34,27 @@ class ApiDataController extends Controller
                 'nopay_working_days' => $company->nopay_working_days,
                 'slug' => $company->slug,
                 'frontend_host' => $company->frontend_host,
+                'org_group' => $company->org_group,
                 'logo_url' => $company->logo_url,
                 'theme_primary' => $company->theme_primary,
                 'theme_secondary' => $company->theme_secondary,
                 'theme_accent' => $company->theme_accent,
                 'late_attendance_policy_enabled' => (bool) ($company->late_attendance_policy_enabled ?? false),
+                'portal_active' => (bool) ($company->portal_active ?? false),
+                'attendance_process' => $company->attendance_process ?? 'spm_standard',
+                'process_config' => $company->process_config ?? null,
             ];
         });
         return response()->json($companies, 200);
     }
 
-    public function departments()
+    public function departments(Request $request)
     {
-        $departments = departments::with('company')->get()->map(function ($dept) {
+        $companyIds = CompanyHostScope::apply(company::query(), $request)->pluck('id');
+        $departments = departments::with('company')
+            ->whereIn('company_id', $companyIds)
+            ->get()
+            ->map(function ($dept) {
             // Count employees for this department
             $employeeCount = organization_assignment::where('department_id', $dept->id)
                 ->pluck('id')
@@ -66,9 +76,15 @@ class ApiDataController extends Controller
         return response()->json($departments, 200);
     }
 
-    public function subDepartments()
+    public function subDepartments(Request $request)
     {
-        $subDepartments = sub_departments::with('department')->get()->map(function ($sub) {
+        $companyIds = CompanyHostScope::apply(company::query(), $request)->pluck('id');
+        $subDepartments = sub_departments::with('department')
+            ->whereHas('department', function ($q) use ($companyIds) {
+                $q->whereIn('company_id', $companyIds);
+            })
+            ->get()
+            ->map(function ($sub) {
             // Count employees for this sub-department
             $employeeCount = organization_assignment::where('sub_department_id', $sub->id)
                 ->pluck('id')
