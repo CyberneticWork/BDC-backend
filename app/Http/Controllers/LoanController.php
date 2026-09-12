@@ -134,12 +134,22 @@ class LoanController extends Controller
             $loan->with_interest = (bool) $validated['with_interest'];
             $loan->installment_count = (int) ($validated['installment_count'] ?? $totalInstallments);
             $loan->status = 'active';
-            $loan->schedule = $schedule; // JSON cast එක Model එකේ තිබිය යුතුයි
-            $loan->deduct_from = $validated['deduct_from'];
-            $loan->installment_deduct_from = $validated['installment_deduct_from'];
-            $loan->interest_deduct_from = $validated['interest_deduct_from'];
-            $loan->deduct_basic_amount = $validated['deduct_basic_amount'] ?? null;
-            $loan->deduct_bonus_amount = $validated['deduct_bonus_amount'] ?? null;
+            $loan->schedule = $schedule;
+            if (Schema::hasColumn('loans', 'deduct_from')) {
+                $loan->deduct_from = $validated['deduct_from'];
+            }
+            if (Schema::hasColumn('loans', 'installment_deduct_from')) {
+                $loan->installment_deduct_from = $validated['installment_deduct_from'];
+            }
+            if (Schema::hasColumn('loans', 'interest_deduct_from')) {
+                $loan->interest_deduct_from = $validated['interest_deduct_from'];
+            }
+            if (Schema::hasColumn('loans', 'deduct_basic_amount')) {
+                $loan->deduct_basic_amount = $validated['deduct_basic_amount'] ?? null;
+            }
+            if (Schema::hasColumn('loans', 'deduct_bonus_amount')) {
+                $loan->deduct_bonus_amount = $validated['deduct_bonus_amount'] ?? null;
+            }
 
             $loan->save();
 
