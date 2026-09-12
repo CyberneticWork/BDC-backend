@@ -9,14 +9,26 @@ use App\Models\over_time;
 use App\Models\salary_process;
 use App\Models\SalaryAdvanceRequest;
 use App\Models\time_card;
+use App\Services\CompanyProcessSettings;
+use App\Services\LeaveNotificationService;
+use App\Services\MedicalClaimService;
+use App\Services\PendingPaymentService;
+use App\Services\SalaryAdvanceService;
+use App\Services\WeeklyOffService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Validator;
 
 class EmployeePortalController extends Controller
 {
+    public function linkedEmployee(Request $request): employee
+    {
+        return $this->requireEmployee($request);
+    }
+
     private function requireEmployee(Request $request): employee
     {
         $user = $request->user();
@@ -70,7 +82,14 @@ class EmployeePortalController extends Controller
         }
 
         $pendingLeave = leave_master::where('employee_id', $emp->id)
-            ->whereIn('status', ['Pending', 'pending', 'Supervisor_Approved', 'SUPERVISOR_APPROVED'])
+            ->whereIn('status', [
+                'Pending',
+                'pending',
+                'Pending_Covering',
+                'Pending_Supervisor',
+                'Supervisor_Approved',
+                'SUPERVISOR_APPROVED',
+            ])
             ->count();
 
         $advances = SalaryAdvanceRequest::where('employee_id', $emp->id)
@@ -82,6 +101,26 @@ class EmployeePortalController extends Controller
 
         $dept = $emp->organizationAssignment->department->name ?? null;
         $desig = $emp->organizationAssignment->designation->name ?? null;
+        $leaveWorkflow = CompanyProcessSettings::usesLeaveWorkflow($emp);
+
+        $leaveBalances = [];
+        try {
+            $eligRequest = Request::create('/leave-eligibility', 'GET', [
+                'employee_id' => $emp->id,
+            ]);
+            $eligResponse = app(LeaveMasterController::class)->getLeaveEligibility($eligRequest);
+            $eligJson = json_decode($eligResponse->getContent(), true) ?: [];
+            $leaveBalances = $eligJson['eligible_leaves'] ?? [];
+        } catch (\Throwable $e) {
+            $leaveBalances = [];
+        }
+
+        $coveringPending = 0;
+        if ($leaveWorkflow && Schema::hasColumn('leave_masters', 'covering_employee_id')) {
+            $coveringPending = leave_master::where('covering_employee_id', $emp->id)
+                ->where('status', 'Pending_Covering')
+                ->count();
+        }
 
         return response()->json([
             'employee' => [
@@ -106,6 +145,16 @@ class EmployeePortalController extends Controller
             'pendingLeave' => $pendingLeave,
             'pendingAdvance' => $pendingAdvance,
             'advances' => $advances,
+            'leaveWorkflow' => $leaveWorkflow,
+            'leaveBalances' => $leaveBalances,
+            'coveringPending' => $coveringPending,
+            'smsAvailable' => false,
+            'weeklyOffEnabled' => CompanyProcessSettings::usesWeeklyOff($emp),
+            'medicalClaimsEnabled' => CompanyProcessSettings::usesMedicalClaims($emp),
+            'salaryAdvancePack' => CompanyProcessSettings::usesSalaryAdvancePack($emp),
+            'weeklyOffBalance' => CompanyProcessSettings::usesWeeklyOff($emp) ? WeeklyOffService::balance($emp) : null,
+            'medicalQuota' => CompanyProcessSettings::usesMedicalClaims($emp) ? MedicalClaimService::quota($emp) : null,
+            'advanceQuota' => CompanyProcessSettings::usesSalaryAdvancePack($emp) ? SalaryAdvanceService::quota($emp) : null,
         ]);
     }
 
@@ -248,6 +297,32 @@ class EmployeePortalController extends Controller
         }
         $days = round($calendarDays * $unit, 4);
 
+        if (CompanyProcessSettings::usesLeaveWorkflow($emp)) {
+            $inner = Request::create('/leave-masters', 'POST', [
+                'employee_id' => $emp->id,
+                'reporting_date' => now()->toDateString(),
+                'leave_type' => $request->leave_type,
+                'leave_from' => $request->leave_from,
+                'leave_to' => $request->leave_to,
+                'leave_date' => $request->leave_from === $request->leave_to ? $request->leave_from : null,
+                'reason' => $request->reason,
+                'status' => 'Pending',
+                'is_half_day' => $dayType === 'HALF',
+                'is_short_leave' => $dayType === 'SHORT',
+                'covering_employee_id' => $request->input('covering_employee_id'),
+            ]);
+            $inner->setUserResolver(fn () => $request->user());
+            $response = app(LeaveMasterController::class)->store($inner);
+            if ($response->getStatusCode() >= 400) {
+                return $response;
+            }
+
+            return response()->json([
+                'message' => 'Leave request submitted for covering approval',
+                'data' => json_decode($response->getContent(), true),
+            ], 201);
+        }
+
         $leave = leave_master::create([
             'employee_id' => $emp->id,
             'reporting_date' => now()->toDateString(),
@@ -265,6 +340,74 @@ class EmployeePortalController extends Controller
         ]);
 
         return response()->json(['message' => 'Leave request submitted', 'data' => $leave], 201);
+    }
+
+    public function coveringColleagues(Request $request)
+    {
+        $emp = $this->requireEmployee($request);
+        $companyId = $emp->organizationAssignment->company_id ?? null;
+        $query = employee::query()->where('id', '!=', $emp->id);
+        if ($companyId) {
+            $query->whereHas('organizationAssignment', function ($q) use ($companyId) {
+                $q->where('company_id', $companyId);
+            });
+        }
+        $items = $query->orderBy('full_name')->limit(400)->get([
+            'id',
+            'full_name',
+            'name_with_initials',
+            'attendance_employee_no',
+        ]);
+
+        return response()->json(['items' => $items]);
+    }
+
+    public function coveringLeaves(Request $request)
+    {
+        $emp = $this->requireEmployee($request);
+        if (!Schema::hasColumn('leave_masters', 'covering_employee_id')) {
+            return response()->json(['items' => []]);
+        }
+        $rows = leave_master::with('employee')
+            ->where('covering_employee_id', $emp->id)
+            ->where('status', 'Pending_Covering')
+            ->orderByDesc('id')
+            ->get();
+
+        return response()->json(['items' => $rows]);
+    }
+
+    public function respondCovering(Request $request, $id)
+    {
+        $emp = $this->requireEmployee($request);
+        $action = strtolower((string) $request->input('action'));
+        if (!in_array($action, ['approve', 'reject'], true)) {
+            return response()->json(['message' => 'Action must be approve or reject.'], 422);
+        }
+        if (!CompanyProcessSettings::usesLeaveWorkflow($emp)) {
+            return response()->json(['message' => 'Covering workflow is not enabled for this company.'], 422);
+        }
+
+        $leave = leave_master::with('employee')->findOrFail($id);
+        if ((int) $leave->covering_employee_id !== (int) $emp->id) {
+            return response()->json(['message' => 'This covering request is not assigned to you.'], 403);
+        }
+        if ($leave->status !== 'Pending_Covering') {
+            return response()->json(['message' => 'This covering request is no longer pending.'], 422);
+        }
+
+        $newStatus = $action === 'approve' ? 'Pending_Supervisor' : 'Rejected';
+        $payload = ['status' => $newStatus];
+        if (Schema::hasColumn('leave_masters', 'covering_status')) {
+            $payload['covering_status'] = $action === 'approve' ? 'Approved' : 'Rejected';
+        }
+        if ($action === 'reject') {
+            $payload['rejection_reason'] = $request->input('reason') ?: 'Rejected by covering person';
+        }
+        $leave->update($payload);
+        LeaveNotificationService::statusChanged($leave->fresh(), $newStatus, $payload['rejection_reason'] ?? null);
+
+        return response()->json(['message' => 'Covering response saved', 'data' => $leave->fresh()]);
     }
 
     public function myAdvances(Request $request)
@@ -296,6 +439,17 @@ class EmployeePortalController extends Controller
 
         if ($pending) {
             return response()->json(['message' => 'You already have a pending salary advance request.'], 422);
+        }
+
+        if (CompanyProcessSettings::usesSalaryAdvancePack($emp)) {
+            $quota = SalaryAdvanceService::quota($emp);
+            if ((float) $request->amount - $quota['available'] > 0.009) {
+                return response()->json([
+                    'message' => 'Advance exceeds available amount.',
+                    'available' => $quota['available'],
+                    'quota' => $quota,
+                ], 422);
+            }
         }
 
         $row = SalaryAdvanceRequest::create([
@@ -344,6 +498,7 @@ class EmployeePortalController extends Controller
         }
 
         $row = SalaryAdvanceRequest::findOrFail($id);
+        $row->load('employee.organizationAssignment');
         if ($row->status !== 'PENDING') {
             return response()->json(['message' => 'This request has already been reviewed.'], 422);
         }
@@ -353,6 +508,20 @@ class EmployeePortalController extends Controller
         $row->reviewed_by = $user->id;
         $row->reviewed_at = now();
         $row->save();
+
+        if ($row->employee && CompanyProcessSettings::usesSalaryAdvancePack($row->employee)) {
+            if ($row->status === 'APPROVED') {
+                PendingPaymentService::record($row->employee, 'salary_advance', $row->id, (float) $row->amount);
+            }
+            LeaveNotificationService::notifyEmployee(
+                $row->employee_id,
+                $row->status === 'APPROVED' ? 'Salary advance approved' : 'Salary advance rejected',
+                $row->status === 'APPROVED'
+                    ? 'Your salary advance was approved and sent to Pending Payments.'
+                    : 'Your salary advance request was rejected.',
+                ['type' => 'salary_advance', 'id' => $row->id, 'status' => $row->status]
+            );
+        }
 
         return response()->json(['message' => 'Advance request updated', 'data' => $row]);
     }

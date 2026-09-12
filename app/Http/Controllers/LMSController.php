@@ -67,13 +67,10 @@ class LMSController extends Controller
         // Create modules if provided
         if ($request->has('modules') && is_array($request->modules)) {
             foreach ($request->modules as $index => $moduleData) {
-                $path = null;
+                $path = $moduleData['file_url'] ?? null;
                 if ($request->hasFile("modules.{$index}.file")) {
                     $file = $request->file("modules.{$index}.file");
-                    // Save using the original filename sent by the frontend
-                    $originalName = $file->getClientOriginalName();
-                    $storedPath = $file->storeAs('modules', $originalName, 'public');
-                    $path = Storage::url($storedPath); // public URL
+                    $path = app(\App\Services\FirebaseStorageService::class)->storeFile($file, 'hr/lms/modules');
                 }
 
                 modules::create([
@@ -91,7 +88,7 @@ class LMSController extends Controller
             foreach ($request->file('attachments') as $file) {
                 // Save using original filename from frontend
                 $originalName = $file->getClientOriginalName();
-                $storedPath = $file->storeAs('attachments', $originalName, 'public');
+                $url = app(\App\Services\FirebaseStorageService::class)->storeFile($file, 'hr/lms/attachments');
                 $mime = $file->getMimeType();
                 $type = str_contains($mime, 'pdf') ? 'pdf' : 'video';
 
@@ -99,7 +96,7 @@ class LMSController extends Controller
                     'course_id' => $course->id,
                     'name' => $originalName,
                     'type' => $type,
-                    'url' => Storage::url($storedPath),
+                    'url' => $url,
                     'size' => $file->getSize(),
                 ]);
             }
@@ -181,8 +178,7 @@ class LMSController extends Controller
                     // Handle file upload if provided
                     if ($request->hasFile("modules.{$index}.file")) {
                         $file = $request->file("modules.{$index}.file");
-                        $storedPath = $file->store('modules', 'public');
-                        $path = Storage::url($storedPath);
+                        $path = app(\App\Services\FirebaseStorageService::class)->storeFile($file, 'hr/lms/modules');
 
                         // Delete old file if it exists
                         if ($module->path) {
@@ -203,10 +199,9 @@ class LMSController extends Controller
                     // Create new module
                     if ($request->hasFile("modules.{$index}.file")) {
                         $file = $request->file("modules.{$index}.file");
-                        // Save using original filename sent by the frontend
-                        $originalName = $file->getClientOriginalName();
-                        $storedPath = $file->storeAs('modules', $originalName, 'public');
-                        $path = Storage::url($storedPath);
+                        $path = app(\App\Services\FirebaseStorageService::class)->storeFile($file, 'hr/lms/modules');
+                    } elseif (!empty($moduleData['file_url'])) {
+                        $path = $moduleData['file_url'];
                     }
 
                     $newModule = modules::create([
@@ -245,7 +240,7 @@ class LMSController extends Controller
             foreach ($request->file('attachments') as $file) {
                 // Save using original filename from frontend
                 $originalName = $file->getClientOriginalName();
-                $storedPath = $file->storeAs('attachments', $originalName, 'public');
+                $url = app(\App\Services\FirebaseStorageService::class)->storeFile($file, 'hr/lms/attachments');
                 $mime = $file->getMimeType();
                 $type = str_contains($mime, 'pdf') ? 'pdf' : 'video';
 
@@ -253,7 +248,7 @@ class LMSController extends Controller
                     'course_id' => $course->id,
                     'name' => $originalName,
                     'type' => $type,
-                    'url' => Storage::url($storedPath),
+                    'url' => $url,
                     'size' => $file->getSize(),
                 ]);
             }

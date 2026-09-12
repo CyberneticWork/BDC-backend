@@ -7,12 +7,15 @@ use App\Models\leave_master;
 use App\Models\employee;
 use App\Models\LeaveSetting;
 use App\Models\NoPayRecord;
+use App\Services\CompanyProcessSettings;
+use App\Services\LeaveNotificationService;
 use Illuminate\Support\Facades\Validator;
 use App\Mail\LeaveApprovedMail;
 use App\Mail\LeaveRejectedMail;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Schema;
 use Carbon\Carbon;
 
 class LeaveMasterController extends Controller
@@ -31,7 +34,7 @@ class LeaveMasterController extends Controller
 
     public function index()
     {
-        $leaveMasters = leave_master::with('employee')->get();
+        $leaveMasters = leave_master::with(['employee', 'coveringEmployee'])->get();
         return response()->json($leaveMasters);
     }
 
@@ -51,7 +54,8 @@ class LeaveMasterController extends Controller
             'cancel_from' => 'nullable|date',
             'cancel_to' => 'nullable|date|after_or_equal:cancel_from',
             'reason' => 'nullable|string|max:1000',
-            'status' => 'required|in:Pending,Pending_Supervisor,Approved,HR_Approved,Rejected',
+            'status' => 'required|in:Pending,Pending_Covering,Pending_Supervisor,Approved,HR_Approved,Rejected',
+            'covering_employee_id' => 'nullable|exists:employees,id',
             'force_continue' => 'nullable|boolean'
         ]);
 
@@ -141,6 +145,8 @@ class LeaveMasterController extends Controller
             $asOfDate
         );
 
+        $usesLeaveWorkflow = CompanyProcessSettings::usesLeaveWorkflow($employee);
+
         $combinedSplit = null;
         $nopayPreviewDays = 0.0;
         if ($entitlementCheck !== null) {
@@ -178,6 +184,22 @@ class LeaveMasterController extends Controller
             }
         }
 
+        $normalizedType = strtolower(trim((string) $leaveType));
+        $isNoPayType = str_contains($normalizedType, 'no pay') || str_contains($normalizedType, 'nopay');
+        $combinedNopay = 0.0;
+        if (is_array($combinedSplit)) {
+            foreach ($combinedSplit as $part) {
+                $combinedNopay += (float) ($part['nopay_days'] ?? 0);
+            }
+        }
+        if ($usesLeaveWorkflow && !$isNoPayType && ($nopayPreviewDays > 0.0001 || $combinedNopay > 0.0001)) {
+            return response()->json([
+                'message' => 'Leave request exceeds available leave balance.',
+                'requested_days' => $requestedDurationInDays,
+                'shortfall_days' => max($nopayPreviewDays, $combinedNopay),
+            ], 422);
+        }
+
         $data = $request->all();
         $data['is_half_day'] = $isHalfDay;
         $data['is_short_leave'] = $isShortLeave;
@@ -189,7 +211,26 @@ class LeaveMasterController extends Controller
         // =========================================================================
         // 🔥 NEW LOGIC: EMPLOYMENT STATUS එක අනුව STATUS එක වෙනස් කිරීම 🔥
         // =========================================================================
-        if ($request->status === 'Pending') {
+        if ($usesLeaveWorkflow && in_array((string) $request->status, ['Pending', 'Pending_Covering'], true)) {
+            $coveringId = (int) $request->input('covering_employee_id');
+            if ($coveringId < 1) {
+                return response()->json(['message' => 'Covering person is required.'], 422);
+            }
+            if ($coveringId === (int) $employee->id) {
+                return response()->json(['message' => 'Covering person cannot be the same employee.'], 422);
+            }
+            $cover = employee::with('organizationAssignment')->find($coveringId);
+            $empCompany = (int) ($employee->organizationAssignment->company_id ?? 0);
+            $coverCompany = (int) ($cover?->organizationAssignment?->company_id ?? 0);
+            if (!$cover || ($empCompany && $coverCompany && $empCompany !== $coverCompany)) {
+                return response()->json(['message' => 'Covering person must be from the same company.'], 422);
+            }
+            $data['status'] = 'Pending_Covering';
+            if (Schema::hasColumn('leave_masters', 'covering_employee_id')) {
+                $data['covering_employee_id'] = $coveringId;
+                $data['covering_status'] = 'Pending';
+            }
+        } elseif ($request->status === 'Pending') {
             $employmentType = strtolower($employee->employmentType->name ?? '');
 
             // Employment Status එක 'Training' නම් මුලින්ම Supervisor ගාවට යනවා
@@ -199,6 +240,12 @@ class LeaveMasterController extends Controller
                 // අනිත් හැමෝම (Permanent, Contract etc.) කෙලින්ම Leave Approval එකට (Pending) යනවා
                 $data['status'] = 'Pending';
             }
+        }
+
+        if (!$usesLeaveWorkflow) {
+            unset($data['covering_employee_id'], $data['covering_status']);
+        } elseif (!Schema::hasColumn('leave_masters', 'covering_employee_id')) {
+            unset($data['covering_employee_id'], $data['covering_status']);
         }
         // =========================================================================
 
@@ -236,6 +283,9 @@ class LeaveMasterController extends Controller
             foreach ($combinedSplit as $part) {
                 $balanceTotal += (float) ($part['balance_days'] ?? $part['days'] ?? 0);
             }
+            foreach ($created as $row) {
+                LeaveNotificationService::leaveSubmitted($row);
+            }
             return response()->json([
                 'message' => $nopayTotal > 0.0001
                     ? 'Leave applied using combined Annual and Casual balances; remainder will be NoPay on HR approve.'
@@ -250,6 +300,7 @@ class LeaveMasterController extends Controller
         }
 
         $leaveMaster = leave_master::create($data);
+        LeaveNotificationService::leaveSubmitted($leaveMaster);
         $payload = $leaveMaster->toArray();
         if ($nopayPreviewDays > 0) {
             $payload['nopay_preview_days'] = $nopayPreviewDays;
@@ -385,7 +436,7 @@ class LeaveMasterController extends Controller
     public function updateStatus(Request $request, $id)
     {
         $validator = Validator::make($request->all(), [
-            'status' => 'required|in:Pending,Pending_Supervisor,Approved,HR_Approved,Rejected',
+            'status' => 'required|in:Pending,Pending_Covering,Pending_Supervisor,Approved,HR_Approved,Rejected',
             'rejection_reason' => 'nullable|string|max:1000'
         ]);
 
@@ -396,6 +447,17 @@ class LeaveMasterController extends Controller
         $leaveMaster = leave_master::with('employee.organizationAssignment', 'employee.contactDetail')->findOrFail($id);
         $oldStatus = $leaveMaster->status;
         $newStatus = $request->status;
+        $usesLeaveWorkflow = CompanyProcessSettings::usesLeaveWorkflow($leaveMaster->employee);
+
+        if ($oldStatus === 'Pending_Covering' && $newStatus !== 'Rejected') {
+            return response()->json([
+                'message' => 'This leave is waiting for covering-person approval.',
+            ], 422);
+        }
+
+        if ($usesLeaveWorkflow && $oldStatus === 'Pending_Supervisor' && $newStatus === 'Pending') {
+            $newStatus = 'Approved';
+        }
 
         $wasApproved = in_array($oldStatus, ['Approved', 'HR_Approved'], true);
         $willApprove = in_array($newStatus, ['Approved', 'HR_Approved'], true);
@@ -417,6 +479,7 @@ class LeaveMasterController extends Controller
 
         if ($oldStatus !== $newStatus) {
             $this->sendStatusEmail($leaveMaster, $newStatus, $request->rejection_reason);
+            LeaveNotificationService::statusChanged($leaveMaster, $newStatus, $request->rejection_reason);
         }
 
         return response()->json([
@@ -489,11 +552,13 @@ class LeaveMasterController extends Controller
 
     public function getSupervisorLeaves()
     {
-        // Trainee  (Pending, Approved, Rejected)
-        $leaves = leave_master::with(['employee.employmentType'])
-            ->whereHas('employee.employmentType', function ($query) {
-                $query->where('name', 'LIKE', '%training%')
-                    ->orWhere('name', 'LIKE', '%trainee%');
+        // Trainee history stays as today. Covering-workflow leaves also appear at Pending_Supervisor.
+        $leaves = leave_master::with(['employee.employmentType', 'coveringEmployee'])
+            ->where(function ($q) {
+                $q->whereHas('employee.employmentType', function ($query) {
+                    $query->where('name', 'LIKE', '%training%')
+                        ->orWhere('name', 'LIKE', '%trainee%');
+                })->orWhere('status', 'Pending_Supervisor');
             })
             ->orderBy('created_at', 'desc')
             ->get();
@@ -504,7 +569,7 @@ class LeaveMasterController extends Controller
     public function getPendingLeaveRecords()
     {
         // අනිත් ඔක්කොම අය දාපුවා සහ Supervisor Approve කරපුවා පෙන්වන එක (Leave Approval පේජ් එකට)
-        $pendingLeaves = leave_master::with('employee')->where('status', 'Pending')->get();
+        $pendingLeaves = leave_master::with(['employee', 'coveringEmployee'])->where('status', 'Pending')->get();
         return response()->json($pendingLeaves);
     }
 
@@ -512,19 +577,19 @@ class LeaveMasterController extends Controller
 
     public function getApprovedLeaveRecords()
     {
-        $approvedLeaves = leave_master::with('employee')->where('status', 'Approved')->get();
+        $approvedLeaves = leave_master::with(['employee', 'coveringEmployee'])->where('status', 'Approved')->get();
         return response()->json($approvedLeaves);
     }
 
     public function getHRApprovedLeaveRecords()
     {
-        $hrApprovedLeaves = leave_master::with('employee')->where('status', 'HR_Approved')->get();
+        $hrApprovedLeaves = leave_master::with(['employee', 'coveringEmployee'])->where('status', 'HR_Approved')->get();
         return response()->json($hrApprovedLeaves);
     }
 
     public function getRejectedLeaveRecords()
     {
-        $rejectedLeaves = leave_master::with('employee')->where('status', 'Rejected')->get();
+        $rejectedLeaves = leave_master::with(['employee', 'coveringEmployee'])->where('status', 'Rejected')->get();
         return response()->json($rejectedLeaves);
     }
 

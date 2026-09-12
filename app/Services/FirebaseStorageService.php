@@ -56,6 +56,15 @@ class FirebaseStorageService
         return "https://firebasestorage.googleapis.com/v0/b/{$bucket}/o/{$encoded}?alt=media&token={$token}";
     }
 
+    public function storeFile(UploadedFile $file, string $folder = 'hr'): string
+    {
+        if (!$this->isConfigured()) {
+            throw new \RuntimeException('Firebase Storage is not configured. All images and documents must be uploaded to Firebase.');
+        }
+
+        return $this->upload($file, $folder);
+    }
+
     private function bucket(): string
     {
         return trim((string) config('services.firebase.storage_bucket'), " \t\n\r\0\x0B\"'");

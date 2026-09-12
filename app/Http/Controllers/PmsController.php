@@ -1058,7 +1058,8 @@ class PmsController extends Controller
             'document_name' => 'nullable|string|max:255',
             'document_size' => 'nullable|string|max:50',
             'document_type' => 'nullable|string|max:100',
-            'document' => 'nullable|file|mimes:pdf,doc,docx,xls,xlsx,jpg,jpeg,png,txt|max:10240', // 10MB max
+            'document' => 'nullable|file|mimes:pdf,doc,docx,xls,xlsx,jpg,jpeg,png,txt|max:10240',
+            'document_url' => 'nullable|string|max:2000',
         ], [
             'kpi_assignment_id.required' => 'KPI assignment ID is required',
             'kpi_assignment_id.exists' => 'Invalid KPI assignment ID',
@@ -1112,21 +1113,10 @@ class PmsController extends Controller
             $progressPercentage = (int) $validated['progress_percentage'];
 
             // Handle file upload if present
-            $documentPath = null;
+            $documentPath = $request->input('document_url');
             if ($request->hasFile('document')) {
                 $file = $request->file('document');
-
-                // Create directory if it doesn't exist
-                $uploadPath = storage_path('app/public/task_documents');
-                if (!file_exists($uploadPath)) {
-                    mkdir($uploadPath, 0755, true);
-                }
-
-                // Store file in storage/app/public/task_documents
-                $documentPath = $file->store('task_documents', 'public');
-
-                // Convert to public URL
-                $documentPath = '/storage/' . $documentPath;
+                $documentPath = app(\App\Services\FirebaseStorageService::class)->storeFile($file, 'hr/task-documents');
             }
 
             $submissionData = [

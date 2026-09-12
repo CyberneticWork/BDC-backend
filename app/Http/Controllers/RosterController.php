@@ -275,6 +275,99 @@ class RosterController extends Controller
         }
     }
 
+    public function calendar(Request $request)
+    {
+        $validated = $request->validate([
+            'month' => 'required|date_format:Y-m',
+            'company_id' => 'nullable|exists:companies,id',
+            'department_id' => 'nullable|exists:departments,id',
+            'search' => 'nullable|string|max:100',
+        ]);
+
+        $start = Carbon::createFromFormat('Y-m', $validated['month'])->startOfMonth();
+        $end = $start->copy()->endOfMonth();
+        $from = $start->toDateString();
+        $to = $end->toDateString();
+        $dates = [];
+        for ($d = 1; $d <= $start->daysInMonth; $d++) {
+            $dates[] = $start->copy()->day($d)->toDateString();
+        }
+
+        $query = Roster::with(['employee', 'shift', 'company', 'department'])
+            ->whereNull('deleted_at')
+            ->where(function ($q) {
+                $q->whereNull('status')->orWhere('status', 'Active');
+            })
+            ->where(function ($q) use ($from, $to) {
+                $q->whereBetween('date_from', [$from, $to])
+                    ->orWhereBetween('date_to', [$from, $to])
+                    ->orWhere(function ($inner) use ($from, $to) {
+                        $inner->where('date_from', '<=', $from)->where('date_to', '>=', $to);
+                    });
+            });
+
+        if (!empty($validated['company_id'])) {
+            $query->where('company_id', $validated['company_id']);
+        }
+        if (!empty($validated['department_id'])) {
+            $query->where('department_id', $validated['department_id']);
+        }
+        if (!empty($validated['search'])) {
+            $s = $validated['search'];
+            $query->whereHas('employee', function ($q) use ($s) {
+                $q->where('full_name', 'like', "%{$s}%")
+                    ->orWhere('attendance_employee_no', 'like', "%{$s}%");
+            });
+        }
+
+        $rosters = $query->orderBy('employee_id')->get();
+        $byEmployee = [];
+
+        foreach ($rosters as $roster) {
+            if (!$roster->employee_id || !$roster->employee) {
+                continue;
+            }
+            $empId = $roster->employee_id;
+            if (!isset($byEmployee[$empId])) {
+                $byEmployee[$empId] = [
+                    'employee_id' => $empId,
+                    'emp_no' => $roster->employee->attendance_employee_no,
+                    'employee_name' => $roster->employee->full_name,
+                    'company' => $roster->company?->name,
+                    'department' => $roster->department?->name,
+                    'days' => [],
+                ];
+            }
+            $dayStart = Carbon::parse($roster->date_from ?: $from);
+            $dayEnd = Carbon::parse($roster->date_to ?: $roster->date_from ?: $to);
+            $startTime = $roster->shift?->start_time ? substr($roster->shift->start_time, 0, 5) : null;
+            $endTime = $roster->shift?->end_time ? substr($roster->shift->end_time, 0, 5) : null;
+            $crossesMidnight = $startTime && $endTime && $endTime <= $startTime;
+            $code = $roster->shift?->shift_code ?? $roster->shift?->shift_description ?? 'R';
+
+            for ($d = $dayStart->copy(); $d->lte($dayEnd); $d->addDay()) {
+                $key = $d->toDateString();
+                if ($key < $from || $key > $to) {
+                    continue;
+                }
+                $byEmployee[$empId]['days'][$key][] = [
+                    'shift_code' => $code,
+                    'start_time' => $startTime,
+                    'end_time' => $endTime,
+                    'crosses_midnight' => $crossesMidnight,
+                ];
+            }
+        }
+
+        usort($byEmployee, fn ($a, $b) => strcmp((string) $a['emp_no'], (string) $b['emp_no']));
+
+        return response()->json([
+            'month' => $validated['month'],
+            'dates' => $dates,
+            'data' => array_values($byEmployee),
+        ]);
+    }
+
     public function search(Request $request)
     {
         $validator = Validator::make($request->all(), [

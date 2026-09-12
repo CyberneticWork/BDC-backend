@@ -18,13 +18,16 @@ use Illuminate\Support\Facades\Mail;
 use App\Mail\EmployeePasswordSendEmail;
 use App\Models\organization_assignment;
 use App\Services\EmployeeReportService;
+use App\Services\FirebaseStorageService;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 
 class EmployeeController extends Controller
 {
-    public function __construct(protected EmployeeReportService $employeeReportService)
-    {
+    public function __construct(
+        protected EmployeeReportService $employeeReportService,
+        protected FirebaseStorageService $firebase,
+    ) {
     }
 
     /**
@@ -492,7 +495,7 @@ class EmployeeController extends Controller
                 $profilePicturePath = $request->input('profile_picture_url');
                 $personal['profile_picture_path'] = $profilePicturePath;
             } elseif ($request->hasFile('profile_picture')) {
-                $profilePicturePath = $request->file('profile_picture')->store('employee/profile_pictures', 'public');
+                $profilePicturePath = $this->firebase->storeFile($request->file('profile_picture'), 'hr/employee/photos');
                 $personal['profile_picture_path'] = $profilePicturePath;
             }
 
@@ -610,7 +613,7 @@ class EmployeeController extends Controller
                 $documentsMeta = json_decode($request->input('documents'), true) ?? [];
 
                 foreach ($request->file('documents') as $index => $document) {
-                    $path = $document->store('employee/documents', 'public');
+                    $path = $this->firebase->storeFile($document, 'hr/employee/documents');
 
                     // Extract the document type (e.g., "nid") from the metadata
                     $documentType = $documentsMeta[$index]['type'] ?? 'unknown'; // Fallback to 'unknown' if not provided
@@ -1141,7 +1144,7 @@ class EmployeeController extends Controller
                     Storage::disk('public')->delete($profilePicturePath);
                 }
 
-                $profilePicturePath = $request->file('profile_picture')->store('employee/profile_pictures', 'public');
+                $profilePicturePath = $this->firebase->storeFile($request->file('profile_picture'), 'hr/employee/photos');
                 $personal['profile_picture_path'] = $profilePicturePath;
             }
 
@@ -1235,7 +1238,7 @@ class EmployeeController extends Controller
                 $documentsMeta = $documentsMeta ?? [];
 
                 foreach ($request->file('documents') as $index => $document) {
-                    $path = $document->store('employee/documents', 'public');
+                    $path = $this->firebase->storeFile($document, 'hr/employee/documents');
 
                     // Extract the document type (e.g., "nid") from the metadata
                     $documentType = $documentsMeta[$index]['type'] ?? 'unknown';
@@ -1454,7 +1457,7 @@ class EmployeeController extends Controller
             if ($employee->profile_photo_path && $this->isLocalMediaPath($employee->profile_photo_path) && Storage::disk('public')->exists($employee->profile_photo_path)) {
                 Storage::disk('public')->delete($employee->profile_photo_path);
             }
-            $path = $request->file('profile_photo')->store('employee/profile_pictures', 'public');
+            $path = $this->firebase->storeFile($request->file('profile_photo'), 'hr/employee/photos');
             $employee->update(['profile_photo_path' => $path]);
             return response()->json(['message' => 'Profile picture updated', 'profile_photo_path' => $path], 200);
         } catch (\Exception $e) {

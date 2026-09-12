@@ -34,6 +34,7 @@ class User extends Authenticatable
         'employee_id',
         'role',
         'nic',
+        'acl_customized',
     ];
 
     /**
@@ -67,6 +68,7 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'acl_customized' => 'boolean',
         ];
     }
 
@@ -74,5 +76,10 @@ class User extends Authenticatable
     public function employee()
     {
         return $this->belongsTo(employee::class, 'employee_id');
+    }
+
+    public function aclPermissions()
+    {
+        return $this->hasMany(UserAclPermission::class, 'user_id');
     }
 }

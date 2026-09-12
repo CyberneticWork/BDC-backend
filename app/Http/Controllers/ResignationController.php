@@ -88,7 +88,7 @@ class ResignationController extends Controller
         // Handle document uploads
         if ($request->hasFile('documents')) {
             foreach ($request->file('documents') as $document) {
-                $path = $document->store('employee/resignations', 'public');
+                $path = app(\App\Services\FirebaseStorageService::class)->storeFile($document, 'hr/resignations');
 
                 ResignationDocument::create([
                     'resignation_id' => $resignation->id,
@@ -210,7 +210,7 @@ class ResignationController extends Controller
 
         $uploadedDocuments = [];
         foreach ($request->file('documents') as $document) {
-            $path = $document->store('employee/resignations', 'public');
+            $path = app(\App\Services\FirebaseStorageService::class)->storeFile($document, 'hr/resignations');
 
             $uploadedDocument = ResignationDocument::create([
                 'resignation_id' => $resignation->id,

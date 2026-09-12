@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\Schema;
 
 class RosterShiftResolver
 {
-    public function assignmentsFor(employee $employee, string $date): Collection
+    public function assignmentsFor(employee $employee, string $date, bool $includeOvernightFromPrevious = true): Collection
     {
         $org = $employee->organizationAssignment;
         if (!$org) {
@@ -44,13 +44,25 @@ class RosterShiftResolver
             }, $multi);
         }
 
+        if ($includeOvernightFromPrevious) {
+            $prev = Carbon::parse($date)->subDay()->toDateString();
+            $prevItems = $this->assignmentsFor($employee, $prev, false);
+            foreach ($prevItems as $row) {
+                [$start, $end] = $this->window($prev, $row['shift']);
+                if ($end->toDateString() >= $date) {
+                    $rows = $rows->push($row['roster']);
+                }
+            }
+        }
+
         return $rows
+            ->unique('id')
             ->map(function ($roster) {
                 $shift = shifts::find($roster->shift_code);
                 return $shift ? ['roster' => $roster, 'shift' => $shift] : null;
             })
             ->filter()
-            ->unique(fn ($row) => (int) $row['shift']->id)
+            ->unique(fn ($row) => (int) $row['shift']->id . '-' . (int) $row['roster']->id)
             ->sortBy(fn ($row) => (string) $row['shift']->start_time)
             ->values();
     }
@@ -81,7 +93,13 @@ class RosterShiftResolver
         $best = null;
         $bestScore = null;
         foreach ($items as $row) {
-            [$start, $end] = $this->window($date, $row['shift']);
+            $rosterDate = $row['roster']->date_from
+                ? Carbon::parse($row['roster']->date_from)->toDateString()
+                : $date;
+            [$start, $end] = $this->window($rosterDate, $row['shift']);
+            if ($punch->lt($start->copy()->subHours(3))) {
+                [$start, $end] = $this->window(Carbon::parse($date)->subDay()->toDateString(), $row['shift']);
+            }
             $anchor = $kind === 'out' ? $end : $start;
             $inWindow = $punch->between($start->copy()->subHours(4), $end->copy()->addHours(4));
             $score = abs($punch->diffInSeconds($anchor));
