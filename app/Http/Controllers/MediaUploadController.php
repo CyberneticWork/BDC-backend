@@ -31,7 +31,7 @@ class MediaUploadController extends Controller
         }
 
         $request->validate([
-            'file' => 'required|file|max:10240',
+            'file' => 'required|file|max:20480',
             'folder' => 'nullable|string|max:120',
         ]);
 

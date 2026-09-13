@@ -16,6 +16,7 @@ class Resignation extends Model
         'last_working_day',
         'resignation_reason',
         'status',
+        'submitted_via',
         'notes',
         'exit_interview_form_path',
         'clearance_form_path',

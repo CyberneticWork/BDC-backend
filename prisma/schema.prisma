@@ -1,0 +1,527 @@
+// SPM / JC Food HR (Laravel). Maps MySQL tables used by sohan_hr_system_backend.
+// Not Solar ERP (no hr_* UUID tables).
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Company {
+  id                              BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  company_code                    String    @unique @db.VarChar(50)
+  slug                            String?   @unique @db.VarChar(80)
+  frontend_host                   String?   @db.VarChar(191)
+  org_group                       String?   @db.VarChar(80)
+  logo_url                        String?   @db.VarChar(2048)
+  theme_primary                   String?   @db.VarChar(20)
+  theme_secondary                 String?   @db.VarChar(20)
+  theme_accent                    String?   @db.VarChar(20)
+  theme_json                      Json?
+  name                            String
+  default_sports_fund_percentage Decimal?  @db.Decimal(5, 2)
+  location                        String?
+  established                     Int?      @db.Year
+  nopay_working_days              Int       @default(30) @db.UnsignedTinyInt
+  late_attendance_policy_enabled  Boolean   @default(false)
+  portal_active                   Boolean   @default(false)
+  attendance_process              String    @default("spm_standard") @db.VarChar(40)
+  process_config                  Json?
+  created_at                      DateTime? @db.Timestamp(0)
+  updated_at                      DateTime? @db.Timestamp(0)
+  deleted_at                      DateTime? @db.Timestamp(0)
+
+  rosters                Roster[]
+  weekly_off_entries     WeeklyOffEntry[]
+  pending_payments       PendingPayment[]
+  monthly_late_runs      MonthlyLateDeductionRun[]
+
+  @@index([name])
+  @@map("companies")
+}
+
+model User {
+  id                   BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  employee_id          BigInt?   @db.UnsignedBigInt
+  name                 String
+  email                String    @unique
+  nic                  String?   @unique
+  email_verified_at    DateTime? @db.Timestamp(0)
+  password             String
+  role                 String    @default("user")
+  acl_customized       Boolean   @default(false)
+  is_cybernetic_admin  Boolean   @default(false)
+  remember_token       String?
+  current_team_id      BigInt?   @db.UnsignedBigInt
+  profile_photo_path   String?   @db.VarChar(2048)
+  created_at           DateTime? @db.Timestamp(0)
+  updated_at           DateTime? @db.Timestamp(0)
+  deleted_at           DateTime? @db.Timestamp(0)
+
+  employee Employee? @relation(fields: [employee_id], references: [id], onDelete: Cascade)
+
+  @@index([email])
+  @@index([nic])
+  @@map("users")
+}
+
+model Employee {
+  id                         BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  title                      String
+  attendance_employee_no     String    @unique
+  epf                        String    @unique
+  nic                        String    @unique
+  dob                        DateTime  @db.Date
+  gender                     String
+  name_with_initials         String
+  full_name                  String
+  display_name               String?
+  is_active                  Boolean   @default(true)
+  employment_type_id         BigInt    @db.UnsignedBigInt
+  organization_assignment_id BigInt    @db.UnsignedBigInt
+  marital_status             String?
+  spouse_id                  BigInt?   @db.UnsignedBigInt
+  profile_photo_path         String?   @db.VarChar(2048)
+  email                      String?
+  religion                   String?
+  country_of_birth           String?
+  created_at                 DateTime? @db.Timestamp(0)
+  updated_at                 DateTime? @db.Timestamp(0)
+  deleted_at                 DateTime? @db.Timestamp(0)
+
+  users                      User[]
+  leave_masters              LeaveMaster[]                    @relation("LeaveEmployee")
+  covering_leaves            LeaveMaster[]                    @relation("LeaveCovering")
+  time_cards                 TimeCard[]
+  time_card_audits           TimeCardAudit[]
+  loans                      Loan[]
+  documents                  Document[]
+  rosters                    Roster[]
+  leave_balances             EmployeeLeaveBalance[]
+  salary_advances            SalaryAdvanceRequest[]
+  weekly_off_entries         WeeklyOffEntry[]
+  medical_quotas             EmployeeMedicalQuota[]
+  medical_claims             MedicalClaim[]
+  pending_payments           PendingPayment[]
+  excess_late_decisions      ExcessLateDecision[]
+  monthly_late_items         MonthlyLateDeductionItem[]
+
+  @@index([nic])
+  @@index([epf])
+  @@index([attendance_employee_no])
+  @@map("employees")
+}
+
+model Shift {
+  id                BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  shift_code        String    @unique
+  shift_description String
+  start_time        DateTime? @db.Time(0)
+  end_time          DateTime? @db.Time(0)
+  morning_ot_start  DateTime? @db.Time(0)
+  morning_ot_end    DateTime? @db.Time(0)
+  night_ot_start    DateTime? @db.Time(0)
+  night_ot_end      DateTime? @db.Time(0)
+  midnight_roster   Boolean   @default(false)
+  created_at        DateTime? @db.Timestamp(0)
+  updated_at        DateTime? @db.Timestamp(0)
+  deleted_at        DateTime? @db.Timestamp(0)
+
+  rosters    Roster[]
+  time_cards TimeCard[]
+
+  @@index([shift_code])
+  @@map("shifts")
+}
+
+model Roster {
+  id                 BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  roster_id          String
+  shift_code         BigInt    @db.UnsignedBigInt
+  company_id         BigInt?   @db.UnsignedBigInt
+  department_id      BigInt?   @db.UnsignedBigInt
+  sub_department_id  BigInt?   @db.UnsignedBigInt
+  employee_id        BigInt?   @db.UnsignedBigInt
+  is_recurring       Boolean   @default(true)
+  recurrence_pattern String?
+  notes              String?
+  date_from          DateTime? @db.Date
+  date_to            DateTime? @db.Date
+  status             String    @default("Active") @db.VarChar(20)
+  cancel_reason      String?   @db.VarChar(255)
+  cancelled_at       DateTime? @db.Timestamp(0)
+  created_at         DateTime? @db.Timestamp(0)
+  updated_at         DateTime? @db.Timestamp(0)
+  deleted_at         DateTime? @db.Timestamp(0)
+
+  shift    Shift     @relation(fields: [shift_code], references: [id], onDelete: Cascade)
+  company  Company?  @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  employee Employee? @relation(fields: [employee_id], references: [id], onDelete: Cascade)
+
+  @@index([shift_code])
+  @@index([employee_id])
+  @@index([company_id])
+  @@index([department_id])
+  @@index([sub_department_id])
+  @@map("rosters")
+}
+
+model LeaveMaster {
+  id                   BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  employee_id          BigInt    @db.UnsignedBigInt
+  covering_employee_id BigInt?   @db.UnsignedBigInt
+  covering_status      String?   @db.VarChar(30)
+  reporting_date       DateTime  @db.Date
+  leave_type           String
+  leave_date           DateTime? @db.Date
+  leave_from           DateTime? @db.Date
+  leave_to             DateTime? @db.Date
+  period               String?
+  reason               String?   @db.Text
+  count                Int?      @default(1)
+  status               String    @default("Pending")
+  over_limit           Decimal?  @db.Decimal(10, 2)
+  is_half_day          Boolean   @default(false)
+  is_short_leave       Boolean?  @default(false)
+  short_leave_slot     String?
+  leave_duration       Decimal   @default(1.00) @db.Decimal(5, 2)
+  requested_days       Decimal?  @db.Decimal(8, 4)
+  leave_balance_days   Decimal?  @db.Decimal(8, 4)
+  nopay_days           Decimal   @default(0) @db.Decimal(8, 4)
+  nopay_applied        Boolean   @default(false)
+  nopay_record_id      BigInt?   @db.UnsignedBigInt
+  created_at           DateTime? @db.Timestamp(0)
+  updated_at           DateTime? @db.Timestamp(0)
+  deleted_at           DateTime? @db.Timestamp(0)
+
+  employee          Employee  @relation("LeaveEmployee", fields: [employee_id], references: [id], onDelete: Cascade)
+  covering_employee Employee? @relation("LeaveCovering", fields: [covering_employee_id], references: [id])
+
+  @@index([employee_id])
+  @@index([covering_employee_id])
+  @@map("leave_masters")
+}
+
+model TimeCard {
+  id               BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  employee_id      BigInt    @db.UnsignedBigInt
+  shift_id         BigInt?   @db.UnsignedBigInt
+  fingerprint_clock DateTime?
+  time             DateTime? @db.Time(0)
+  date             DateTime? @db.Date
+  working_hours    String?
+  entry            String?
+  status           String?
+  approval_status  String?   @default("Pending")
+  entry_source     String?   @db.VarChar(20)
+  created_by       BigInt?   @db.UnsignedBigInt
+  actual_date      DateTime? @db.Date
+  reason           String?
+  break_status     String?   @default("Pending")
+  created_at       DateTime? @db.Timestamp(0)
+  updated_at       DateTime? @db.Timestamp(0)
+  deleted_at       DateTime? @db.Timestamp(0)
+
+  employee Employee @relation(fields: [employee_id], references: [id], onDelete: Cascade)
+  shift    Shift?   @relation(fields: [shift_id], references: [id])
+  audits   TimeCardAudit[]
+
+  @@index([employee_id])
+  @@index([shift_id])
+  @@map("time_cards")
+}
+
+model TimeCardAudit {
+  id           BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  time_card_id BigInt?   @db.UnsignedBigInt
+  employee_id  BigInt?   @db.UnsignedBigInt
+  entry_date   DateTime? @db.Date
+  action       String    @db.VarChar(30)
+  source       String?   @db.VarChar(20)
+  reason       String?   @db.Text
+  old_values   Json?
+  new_values   Json?
+  user_id      BigInt?   @db.UnsignedBigInt
+  created_at   DateTime? @db.Timestamp(0)
+  updated_at   DateTime? @db.Timestamp(0)
+
+  time_card TimeCard? @relation(fields: [time_card_id], references: [id])
+  employee  Employee? @relation(fields: [employee_id], references: [id])
+
+  @@index([entry_date, action], map: "time_card_audits_entry_date_action_index")
+  @@index([time_card_id])
+  @@index([employee_id])
+  @@map("time_card_audits")
+}
+
+model Loan {
+  id                      BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  loan_id                 String    @unique
+  employee_id             BigInt    @db.UnsignedBigInt
+  loan_amount             Decimal   @db.Decimal(10, 2)
+  interest_rate_per_annum Decimal   @default(0) @db.Decimal(5, 2)
+  installment_amount      Decimal   @db.Decimal(10, 2)
+  request_date            DateTime? @db.Date
+  start_from              DateTime  @db.Date
+  with_interest           Boolean   @default(false)
+  installment_count       Int?
+  schedule                Json?
+  status                  String    @default("active")
+  deduct_from             String    @default("bonus") @db.VarChar(50)
+  installment_deduct_from String?   @db.VarChar(20)
+  interest_deduct_from    String?   @db.VarChar(20)
+  deduct_basic_amount     Decimal?  @db.Decimal(12, 2)
+  deduct_bonus_amount     Decimal?  @db.Decimal(12, 2)
+  created_at              DateTime? @db.Timestamp(0)
+  updated_at              DateTime? @db.Timestamp(0)
+  deleted_at              DateTime? @db.Timestamp(0)
+
+  employee Employee @relation(fields: [employee_id], references: [id], onDelete: Cascade)
+
+  @@index([employee_id])
+  @@map("loans")
+}
+
+model Document {
+  id            BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  employee_id   BigInt    @db.UnsignedBigInt
+  document_type String?
+  document_name String?
+  document_path String?   @db.Text
+  created_at    DateTime? @db.Timestamp(0)
+  updated_at    DateTime? @db.Timestamp(0)
+  deleted_at    DateTime? @db.Timestamp(0)
+
+  employee Employee @relation(fields: [employee_id], references: [id], onDelete: Cascade)
+
+  @@index([employee_id])
+  @@map("documents")
+}
+
+model EmployeeLeaveBalance {
+  id            BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  employee_id   BigInt    @db.UnsignedBigInt
+  year          Int       @db.UnsignedSmallInt
+  leave_type    String    @db.VarChar(100)
+  entitled_days Decimal   @default(0) @db.Decimal(8, 2)
+  notes         String?   @db.VarChar(255)
+  status        String    @default("active") @db.VarChar(20)
+  created_at    DateTime? @db.Timestamp(0)
+  updated_at    DateTime? @db.Timestamp(0)
+  deleted_at    DateTime? @db.Timestamp(0)
+
+  employee Employee @relation(fields: [employee_id], references: [id], onDelete: Cascade)
+
+  @@unique([employee_id, year, leave_type], map: "emp_leave_balance_unique")
+  @@index([year, status], map: "employee_leave_balances_year_status_index")
+  @@map("employee_leave_balances")
+}
+
+model SalaryAdvanceRequest {
+  id          BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  employee_id BigInt    @db.UnsignedBigInt
+  amount      Decimal   @db.Decimal(12, 2)
+  reason      String    @db.VarChar(500)
+  needed_on   DateTime? @db.Date
+  status      String    @default("PENDING") @db.VarChar(20)
+  review_note String?   @db.VarChar(500)
+  reviewed_by BigInt?   @db.UnsignedBigInt
+  reviewed_at DateTime? @db.Timestamp(0)
+  created_by  BigInt?   @db.UnsignedBigInt
+  created_at  DateTime? @db.Timestamp(0)
+  updated_at  DateTime? @db.Timestamp(0)
+  deleted_at  DateTime? @db.Timestamp(0)
+
+  employee Employee @relation(fields: [employee_id], references: [id], onDelete: Cascade)
+
+  @@index([employee_id, status], map: "salary_advance_requests_employee_id_status_index")
+  @@map("salary_advance_requests")
+}
+
+model WeeklyOffEntry {
+  id           BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  company_id   BigInt?   @db.UnsignedBigInt
+  employee_id  BigInt    @db.UnsignedBigInt
+  off_date     DateTime  @db.Date
+  days         Decimal   @default(1) @db.Decimal(8, 4)
+  source       String    @default("portal") @db.VarChar(20)
+  status       String    @default("Pending") @db.VarChar(20)
+  reason       String?   @db.VarChar(1000)
+  reviewed_by  BigInt?   @db.UnsignedBigInt
+  reviewed_at  DateTime? @db.Timestamp(0)
+  review_note  String?   @db.VarChar(500)
+  created_at   DateTime? @db.Timestamp(0)
+  updated_at   DateTime? @db.Timestamp(0)
+  deleted_at   DateTime? @db.Timestamp(0)
+
+  company  Company? @relation(fields: [company_id], references: [id])
+  employee Employee @relation(fields: [employee_id], references: [id])
+
+  @@index([employee_id, off_date], map: "weekly_off_employee_date")
+  @@index([company_id, status], map: "weekly_off_company_status")
+  @@map("weekly_off_entries")
+}
+
+model EmployeeMedicalQuota {
+  id               BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  employee_id      BigInt   @db.UnsignedBigInt
+  year             Int      @db.UnsignedSmallInt
+  allocated_amount Decimal  @default(0) @db.Decimal(12, 2)
+  notes            String?  @db.VarChar(500)
+  created_at       DateTime? @db.Timestamp(0)
+  updated_at       DateTime? @db.Timestamp(0)
+
+  employee Employee @relation(fields: [employee_id], references: [id])
+
+  @@unique([employee_id, year], map: "employee_medical_quotas_employee_year")
+  @@map("employee_medical_quotas")
+}
+
+model MedicalClaim {
+  id           BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  employee_id  BigInt    @db.UnsignedBigInt
+  year         Int       @db.UnsignedSmallInt
+  amount       Decimal   @db.Decimal(12, 2)
+  description  String?   @db.VarChar(1000)
+  bill_path    String?   @db.VarChar(500)
+  bill_name    String?   @db.VarChar(255)
+  status       String    @default("PENDING") @db.VarChar(20)
+  review_note  String?   @db.VarChar(500)
+  reviewed_by  BigInt?   @db.UnsignedBigInt
+  reviewed_at  DateTime? @db.Timestamp(0)
+  created_by   BigInt?   @db.UnsignedBigInt
+  created_at   DateTime? @db.Timestamp(0)
+  updated_at   DateTime? @db.Timestamp(0)
+  deleted_at   DateTime? @db.Timestamp(0)
+
+  employee Employee @relation(fields: [employee_id], references: [id])
+
+  @@index([employee_id, status], map: "medical_claims_employee_status")
+  @@map("medical_claims")
+}
+
+model PendingPayment {
+  id          BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  company_id  BigInt?   @db.UnsignedBigInt
+  employee_id BigInt    @db.UnsignedBigInt
+  source_type String    @db.VarChar(40)
+  source_id   BigInt    @db.UnsignedBigInt
+  amount      Decimal   @db.Decimal(12, 2)
+  status      String    @default("PENDING") @db.VarChar(20)
+  paid_by     BigInt?   @db.UnsignedBigInt
+  paid_at     DateTime? @db.Timestamp(0)
+  note        String?   @db.VarChar(500)
+  created_at  DateTime? @db.Timestamp(0)
+  updated_at  DateTime? @db.Timestamp(0)
+
+  company  Company? @relation(fields: [company_id], references: [id])
+  employee Employee @relation(fields: [employee_id], references: [id])
+
+  @@unique([source_type, source_id], map: "pending_payments_source")
+  @@index([status, source_type], map: "pending_payments_status_type")
+  @@map("pending_payments")
+}
+
+model ExcessLateDecision {
+  id            BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  employee_id   BigInt    @db.UnsignedBigInt
+  late_date     DateTime  @db.Date
+  late_minutes  Int       @default(0) @db.UnsignedInt
+  shift_minutes Int       @default(480) @db.UnsignedInt
+  action        String    @default("pending") @db.VarChar(20)
+  leave_type    String?   @db.VarChar(50)
+  leave_id      BigInt?   @db.UnsignedBigInt
+  nopay_id      BigInt?   @db.UnsignedBigInt
+  deduct_from   String?   @db.VarChar(20)
+  nopay_days    Decimal   @default(0) @db.Decimal(10, 4)
+  nopay_amount  Decimal   @default(0) @db.Decimal(12, 2)
+  decided_by    BigInt?   @db.UnsignedBigInt
+  decided_at    DateTime? @db.Timestamp(0)
+  notes         String?   @db.Text
+  created_at    DateTime? @db.Timestamp(0)
+  updated_at    DateTime? @db.Timestamp(0)
+
+  employee Employee @relation(fields: [employee_id], references: [id], onDelete: Cascade)
+
+  @@unique([employee_id, late_date], map: "excess_late_emp_date_unique")
+  @@index([late_date, action], map: "excess_late_date_action")
+  @@map("excess_late_decisions")
+}
+
+model MonthlyLateDeductionRun {
+  id             BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  month          Int       @db.UnsignedTinyInt
+  year           Int       @db.UnsignedSmallInt
+  company_id     BigInt?   @db.UnsignedBigInt
+  status         String    @default("preview") @db.VarChar(20)
+  applied_by     BigInt?   @db.UnsignedBigInt
+  applied_at     DateTime? @db.Timestamp(0)
+  employee_count Int       @default(0) @db.UnsignedInt
+  created_at     DateTime? @db.Timestamp(0)
+  updated_at     DateTime? @db.Timestamp(0)
+
+  company Company? @relation(fields: [company_id], references: [id])
+  items   MonthlyLateDeductionItem[]
+
+  @@index([year, month, company_id], map: "monthly_late_deduction_runs_year_month_company_id_index")
+  @@map("monthly_late_deduction_runs")
+}
+
+model MonthlyLateDeductionItem {
+  id                    BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  run_id                BigInt?   @db.UnsignedBigInt
+  employee_id           BigInt    @db.UnsignedBigInt
+  month                 Int       @db.UnsignedTinyInt
+  year                  Int       @db.UnsignedSmallInt
+  total_late_minutes    Int       @default(0) @db.UnsignedInt
+  late_day_count        Int       @default(0) @db.UnsignedInt
+  free_minutes          Int       @default(90) @db.UnsignedInt
+  chargeable_minutes    Int       @default(0) @db.UnsignedInt
+  excess_minutes        Int       @default(0) @db.UnsignedInt
+  short_leave_count     Int       @default(0) @db.UnsignedTinyInt
+  short_leave_days      Decimal   @default(0) @db.Decimal(8, 4)
+  annual_leave_days     Decimal   @default(0) @db.Decimal(8, 4)
+  casual_leave_days     Decimal   @default(0) @db.Decimal(8, 4)
+  nopay_days            Decimal   @default(0) @db.Decimal(8, 4)
+  nopay_minutes         Int       @default(0) @db.UnsignedInt
+  annual_balance_before Decimal   @default(0) @db.Decimal(8, 4)
+  casual_balance_before Decimal   @default(0) @db.Decimal(8, 4)
+  annual_balance_after  Decimal   @default(0) @db.Decimal(8, 4)
+  casual_balance_after  Decimal   @default(0) @db.Decimal(8, 4)
+  band                  String?   @db.VarChar(40)
+  status                String    @default("pending") @db.VarChar(20)
+  breakdown             Json?
+  late_days             Json?
+  created_leave_ids     Json?
+  created_nopay_ids     Json?
+  notes                 String?   @db.Text
+  created_at            DateTime? @db.Timestamp(0)
+  updated_at            DateTime? @db.Timestamp(0)
+  deleted_at            DateTime? @db.Timestamp(0)
+
+  run      MonthlyLateDeductionRun? @relation(fields: [run_id], references: [id])
+  employee Employee                 @relation(fields: [employee_id], references: [id], onDelete: Cascade)
+
+  @@unique([employee_id, year, month], map: "monthly_late_emp_unique")
+  @@index([year, month, status], map: "monthly_late_deduction_items_year_month_status_index")
+  @@map("monthly_late_deduction_items")
+}
+
+model UserAclPermission {
+  id          BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  user_id     BigInt   @db.UnsignedBigInt
+  module_key  String   @db.VarChar(80)
+  can_view    Boolean  @default(false)
+  can_add     Boolean  @default(false)
+  can_edit    Boolean  @default(false)
+  can_delete  Boolean  @default(false)
+  can_approve Boolean  @default(false)
+  created_at  DateTime? @db.Timestamp(0)
+  updated_at  DateTime? @db.Timestamp(0)
+
+  @@unique([user_id, module_key], map: "user_acl_user_module_unique")
+  @@index([module_key])
+  @@map("user_acl_permissions")
+}

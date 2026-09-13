@@ -7,12 +7,15 @@ use App\Models\leave_master;
 use App\Models\employee;
 use App\Models\LeaveSetting;
 use App\Models\NoPayRecord;
+use App\Services\CompanyProcessSettings;
+use App\Services\LeaveNotificationService;
 use Illuminate\Support\Facades\Validator;
 use App\Mail\LeaveApprovedMail;
 use App\Mail\LeaveRejectedMail;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Schema;
 use Carbon\Carbon;
 
 class LeaveMasterController extends Controller
@@ -31,7 +34,7 @@ class LeaveMasterController extends Controller
 
     public function index()
     {
-        $leaveMasters = leave_master::with('employee')->get();
+        $leaveMasters = leave_master::with(['employee', 'coveringEmployee'])->get();
         return response()->json($leaveMasters);
     }
 
@@ -51,7 +54,8 @@ class LeaveMasterController extends Controller
             'cancel_from' => 'nullable|date',
             'cancel_to' => 'nullable|date|after_or_equal:cancel_from',
             'reason' => 'nullable|string|max:1000',
-            'status' => 'required|in:Pending,Pending_Supervisor,Approved,HR_Approved,Rejected',
+            'status' => 'required|in:Pending,Pending_Covering,Pending_Supervisor,Approved,HR_Approved,Rejected',
+            'covering_employee_id' => 'nullable|exists:employees,id',
             'force_continue' => 'nullable|boolean'
         ]);
 
@@ -70,6 +74,18 @@ class LeaveMasterController extends Controller
         // 🔥 මෙතනදී employmentType එකත් එක්කම Employee ව ගන්නවා
         $employee = employee::with(['organizationAssignment', 'employmentType'])->findOrFail($request->employee_id);
         $orgAssignment = $employee->organizationAssignment;
+
+        $leaveType = (string) $request->leave_type;
+        $isMedicalLeave = CompanyProcessSettings::isMedicalLeaveType($leaveType);
+        if ($isMedicalLeave && !CompanyProcessSettings::usesMedicalLeave($employee)) {
+            return response()->json([
+                'message' => 'Medical leave is not enabled for this company.',
+            ], 422);
+        }
+        if ($isMedicalLeave) {
+            $leaveType = 'Medical Leave';
+            $request->merge(['leave_type' => $leaveType]);
+        }
 
         $isHalfDay = filter_var($request->is_half_day, FILTER_VALIDATE_BOOLEAN);
         $isShortLeave = filter_var($request->is_short_leave, FILTER_VALIDATE_BOOLEAN);
@@ -133,6 +149,7 @@ class LeaveMasterController extends Controller
             : ($request->filled('leave_from') ? Carbon::parse($request->leave_from) : Carbon::now());
 
         $leaveType = (string) $request->leave_type;
+        $isMedicalLeave = CompanyProcessSettings::isMedicalLeaveType($leaveType);
         $entitlementCheck = $this->validateLeaveEntitlement(
             $employee,
             $orgAssignment,
@@ -141,9 +158,21 @@ class LeaveMasterController extends Controller
             $asOfDate
         );
 
+        $usesLeaveWorkflow = CompanyProcessSettings::usesLeaveWorkflow($employee);
+
         $combinedSplit = null;
         $nopayPreviewDays = 0.0;
-        if ($entitlementCheck !== null) {
+        $medicalPlan = null;
+        if ($isMedicalLeave) {
+            $medicalPlan = $this->planMedicalLeaveDeduction($employee, $orgAssignment, (float) $requestedDurationInDays, $asOfDate);
+            $nopayPreviewDays = (float) ($medicalPlan['nopay_days'] ?? 0);
+            if ($nopayPreviewDays > 0 && !$overLimitInfo) {
+                $overLimitInfo = [
+                    'reason' => 'balance_shortfall_nopay_preview',
+                    'amount' => $nopayPreviewDays,
+                ];
+            }
+        } elseif ($entitlementCheck !== null) {
             // If selected type alone is short, try Annual + Casual combined (e.g. 0.5 + 0.5 = 1 day)
             $combinedSplit = $this->planAnnualCasualCombinedSplit(
                 $employee,
@@ -178,6 +207,22 @@ class LeaveMasterController extends Controller
             }
         }
 
+        $normalizedType = strtolower(trim((string) $leaveType));
+        $isNoPayType = str_contains($normalizedType, 'no pay') || str_contains($normalizedType, 'nopay');
+        $combinedNopay = 0.0;
+        if (is_array($combinedSplit)) {
+            foreach ($combinedSplit as $part) {
+                $combinedNopay += (float) ($part['nopay_days'] ?? 0);
+            }
+        }
+        if ($usesLeaveWorkflow && !$isNoPayType && ($nopayPreviewDays > 0.0001 || $combinedNopay > 0.0001)) {
+            return response()->json([
+                'message' => 'Leave request exceeds available leave balance.',
+                'requested_days' => $requestedDurationInDays,
+                'shortfall_days' => max($nopayPreviewDays, $combinedNopay),
+            ], 422);
+        }
+
         $data = $request->all();
         $data['is_half_day'] = $isHalfDay;
         $data['is_short_leave'] = $isShortLeave;
@@ -185,11 +230,45 @@ class LeaveMasterController extends Controller
         $data['requested_days'] = $requestedDurationInDays;
         $data['period'] = $request->input('period');
         $data['short_leave_slot'] = $request->input('short_leave_slot');
+        if ($isMedicalLeave && Schema::hasColumn('leave_masters', 'requires_evidence')) {
+            $data['leave_type'] = 'Medical Leave';
+            $data['requires_evidence'] = true;
+            if ($request->filled('evidence_path')) {
+                $data['evidence_path'] = $request->input('evidence_path');
+                $data['evidence_name'] = $request->input('evidence_name');
+            }
+            if (is_array($medicalPlan)) {
+                $data['medical_casual_days'] = $medicalPlan['casual_days'];
+                $data['medical_annual_days'] = $medicalPlan['annual_days'];
+                $data['leave_balance_days'] = $medicalPlan['balance_days'];
+                $data['nopay_days'] = $medicalPlan['nopay_days'];
+                $data['over_limit'] = $medicalPlan['nopay_days'];
+            }
+        }
 
         // =========================================================================
         // 🔥 NEW LOGIC: EMPLOYMENT STATUS එක අනුව STATUS එක වෙනස් කිරීම 🔥
         // =========================================================================
-        if ($request->status === 'Pending') {
+        if ($usesLeaveWorkflow && in_array((string) $request->status, ['Pending', 'Pending_Covering'], true)) {
+            $coveringId = (int) $request->input('covering_employee_id');
+            if ($coveringId < 1) {
+                return response()->json(['message' => 'Covering person is required.'], 422);
+            }
+            if ($coveringId === (int) $employee->id) {
+                return response()->json(['message' => 'Covering person cannot be the same employee.'], 422);
+            }
+            $cover = employee::with('organizationAssignment')->find($coveringId);
+            $empCompany = (int) ($employee->organizationAssignment->company_id ?? 0);
+            $coverCompany = (int) ($cover?->organizationAssignment?->company_id ?? 0);
+            if (!$cover || ($empCompany && $coverCompany && $empCompany !== $coverCompany)) {
+                return response()->json(['message' => 'Covering person must be from the same company.'], 422);
+            }
+            $data['status'] = 'Pending_Covering';
+            if (Schema::hasColumn('leave_masters', 'covering_employee_id')) {
+                $data['covering_employee_id'] = $coveringId;
+                $data['covering_status'] = 'Pending';
+            }
+        } elseif ($request->status === 'Pending') {
             $employmentType = strtolower($employee->employmentType->name ?? '');
 
             // Employment Status එක 'Training' නම් මුලින්ම Supervisor ගාවට යනවා
@@ -199,6 +278,12 @@ class LeaveMasterController extends Controller
                 // අනිත් හැමෝම (Permanent, Contract etc.) කෙලින්ම Leave Approval එකට (Pending) යනවා
                 $data['status'] = 'Pending';
             }
+        }
+
+        if (!$usesLeaveWorkflow) {
+            unset($data['covering_employee_id'], $data['covering_status']);
+        } elseif (!Schema::hasColumn('leave_masters', 'covering_employee_id')) {
+            unset($data['covering_employee_id'], $data['covering_status']);
         }
         // =========================================================================
 
@@ -236,6 +321,9 @@ class LeaveMasterController extends Controller
             foreach ($combinedSplit as $part) {
                 $balanceTotal += (float) ($part['balance_days'] ?? $part['days'] ?? 0);
             }
+            foreach ($created as $row) {
+                LeaveNotificationService::leaveSubmitted($row);
+            }
             return response()->json([
                 'message' => $nopayTotal > 0.0001
                     ? 'Leave applied using combined Annual and Casual balances; remainder will be NoPay on HR approve.'
@@ -250,6 +338,7 @@ class LeaveMasterController extends Controller
         }
 
         $leaveMaster = leave_master::create($data);
+        LeaveNotificationService::leaveSubmitted($leaveMaster);
         $payload = $leaveMaster->toArray();
         if ($nopayPreviewDays > 0) {
             $payload['nopay_preview_days'] = $nopayPreviewDays;
@@ -385,7 +474,7 @@ class LeaveMasterController extends Controller
     public function updateStatus(Request $request, $id)
     {
         $validator = Validator::make($request->all(), [
-            'status' => 'required|in:Pending,Pending_Supervisor,Approved,HR_Approved,Rejected',
+            'status' => 'required|in:Pending,Pending_Covering,Pending_Supervisor,Approved,HR_Approved,Rejected',
             'rejection_reason' => 'nullable|string|max:1000'
         ]);
 
@@ -396,9 +485,30 @@ class LeaveMasterController extends Controller
         $leaveMaster = leave_master::with('employee.organizationAssignment', 'employee.contactDetail')->findOrFail($id);
         $oldStatus = $leaveMaster->status;
         $newStatus = $request->status;
+        $usesLeaveWorkflow = CompanyProcessSettings::usesLeaveWorkflow($leaveMaster->employee);
+
+        if ($oldStatus === 'Pending_Covering' && $newStatus !== 'Rejected') {
+            return response()->json([
+                'message' => 'This leave is waiting for covering-person approval.',
+            ], 422);
+        }
+
+        if ($usesLeaveWorkflow && $oldStatus === 'Pending_Supervisor' && $newStatus === 'Pending') {
+            $newStatus = 'Approved';
+        }
 
         $wasApproved = in_array($oldStatus, ['Approved', 'HR_Approved'], true);
         $willApprove = in_array($newStatus, ['Approved', 'HR_Approved'], true);
+
+        if ($willApprove && !$wasApproved
+            && Schema::hasColumn('leave_masters', 'requires_evidence')
+            && $leaveMaster->requires_evidence
+            && empty($leaveMaster->evidence_path)
+        ) {
+            return response()->json([
+                'message' => 'Medical evidence is required before HR can approve this leave.',
+            ], 422);
+        }
 
         if ($willApprove && !$wasApproved) {
             $this->applyLeaveBalanceAndNopayOnApprove($leaveMaster);
@@ -417,6 +527,7 @@ class LeaveMasterController extends Controller
 
         if ($oldStatus !== $newStatus) {
             $this->sendStatusEmail($leaveMaster, $newStatus, $request->rejection_reason);
+            LeaveNotificationService::statusChanged($leaveMaster, $newStatus, $request->rejection_reason);
         }
 
         return response()->json([
@@ -489,11 +600,13 @@ class LeaveMasterController extends Controller
 
     public function getSupervisorLeaves()
     {
-        // Trainee  (Pending, Approved, Rejected)
-        $leaves = leave_master::with(['employee.employmentType'])
-            ->whereHas('employee.employmentType', function ($query) {
-                $query->where('name', 'LIKE', '%training%')
-                    ->orWhere('name', 'LIKE', '%trainee%');
+        // Trainee history stays as today. Covering-workflow leaves also appear at Pending_Supervisor.
+        $leaves = leave_master::with(['employee.employmentType', 'coveringEmployee'])
+            ->where(function ($q) {
+                $q->whereHas('employee.employmentType', function ($query) {
+                    $query->where('name', 'LIKE', '%training%')
+                        ->orWhere('name', 'LIKE', '%trainee%');
+                })->orWhere('status', 'Pending_Supervisor');
             })
             ->orderBy('created_at', 'desc')
             ->get();
@@ -504,7 +617,7 @@ class LeaveMasterController extends Controller
     public function getPendingLeaveRecords()
     {
         // අනිත් ඔක්කොම අය දාපුවා සහ Supervisor Approve කරපුවා පෙන්වන එක (Leave Approval පේජ් එකට)
-        $pendingLeaves = leave_master::with('employee')->where('status', 'Pending')->get();
+        $pendingLeaves = leave_master::with(['employee', 'coveringEmployee'])->where('status', 'Pending')->get();
         return response()->json($pendingLeaves);
     }
 
@@ -512,19 +625,19 @@ class LeaveMasterController extends Controller
 
     public function getApprovedLeaveRecords()
     {
-        $approvedLeaves = leave_master::with('employee')->where('status', 'Approved')->get();
+        $approvedLeaves = leave_master::with(['employee', 'coveringEmployee'])->where('status', 'Approved')->get();
         return response()->json($approvedLeaves);
     }
 
     public function getHRApprovedLeaveRecords()
     {
-        $hrApprovedLeaves = leave_master::with('employee')->where('status', 'HR_Approved')->get();
+        $hrApprovedLeaves = leave_master::with(['employee', 'coveringEmployee'])->where('status', 'HR_Approved')->get();
         return response()->json($hrApprovedLeaves);
     }
 
     public function getRejectedLeaveRecords()
     {
-        $rejectedLeaves = leave_master::with('employee')->where('status', 'Rejected')->get();
+        $rejectedLeaves = leave_master::with(['employee', 'coveringEmployee'])->where('status', 'Rejected')->get();
         return response()->json($rejectedLeaves);
     }
 
@@ -893,7 +1006,7 @@ class LeaveMasterController extends Controller
                     $q->orWhereRaw('LOWER(leave_type) = ?', [strtolower($alias)]);
                 }
             })
-            ->whereIn('status', ['Approved', 'HR_Approved', 'Pending', 'Pending_Supervisor'])
+            ->whereIn('status', ['Approved', 'HR_Approved', 'Pending', 'Pending_Supervisor', 'Pending_Covering'])
             ->where(function ($query) use ($year) {
                 $query->whereYear('leave_date', $year)
                     ->orWhereYear('leave_from', $year);
@@ -931,6 +1044,23 @@ class LeaveMasterController extends Controller
             }
 
             $totalDays += $days;
+        }
+
+        if (Schema::hasColumn('leave_masters', 'medical_casual_days')
+            && (str_contains($normalized, 'casual') || str_contains($normalized, 'annual'))
+        ) {
+            $medicalQuery = leave_master::where('employee_id', $employeeId)
+                ->whereRaw('LOWER(leave_type) like ?', ['%medical%'])
+                ->whereIn('status', ['Approved', 'HR_Approved', 'Pending', 'Pending_Supervisor', 'Pending_Covering'])
+                ->where(function ($query) use ($year) {
+                    $query->whereYear('leave_date', $year)
+                        ->orWhereYear('leave_from', $year);
+                });
+            if ($excludeLeaveId) {
+                $medicalQuery->where('id', '!=', $excludeLeaveId);
+            }
+            $field = str_contains($normalized, 'casual') ? 'medical_casual_days' : 'medical_annual_days';
+            $totalDays += (float) $medicalQuery->sum($field);
         }
 
         return round($totalDays, 2);
@@ -1065,6 +1195,27 @@ class LeaveMasterController extends Controller
             'calendar_year' => $year,
             'act_accrual_enabled' => $this->isActAccrualEnabled($asOfDate),
             'act_accrual_starts_on' => self::ACT_ACCRUAL_START_DATE,
+        ];
+    }
+
+    /**
+     * Medical leave uses Casual first, then Annual, then NoPay.
+     */
+    private function planMedicalLeaveDeduction($employee, $orgAssignment, float $requestedDays, Carbon $asOfDate): array
+    {
+        $pair = $this->getAnnualCasualAvailability($employee, $orgAssignment, $asOfDate);
+        $casualAvail = max(0, (float) ($pair['Casual Leave'] ?? 0));
+        $annualAvail = max(0, (float) ($pair['Annual Leave'] ?? 0));
+        $fromCasual = min($requestedDays, $casualAvail);
+        $remaining = round($requestedDays - $fromCasual, 4);
+        $fromAnnual = min($remaining, $annualAvail);
+        $nopay = round($remaining - $fromAnnual, 4);
+
+        return [
+            'casual_days' => round($fromCasual, 4),
+            'annual_days' => round($fromAnnual, 4),
+            'balance_days' => round($fromCasual + $fromAnnual, 4),
+            'nopay_days' => max(0, $nopay),
         ];
     }
 
@@ -1304,6 +1455,47 @@ class LeaveMasterController extends Controller
         $requested = (float) ($leave->requested_days
             ?? $leave->leave_duration
             ?? ($leave->is_short_leave ? 0.25 : ($leave->is_half_day ? 0.5 : 1)));
+
+        if (CompanyProcessSettings::isMedicalLeaveType((string) $leave->leave_type)) {
+            $casualAvail = $this->getAvailableDaysForLeaveType($employee, $orgAssignment, 'Casual Leave', $asOfDate, (int) $leave->id);
+            $annualAvail = $this->getAvailableDaysForLeaveType($employee, $orgAssignment, 'Annual Leave', $asOfDate, (int) $leave->id);
+            $fromCasual = min($requested, max(0, $casualAvail));
+            $remaining = round($requested - $fromCasual, 4);
+            $fromAnnual = min($remaining, max(0, $annualAvail));
+            $fromBalance = round($fromCasual + $fromAnnual, 4);
+            $nopayDays = max(0, round($requested - $fromBalance, 4));
+            $updates = [
+                'requested_days' => $requested,
+                'leave_balance_days' => $fromBalance,
+                'leave_duration' => $fromBalance > 0 ? $fromBalance : 0,
+                'nopay_days' => $nopayDays,
+                'over_limit' => $nopayDays,
+                'nopay_applied' => $nopayDays > 0.0001,
+            ];
+            if (Schema::hasColumn('leave_masters', 'medical_casual_days')) {
+                $updates['medical_casual_days'] = round($fromCasual, 4);
+                $updates['medical_annual_days'] = round($fromAnnual, 4);
+            }
+            $nopayRecordId = null;
+            if ($nopayDays > 0.0001) {
+                $record = NoPayRecord::create([
+                    'employee_id' => $leave->employee_id,
+                    'date' => $asOfDate->toDateString(),
+                    'no_pay_count' => $nopayDays,
+                    'description' => "Auto NoPay from medical leave shortfall | Leave #{$leave->id} | "
+                        . "Requested {$requested} day(s), Casual {$fromCasual}, Annual {$fromAnnual}, NoPay {$nopayDays}",
+                    'status' => 'Approved',
+                    'processed_by' => Auth::id(),
+                    'type' => 'LEAVE_SHORTFALL',
+                    'hours' => null,
+                    'minutes' => null,
+                ]);
+                $nopayRecordId = $record->id;
+                $updates['nopay_record_id'] = $nopayRecordId;
+            }
+            $leave->update($updates);
+            return;
+        }
 
         // Pre-marked combined-split NoPay shortfall row — do not take from leave balance
         $premarkedNopayOnly = ((float) ($leave->leave_balance_days ?? 0) <= 0.0001)

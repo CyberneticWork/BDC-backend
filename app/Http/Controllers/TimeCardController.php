@@ -133,65 +133,7 @@ class TimeCardController extends Controller
         $pairedInCard = null;
 
         if ($status === 'OUT' || $status === 'EARLY OUT') {
-            $lastInCard = null;
-            $morningOutRecord = Carbon::parse($storeTime)->hour < 12;
-
-            if ($morningOutRecord) {
-                $previousDayIN = time_card::where('employee_id', $employee->id)
-                    ->whereIn('status', ['IN', 'Late Coming'])
-                    ->where('date', '<', $validated['date'])
-                    ->whereNotExists(function ($q) {
-                        $q->select(DB::raw(1))
-                            ->from('time_cards as tc')
-                            ->whereRaw('tc.employee_id = time_cards.employee_id')
-                            ->whereIn('tc.status', ['OUT', 'Early OUT'])
-                            ->where(function ($x) {
-                                $x->whereRaw('tc.actual_date = time_cards.date')
-                                    ->orWhere(function ($y) {
-                                        $y->whereNull('tc.actual_date')
-                                            ->whereRaw('tc.date = time_cards.date');
-                                    });
-                            });
-                    })
-                    ->orderBy('date', 'desc')
-                    ->orderBy('time', 'desc')
-                    ->first();
-
-                if ($previousDayIN) {
-                    $lastInCard = $previousDayIN;
-                } else {
-                    $lastInCard = time_card::where('employee_id', $employee->id)
-                        ->where('date', $validated['date'])
-                        ->whereIn('status', ['IN', 'Late Coming'])
-                        ->where('time', '<', $storeTime)
-                        ->orderBy('time', 'desc')
-                        ->first();
-
-                    if (!$lastInCard) {
-                        $lastInCard = time_card::where('employee_id', $employee->id)
-                            ->whereIn('status', ['IN', 'Late Coming'])
-                            ->where('date', '<', $validated['date'])
-                            ->orderBy('date', 'desc')
-                            ->orderBy('time', 'desc')
-                            ->first();
-                    }
-                }
-            } else {
-                $lastInCard = time_card::where('employee_id', $employee->id)
-                    ->where('date', $validated['date'])
-                    ->whereIn('status', ['IN', 'Late Coming'])
-                    ->orderBy('time', 'desc')
-                    ->first();
-
-                if (!$lastInCard) {
-                    $lastInCard = time_card::where('employee_id', $employee->id)
-                        ->whereIn('status', ['IN', 'Late Coming'])
-                        ->where('date', '<', $validated['date'])
-                        ->orderBy('date', 'desc')
-                        ->orderBy('time', 'desc')
-                        ->first();
-                }
-            }
+            $lastInCard = $this->findPairedInCard($employee, $validated['date'], $storeTime, $shift);
 
             if ($lastInCard) {
                 $pairedInCard = $lastInCard;
@@ -248,6 +190,9 @@ class TimeCardController extends Controller
         }
         if (Schema::hasColumn('time_cards', 'created_by')) {
             $payload['created_by'] = Auth::id();
+        }
+        if (Schema::hasColumn('time_cards', 'shift_id') && $shift) {
+            $payload['shift_id'] = $shift->id;
         }
 
         $timeCard = time_card::create($payload);
@@ -337,18 +282,24 @@ class TimeCardController extends Controller
         $actual_date = null;
         $pairedInCard = null;
 
-        if ($lastCard && in_array($lastCard->status, ['IN', 'Late Coming'])) {
-            $pairedInCard = $lastCard;
-            $lastInDate = Carbon::parse($lastCard->date);
+        $openIn = $this->findPairedInCard($employee, $request->date, $storeTime, $shift);
+        $treatAsOut = $openIn && (
+            CompanyProcessSettings::usesShiftRoster($employee)
+            || ($lastCard && in_array($lastCard->status, ['IN', 'Late Coming'], true))
+        );
+
+        if ($treatAsOut) {
+            $pairedInCard = $openIn;
+            $lastInDate = Carbon::parse($openIn->date);
             $currentDate = Carbon::parse($request->date);
 
             if ($lastInDate->eq($currentDate)) {
-                $inTime = Carbon::parse($lastCard->time);
-                $outTime = $inputTime;
+                $inTime = Carbon::parse($openIn->date . ' ' . $openIn->time);
+                $outTime = Carbon::parse($request->date . ' ' . $storeTime);
                 $working_hours = $this->computeWorkingHours($employee, $inTime, $outTime, $shift);
 
-                $shiftStartDT = Carbon::parse($request->date . ' ' . $shift->start_time);
-                $shiftEndDT = Carbon::parse($request->date . ' ' . $shift->end_time);
+                $shiftStartDT = Carbon::parse($openIn->date . ' ' . $shift->start_time);
+                $shiftEndDT = Carbon::parse($openIn->date . ' ' . $shift->end_time);
                 if ($shiftEndDT->lte($shiftStartDT)) {
                     $shiftEndDT->addDay();
                 }
@@ -363,13 +314,13 @@ class TimeCardController extends Controller
                     $status = 'OUT';
                 }
             } else {
-                $inDateTime = Carbon::parse($lastCard->date . ' ' . $lastCard->time);
+                $inDateTime = Carbon::parse($openIn->date . ' ' . $openIn->time);
                 $outDateTime = Carbon::parse($request->date . ' ' . $request->time);
                 $working_hours = $this->computeWorkingHours($employee, $inDateTime, $outDateTime, $shift);
 
                 $entryType = 2;
                 $status = 'OUT';
-                $actual_date = $lastCard->date;
+                $actual_date = $openIn->date;
             }
         } else {
             $entryType = 1;
@@ -394,6 +345,9 @@ class TimeCardController extends Controller
         ];
         if (Schema::hasColumn('time_cards', 'entry_source')) {
             $payload['entry_source'] = 'device';
+        }
+        if (Schema::hasColumn('time_cards', 'shift_id') && $shift) {
+            $payload['shift_id'] = $shift->id;
         }
 
         $timeCard = time_card::create($payload);
@@ -622,6 +576,74 @@ class TimeCardController extends Controller
         }
 
         return $this->rosterResolver->primary($employee, $date);
+    }
+
+    private function findPairedInCard(employee $employee, string $date, string $storeTime, ?shifts $shift): ?time_card
+    {
+        if ($shift && CompanyProcessSettings::usesShiftRoster($employee)) {
+            $punch = Carbon::parse($date . ' ' . $storeTime);
+            [$start, $end] = $this->rosterResolver->window($date, $shift);
+            if ($punch->lt($start->copy()->subHours(2))) {
+                $prev = Carbon::parse($date)->subDay()->toDateString();
+                [$start, $end] = $this->rosterResolver->window($prev, $shift);
+            }
+
+            $query = time_card::where('employee_id', $employee->id)
+                ->whereIn('status', ['IN', 'Late Coming'])
+                ->whereNull('deleted_at');
+
+            if (Schema::hasColumn('time_cards', 'shift_id')) {
+                $query->where(function ($q) use ($shift) {
+                    $q->where('shift_id', $shift->id)->orWhereNull('shift_id');
+                });
+            }
+
+            $best = null;
+            foreach ($query->orderBy('date')->orderBy('time')->get() as $card) {
+                $at = Carbon::parse($card->date . ' ' . $card->time);
+                if (!$at->between($start->copy()->subHours(4), $end->copy()->addHour())) {
+                    continue;
+                }
+                $alreadyOut = time_card::where('employee_id', $employee->id)
+                    ->whereIn('status', ['OUT', 'Early OUT'])
+                    ->whereNull('deleted_at')
+                    ->where(function ($q) use ($card, $shift) {
+                        if (Schema::hasColumn('time_cards', 'shift_id') && $shift) {
+                            $q->where('shift_id', $shift->id);
+                        }
+                        $q->where(function ($inner) use ($card) {
+                            $inner->where('actual_date', $card->date)
+                                ->orWhere(function ($d) use ($card) {
+                                    $d->whereNull('actual_date')->where('date', $card->date);
+                                });
+                        });
+                    })
+                    ->exists();
+                if (!$alreadyOut) {
+                    $best = $card;
+                }
+            }
+            if ($best) {
+                return $best;
+            }
+        }
+
+        $sameDay = time_card::where('employee_id', $employee->id)
+            ->where('date', $date)
+            ->whereIn('status', ['IN', 'Late Coming'])
+            ->where('time', '<', $storeTime)
+            ->orderBy('time', 'desc')
+            ->first();
+        if ($sameDay) {
+            return $sameDay;
+        }
+
+        return time_card::where('employee_id', $employee->id)
+            ->whereIn('status', ['IN', 'Late Coming'])
+            ->where('date', '<', $date)
+            ->orderBy('date', 'desc')
+            ->orderBy('time', 'desc')
+            ->first();
     }
 
     private function computeWorkingHours(employee $employee, Carbon $inDateTime, Carbon $outDateTime, ?shifts $shift): float

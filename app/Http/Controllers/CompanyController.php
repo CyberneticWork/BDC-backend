@@ -293,15 +293,9 @@ class CompanyController extends Controller
             $file = $request->file('logo');
             $uploaded = null;
             if ($this->firebase->isConfigured()) {
-                try {
-                    $uploaded = $this->firebase->upload($file, 'hr/company-logos');
-                } catch (\Throwable) {
-                    $uploaded = null;
-                }
-            }
-            if (!$uploaded) {
-                $driveUrl = $this->driveLogos->uploadPublicLogo($file, (string) $company->company_code);
-                $uploaded = $driveUrl ?: url('/storage/' . $file->store('company-logos', 'public'));
+                $uploaded = $this->firebase->upload($file, 'hr/company-logos');
+            } else {
+                throw new \RuntimeException('Firebase Storage is not configured. Company logos must be uploaded to Firebase.');
             }
             $url = $uploaded;
             $theme = $this->themeService->themeFromLogoFile($file->getRealPath());

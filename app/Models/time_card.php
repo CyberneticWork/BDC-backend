@@ -24,6 +24,7 @@ class time_card extends Model
         'actual_date',
         'entry_source',
         'created_by',
+        'shift_id',
         // --- අලුතින් එකතු කළ කොටස ---
         'reason', 
         'break_status'

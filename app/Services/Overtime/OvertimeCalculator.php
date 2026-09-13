@@ -74,6 +74,8 @@ class OvertimeCalculator
         // Permissions Check
         if (!($comp?->ot_morning)) $morningHrs = 0.0;
         if (!($comp?->ot_evening)) $eveningHrs = 0.0;
+        if (!CompanyProcessSettings::earlyInIsOt($employee)) $morningHrs = 0.0;
+        if (!CompanyProcessSettings::lateOutIsOt($employee)) $eveningHrs = 0.0;
 
         // 🔥 මෙතැනදී කෙලින්ම රු. 200 සහ රු. 300 අගයන් ලබා ගනී
         $mRate = (float)($comp->ot_morning_rate ?? 0); // උදා: 200

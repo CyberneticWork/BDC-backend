@@ -71,13 +71,7 @@ use App\Http\Controllers\MonthlyLateDeductionController;
 use App\Http\Controllers\ExcessLateController;
 use App\Models\EmployeeWiseAllowance;
 
-Route::get('/user', function (Request $request) {
-    return $request->user();
-})->middleware('auth:sanctum');
-
-Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
-    return $request->user();
-});
+Route::middleware('auth:sanctum')->get('/user', [\App\Http\Controllers\AclController::class, 'me']);
 
 Route::post('/cybernetic-admin/login', [CyberneticAdminController::class, 'login'])
     ->middleware('throttle:10,1');
@@ -98,6 +92,9 @@ Route::post('/register', [AuthController::class, 'register']);
 // Protected routes
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/change-password', [AuthController::class, 'changePassword']);
+    Route::get('/acl/catalog', [\App\Http\Controllers\AclController::class, 'catalog']);
+    Route::get('/acl/users/{id}', [\App\Http\Controllers\AclController::class, 'show']);
+    Route::put('/acl/users/{id}', [\App\Http\Controllers\AclController::class, 'update']);
 });
 Route::put('/leave-masters/{id}/status', [LeaveMasterController::class, 'updateStatus']);
 Route::get('/leave-types/{employeeId}', [LeaveMasterController::class, 'getLeaveTypes']);
@@ -152,6 +149,7 @@ Route::apiResource('departments', DepartmentsController::class)->only(['store', 
 Route::apiResource('subdepartments', SubDepartmentsController::class);
 
 
+Route::get('/rosters/calendar', [RosterController::class, 'calendar']);
 Route::post('/rosters/bulk', [RosterController::class, 'storeBulk']);
 Route::post('/rosters/bulk-cancel', [RosterController::class, 'bulkCancel']);
 Route::delete('/rosters/bulk-delete', [RosterController::class, 'bulkDestroy']);
@@ -673,12 +671,42 @@ Route::middleware('auth:sanctum')->prefix('me')->group(function () {
     Route::get('/salary', [App\Http\Controllers\EmployeePortalController::class, 'salary']);
     Route::get('/leaves', [App\Http\Controllers\EmployeePortalController::class, 'leaves']);
     Route::post('/leaves', [App\Http\Controllers\EmployeePortalController::class, 'storeLeave']);
+    Route::post('/leaves/{id}/evidence', [App\Http\Controllers\EmployeePortalController::class, 'attachLeaveEvidence']);
+    Route::get('/covering-colleagues', [App\Http\Controllers\EmployeePortalController::class, 'coveringColleagues']);
+    Route::get('/covering-leaves', [App\Http\Controllers\EmployeePortalController::class, 'coveringLeaves']);
+    Route::put('/covering-leaves/{id}', [App\Http\Controllers\EmployeePortalController::class, 'respondCovering']);
     Route::get('/advances', [App\Http\Controllers\EmployeePortalController::class, 'myAdvances']);
     Route::post('/advances', [App\Http\Controllers\EmployeePortalController::class, 'storeAdvance']);
+    Route::get('/weekly-offs', [App\Http\Controllers\WeeklyOffController::class, 'portalIndex']);
+    Route::post('/weekly-offs', [App\Http\Controllers\WeeklyOffController::class, 'portalStore']);
+    Route::get('/medical-claims', [App\Http\Controllers\MedicalClaimController::class, 'portalIndex']);
+    Route::post('/medical-claims', [App\Http\Controllers\MedicalClaimController::class, 'portalStore']);
     Route::post('/change-password', [App\Http\Controllers\EmployeePortalController::class, 'changePassword']);
+    Route::get('/punch', [App\Http\Controllers\EmployeePortalController::class, 'punchStatus']);
+    Route::post('/punch', [App\Http\Controllers\EmployeePortalController::class, 'punch']);
+    Route::get('/notices', [App\Http\Controllers\HrNoticeController::class, 'portalIndex']);
+    Route::post('/push-token', [App\Http\Controllers\HrNoticeController::class, 'savePushToken']);
+    Route::get('/resignations', [ResignationController::class, 'portalIndex']);
+    Route::post('/resignations', [ResignationController::class, 'portalStore']);
+    Route::get('/loans', [LoanController::class, 'portalIndex']);
+    Route::post('/loans', [LoanController::class, 'portalStore']);
 });
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/hr/advance-requests', [App\Http\Controllers\EmployeePortalController::class, 'listAdvances']);
     Route::post('/hr/advance-requests/{id}/review', [App\Http\Controllers\EmployeePortalController::class, 'reviewAdvance']);
+    Route::get('/hr/weekly-offs', [App\Http\Controllers\WeeklyOffController::class, 'hrIndex']);
+    Route::post('/hr/weekly-offs', [App\Http\Controllers\WeeklyOffController::class, 'hrStore']);
+    Route::post('/hr/weekly-offs/{id}/review', [App\Http\Controllers\WeeklyOffController::class, 'hrReview']);
+    Route::get('/hr/medical-claims', [App\Http\Controllers\MedicalClaimController::class, 'hrIndex']);
+    Route::post('/hr/medical-claims/{id}/review', [App\Http\Controllers\MedicalClaimController::class, 'hrReview']);
+    Route::get('/hr/medical-claims/{id}/bill', [App\Http\Controllers\MedicalClaimController::class, 'billUrl']);
+    Route::post('/hr/medical-quotas', [App\Http\Controllers\MedicalClaimController::class, 'upsertQuota']);
+    Route::get('/hr/notices', [App\Http\Controllers\HrNoticeController::class, 'hrIndex']);
+    Route::post('/hr/notices', [App\Http\Controllers\HrNoticeController::class, 'store']);
+    Route::delete('/hr/notices/{id}', [App\Http\Controllers\HrNoticeController::class, 'destroy']);
+    Route::get('/hr/loans', [LoanController::class, 'hrIndex']);
+    Route::post('/hr/loans/{id}/review', [LoanController::class, 'review']);
+    Route::get('/hr/pending-payments', [App\Http\Controllers\PendingPaymentController::class, 'index']);
+    Route::post('/hr/pending-payments/{id}/paid', [App\Http\Controllers\PendingPaymentController::class, 'markPaid']);
 });

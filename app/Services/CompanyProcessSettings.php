@@ -23,19 +23,51 @@ class CompanyProcessSettings
             ],
             [
                 'key' => self::SHIFT_ROSTER,
-                'label' => 'Shift time & roster',
+                'label' => 'Multiple roster (manual table)',
                 'group' => 'Attendance & payroll',
-                'summary' => 'More than one shift on the same day is allowed. Working hours, OT, late, attendance and salary are calculated from each assigned shift window.',
-                'affects' => ['attendance', 'ot', 'late', 'nopay', 'working_hours', 'salary'],
+                'summary' => 'One employee can work more than one roster on the same day (e.g. R1 06:00–13:00 and R3 15:00–20:00). Overnight rosters such as R4 18:00–02:00 next day are allowed. Early/late IN–OUT are recorded; OT or penalty is applied from company config.',
+                'affects' => ['attendance', 'ot', 'late', 'nopay', 'working_hours', 'salary', 'roster_calendar'],
                 'available' => true,
             ],
             [
-                'key' => 'leave_rules',
-                'label' => 'Leave rules pack',
-                'group' => 'Coming soon',
-                'summary' => 'Company-specific leave entitlements and short-leave windows.',
-                'affects' => ['leave'],
-                'available' => false,
+                'key' => 'leave_workflow',
+                'label' => 'Covering-person leave workflow',
+                'group' => 'Leave',
+                'summary' => 'Off = keep the current leave process. On = portal balance + apply, mandatory covering person, then supervisor, then HR. Notifications on approve/reject. Email is sent when configured; SMS only if a provider is set.',
+                'affects' => ['leave', 'employee_portal', 'leave_calendar'],
+                'available' => true,
+            ],
+            [
+                'key' => 'weekly_off',
+                'label' => 'Weekly off management',
+                'group' => 'Leave',
+                'summary' => 'Off = keep the current day-off field only. On = earned weekly offs (1.5/week permanent max 6, 1/week contract-intern-probation max 4), portal apply, carry-forward, and an HR weekly-off schedule employees can see after approve.',
+                'affects' => ['weekly_off', 'employee_portal'],
+                'available' => true,
+            ],
+            [
+                'key' => 'medical_leave',
+                'label' => 'Medical leave with evidence',
+                'group' => 'Leave',
+                'summary' => 'Off = hide medical leave on the employee portal. On = separate medical-leave request, optional report upload, HR cannot approve until evidence is attached, and days deduct Casual first then Annual.',
+                'affects' => ['leave', 'employee_portal'],
+                'available' => true,
+            ],
+            [
+                'key' => 'medical_claims',
+                'label' => 'Medical claims',
+                'group' => 'Benefits',
+                'summary' => 'Off = no medical-claim module. On = portal bill upload, quota vs approved+pending, HR approve/reject, and approved claims go to Pending Payments.',
+                'affects' => ['medical_claims', 'employee_portal', 'pending_payments'],
+                'available' => true,
+            ],
+            [
+                'key' => 'salary_advance',
+                'label' => 'Salary advance quota',
+                'group' => 'Benefits',
+                'summary' => 'Off = keep the current portal advance (no quota). On = show available amount, validate the request, portal notify on HR decision, and approved advances go to Pending Payments.',
+                'affects' => ['salary_advance', 'employee_portal', 'pending_payments'],
+                'available' => true,
             ],
             [
                 'key' => 'holiday_calendar',
@@ -151,5 +183,179 @@ class CompanyProcessSettings
         }
 
         return $hours + 0.45;
+    }
+
+    public static function rosterPolicy($source): array
+    {
+        $company = null;
+        if ($source instanceof company) {
+            $company = $source;
+        } elseif ($source instanceof employee) {
+            $source->loadMissing('organizationAssignment.company');
+            $company = $source->organizationAssignment?->company;
+        } elseif (is_numeric($source)) {
+            $company = company::find((int) $source);
+        }
+
+        $cfg = is_array($company?->process_config) ? $company->process_config : [];
+        $multi = is_array($cfg['multi_roster'] ?? null) ? $cfg['multi_roster'] : [];
+
+        $allowed = ['ot', 'penalty', 'record_only'];
+        $pick = function ($key, $default) use ($multi, $allowed) {
+            $value = strtolower(trim((string) ($multi[$key] ?? $default)));
+            return in_array($value, $allowed, true) ? $value : $default;
+        };
+
+        return [
+            'early_in' => $pick('early_in', 'ot'),
+            'late_in' => $pick('late_in', 'penalty'),
+            'early_out' => $pick('early_out', 'penalty'),
+            'late_out' => $pick('late_out', 'ot'),
+        ];
+    }
+
+    public static function earlyInIsOt($source): bool
+    {
+        return self::rosterPolicy($source)['early_in'] === 'ot';
+    }
+
+    public static function lateOutIsOt($source): bool
+    {
+        return self::rosterPolicy($source)['late_out'] === 'ot';
+    }
+
+    public static function usesLeaveWorkflow($source): bool
+    {
+        return self::packEnabled($source, 'leave_workflow');
+    }
+
+    public static function usesWeeklyOff($source): bool
+    {
+        return self::packEnabled($source, 'weekly_off');
+    }
+
+    public static function usesMedicalClaims($source): bool
+    {
+        return self::packEnabled($source, 'medical_claims');
+    }
+
+    public static function usesMedicalLeave($source): bool
+    {
+        return self::packEnabled($source, 'medical_leave');
+    }
+
+    public static function isMedicalLeaveType(?string $type): bool
+    {
+        $normalized = strtolower(trim((string) $type));
+
+        return $normalized !== '' && str_contains($normalized, 'medical') && !str_contains($normalized, 'claim');
+    }
+
+    public static function usesSalaryAdvancePack($source): bool
+    {
+        return self::packEnabled($source, 'salary_advance');
+    }
+
+    public static function packConfig($source, string $key): array
+    {
+        $cfg = is_array(self::companyOf($source)?->process_config)
+            ? self::companyOf($source)->process_config
+            : [];
+
+        return is_array($cfg[$key] ?? null) ? $cfg[$key] : [];
+    }
+
+    public static function packEnabled($source, string $key): bool
+    {
+        $cfg = is_array(self::companyOf($source)?->process_config)
+            ? self::companyOf($source)->process_config
+            : [];
+        $flag = $cfg[$key] ?? false;
+        if (is_array($flag)) {
+            return !empty($flag['enabled']);
+        }
+
+        return filter_var($flag, FILTER_VALIDATE_BOOLEAN);
+    }
+
+    public static function companyOf($source): ?company
+    {
+        if ($source instanceof company) {
+            return $source;
+        }
+        if ($source instanceof employee) {
+            $source->loadMissing('organizationAssignment.company');
+            return $source->organizationAssignment?->company;
+        }
+        if (is_numeric($source)) {
+            return company::find((int) $source);
+        }
+
+        return null;
+    }
+
+    public static function mobilePunchForEmployee(employee $employee): array
+    {
+        $employee->loadMissing('organizationAssignment.company', 'organizationAssignment.department');
+        $cfg = self::packConfig($employee, 'mobile_punch');
+        $company = $employee->organizationAssignment?->company;
+        $deptId = (int) ($employee->organizationAssignment?->department_id ?? 0);
+        $enabledFlag = !empty($cfg['enabled']);
+        $scope = strtolower(trim((string) ($cfg['scope'] ?? 'company')));
+        if (!in_array($scope, ['company', 'department'], true)) {
+            $scope = 'company';
+        }
+        $deptIds = array_values(array_unique(array_map('intval', $cfg['department_ids'] ?? [])));
+        $inScope = false;
+        if ($enabledFlag && $scope === 'department') {
+            $inScope = $deptId > 0 && in_array($deptId, $deptIds, true);
+        } elseif ($enabledFlag) {
+            $inScope = true;
+        }
+
+        $lat = is_numeric($cfg['latitude'] ?? null) ? (float) $cfg['latitude'] : null;
+        $lng = is_numeric($cfg['longitude'] ?? null) ? (float) $cfg['longitude'] : null;
+        $deptPins = is_array($cfg['department_locations'] ?? null) ? $cfg['department_locations'] : [];
+        $pin = $deptPins[(string) $deptId] ?? $deptPins[$deptId] ?? null;
+        if (is_array($pin)) {
+            if (is_numeric($pin['latitude'] ?? null)) {
+                $lat = (float) $pin['latitude'];
+            }
+            if (is_numeric($pin['longitude'] ?? null)) {
+                $lng = (float) $pin['longitude'];
+            }
+        }
+
+        $gpsSet = $lat !== null && $lng !== null;
+        $radius = (float) ($cfg['radiusMeters'] ?? $cfg['radius_meters'] ?? 400);
+        $office = trim((string) ($cfg['officeName'] ?? $cfg['office_name'] ?? $company?->name ?? 'Office')) ?: 'Office';
+
+        $disabledReason = '';
+        if (!$enabledFlag) {
+            $disabledReason = 'Cybernetic Admin has not enabled mobile fingerprint for this company.';
+        } elseif (!$inScope) {
+            $disabledReason = $scope === 'department'
+                ? 'Mobile fingerprint is only allowed for selected departments.'
+                : 'Mobile fingerprint is not available for your login.';
+        } elseif (!$gpsSet) {
+            $disabledReason = 'Office location is not set. Ask Cybernetic Admin to save the premises pin.';
+        }
+
+        return [
+            'enabled' => $enabledFlag && $inScope && $gpsSet,
+            'inScope' => $inScope,
+            'scope' => $scope,
+            'gpsRequired' => true,
+            'latitude' => $lat,
+            'longitude' => $lng,
+            'radiusMeters' => $radius > 20 ? min($radius, 2000) : 400,
+            'officeName' => $office,
+            'requireBiometric' => array_key_exists('requireBiometric', $cfg)
+                ? !empty($cfg['requireBiometric'])
+                : !empty($cfg['require_biometric'] ?? true),
+            'disabledReason' => $disabledReason,
+            'departmentId' => $deptId ?: null,
+            'departmentName' => $employee->organizationAssignment?->department?->name,
+        ];
     }
 }
