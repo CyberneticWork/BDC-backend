@@ -65,6 +65,11 @@ class FirebaseStorageService
         return $this->upload($file, $folder);
     }
 
+    public function serviceAccountPayload(): ?array
+    {
+        return $this->serviceAccount();
+    }
+
     private function bucket(): string
     {
         return trim((string) config('services.firebase.storage_bucket'), " \t\n\r\0\x0B\"'");

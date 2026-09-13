@@ -671,6 +671,7 @@ Route::middleware('auth:sanctum')->prefix('me')->group(function () {
     Route::get('/salary', [App\Http\Controllers\EmployeePortalController::class, 'salary']);
     Route::get('/leaves', [App\Http\Controllers\EmployeePortalController::class, 'leaves']);
     Route::post('/leaves', [App\Http\Controllers\EmployeePortalController::class, 'storeLeave']);
+    Route::post('/leaves/{id}/evidence', [App\Http\Controllers\EmployeePortalController::class, 'attachLeaveEvidence']);
     Route::get('/covering-colleagues', [App\Http\Controllers\EmployeePortalController::class, 'coveringColleagues']);
     Route::get('/covering-leaves', [App\Http\Controllers\EmployeePortalController::class, 'coveringLeaves']);
     Route::put('/covering-leaves/{id}', [App\Http\Controllers\EmployeePortalController::class, 'respondCovering']);
@@ -681,6 +682,14 @@ Route::middleware('auth:sanctum')->prefix('me')->group(function () {
     Route::get('/medical-claims', [App\Http\Controllers\MedicalClaimController::class, 'portalIndex']);
     Route::post('/medical-claims', [App\Http\Controllers\MedicalClaimController::class, 'portalStore']);
     Route::post('/change-password', [App\Http\Controllers\EmployeePortalController::class, 'changePassword']);
+    Route::get('/punch', [App\Http\Controllers\EmployeePortalController::class, 'punchStatus']);
+    Route::post('/punch', [App\Http\Controllers\EmployeePortalController::class, 'punch']);
+    Route::get('/notices', [App\Http\Controllers\HrNoticeController::class, 'portalIndex']);
+    Route::post('/push-token', [App\Http\Controllers\HrNoticeController::class, 'savePushToken']);
+    Route::get('/resignations', [ResignationController::class, 'portalIndex']);
+    Route::post('/resignations', [ResignationController::class, 'portalStore']);
+    Route::get('/loans', [LoanController::class, 'portalIndex']);
+    Route::post('/loans', [LoanController::class, 'portalStore']);
 });
 
 Route::middleware('auth:sanctum')->group(function () {
@@ -693,6 +702,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/hr/medical-claims/{id}/review', [App\Http\Controllers\MedicalClaimController::class, 'hrReview']);
     Route::get('/hr/medical-claims/{id}/bill', [App\Http\Controllers\MedicalClaimController::class, 'billUrl']);
     Route::post('/hr/medical-quotas', [App\Http\Controllers\MedicalClaimController::class, 'upsertQuota']);
+    Route::get('/hr/notices', [App\Http\Controllers\HrNoticeController::class, 'hrIndex']);
+    Route::post('/hr/notices', [App\Http\Controllers\HrNoticeController::class, 'store']);
+    Route::delete('/hr/notices/{id}', [App\Http\Controllers\HrNoticeController::class, 'destroy']);
+    Route::get('/hr/loans', [LoanController::class, 'hrIndex']);
+    Route::post('/hr/loans/{id}/review', [LoanController::class, 'review']);
     Route::get('/hr/pending-payments', [App\Http\Controllers\PendingPaymentController::class, 'index']);
     Route::post('/hr/pending-payments/{id}/paid', [App\Http\Controllers\PendingPaymentController::class, 'markPaid']);
 });

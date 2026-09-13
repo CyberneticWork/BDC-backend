@@ -75,6 +75,18 @@ class LeaveMasterController extends Controller
         $employee = employee::with(['organizationAssignment', 'employmentType'])->findOrFail($request->employee_id);
         $orgAssignment = $employee->organizationAssignment;
 
+        $leaveType = (string) $request->leave_type;
+        $isMedicalLeave = CompanyProcessSettings::isMedicalLeaveType($leaveType);
+        if ($isMedicalLeave && !CompanyProcessSettings::usesMedicalLeave($employee)) {
+            return response()->json([
+                'message' => 'Medical leave is not enabled for this company.',
+            ], 422);
+        }
+        if ($isMedicalLeave) {
+            $leaveType = 'Medical Leave';
+            $request->merge(['leave_type' => $leaveType]);
+        }
+
         $isHalfDay = filter_var($request->is_half_day, FILTER_VALIDATE_BOOLEAN);
         $isShortLeave = filter_var($request->is_short_leave, FILTER_VALIDATE_BOOLEAN);
 
@@ -137,6 +149,7 @@ class LeaveMasterController extends Controller
             : ($request->filled('leave_from') ? Carbon::parse($request->leave_from) : Carbon::now());
 
         $leaveType = (string) $request->leave_type;
+        $isMedicalLeave = CompanyProcessSettings::isMedicalLeaveType($leaveType);
         $entitlementCheck = $this->validateLeaveEntitlement(
             $employee,
             $orgAssignment,
@@ -149,7 +162,17 @@ class LeaveMasterController extends Controller
 
         $combinedSplit = null;
         $nopayPreviewDays = 0.0;
-        if ($entitlementCheck !== null) {
+        $medicalPlan = null;
+        if ($isMedicalLeave) {
+            $medicalPlan = $this->planMedicalLeaveDeduction($employee, $orgAssignment, (float) $requestedDurationInDays, $asOfDate);
+            $nopayPreviewDays = (float) ($medicalPlan['nopay_days'] ?? 0);
+            if ($nopayPreviewDays > 0 && !$overLimitInfo) {
+                $overLimitInfo = [
+                    'reason' => 'balance_shortfall_nopay_preview',
+                    'amount' => $nopayPreviewDays,
+                ];
+            }
+        } elseif ($entitlementCheck !== null) {
             // If selected type alone is short, try Annual + Casual combined (e.g. 0.5 + 0.5 = 1 day)
             $combinedSplit = $this->planAnnualCasualCombinedSplit(
                 $employee,
@@ -207,6 +230,21 @@ class LeaveMasterController extends Controller
         $data['requested_days'] = $requestedDurationInDays;
         $data['period'] = $request->input('period');
         $data['short_leave_slot'] = $request->input('short_leave_slot');
+        if ($isMedicalLeave && Schema::hasColumn('leave_masters', 'requires_evidence')) {
+            $data['leave_type'] = 'Medical Leave';
+            $data['requires_evidence'] = true;
+            if ($request->filled('evidence_path')) {
+                $data['evidence_path'] = $request->input('evidence_path');
+                $data['evidence_name'] = $request->input('evidence_name');
+            }
+            if (is_array($medicalPlan)) {
+                $data['medical_casual_days'] = $medicalPlan['casual_days'];
+                $data['medical_annual_days'] = $medicalPlan['annual_days'];
+                $data['leave_balance_days'] = $medicalPlan['balance_days'];
+                $data['nopay_days'] = $medicalPlan['nopay_days'];
+                $data['over_limit'] = $medicalPlan['nopay_days'];
+            }
+        }
 
         // =========================================================================
         // 🔥 NEW LOGIC: EMPLOYMENT STATUS එක අනුව STATUS එක වෙනස් කිරීම 🔥
@@ -461,6 +499,16 @@ class LeaveMasterController extends Controller
 
         $wasApproved = in_array($oldStatus, ['Approved', 'HR_Approved'], true);
         $willApprove = in_array($newStatus, ['Approved', 'HR_Approved'], true);
+
+        if ($willApprove && !$wasApproved
+            && Schema::hasColumn('leave_masters', 'requires_evidence')
+            && $leaveMaster->requires_evidence
+            && empty($leaveMaster->evidence_path)
+        ) {
+            return response()->json([
+                'message' => 'Medical evidence is required before HR can approve this leave.',
+            ], 422);
+        }
 
         if ($willApprove && !$wasApproved) {
             $this->applyLeaveBalanceAndNopayOnApprove($leaveMaster);
@@ -958,7 +1006,7 @@ class LeaveMasterController extends Controller
                     $q->orWhereRaw('LOWER(leave_type) = ?', [strtolower($alias)]);
                 }
             })
-            ->whereIn('status', ['Approved', 'HR_Approved', 'Pending', 'Pending_Supervisor'])
+            ->whereIn('status', ['Approved', 'HR_Approved', 'Pending', 'Pending_Supervisor', 'Pending_Covering'])
             ->where(function ($query) use ($year) {
                 $query->whereYear('leave_date', $year)
                     ->orWhereYear('leave_from', $year);
@@ -996,6 +1044,23 @@ class LeaveMasterController extends Controller
             }
 
             $totalDays += $days;
+        }
+
+        if (Schema::hasColumn('leave_masters', 'medical_casual_days')
+            && (str_contains($normalized, 'casual') || str_contains($normalized, 'annual'))
+        ) {
+            $medicalQuery = leave_master::where('employee_id', $employeeId)
+                ->whereRaw('LOWER(leave_type) like ?', ['%medical%'])
+                ->whereIn('status', ['Approved', 'HR_Approved', 'Pending', 'Pending_Supervisor', 'Pending_Covering'])
+                ->where(function ($query) use ($year) {
+                    $query->whereYear('leave_date', $year)
+                        ->orWhereYear('leave_from', $year);
+                });
+            if ($excludeLeaveId) {
+                $medicalQuery->where('id', '!=', $excludeLeaveId);
+            }
+            $field = str_contains($normalized, 'casual') ? 'medical_casual_days' : 'medical_annual_days';
+            $totalDays += (float) $medicalQuery->sum($field);
         }
 
         return round($totalDays, 2);
@@ -1130,6 +1195,27 @@ class LeaveMasterController extends Controller
             'calendar_year' => $year,
             'act_accrual_enabled' => $this->isActAccrualEnabled($asOfDate),
             'act_accrual_starts_on' => self::ACT_ACCRUAL_START_DATE,
+        ];
+    }
+
+    /**
+     * Medical leave uses Casual first, then Annual, then NoPay.
+     */
+    private function planMedicalLeaveDeduction($employee, $orgAssignment, float $requestedDays, Carbon $asOfDate): array
+    {
+        $pair = $this->getAnnualCasualAvailability($employee, $orgAssignment, $asOfDate);
+        $casualAvail = max(0, (float) ($pair['Casual Leave'] ?? 0));
+        $annualAvail = max(0, (float) ($pair['Annual Leave'] ?? 0));
+        $fromCasual = min($requestedDays, $casualAvail);
+        $remaining = round($requestedDays - $fromCasual, 4);
+        $fromAnnual = min($remaining, $annualAvail);
+        $nopay = round($remaining - $fromAnnual, 4);
+
+        return [
+            'casual_days' => round($fromCasual, 4),
+            'annual_days' => round($fromAnnual, 4),
+            'balance_days' => round($fromCasual + $fromAnnual, 4),
+            'nopay_days' => max(0, $nopay),
         ];
     }
 
@@ -1369,6 +1455,47 @@ class LeaveMasterController extends Controller
         $requested = (float) ($leave->requested_days
             ?? $leave->leave_duration
             ?? ($leave->is_short_leave ? 0.25 : ($leave->is_half_day ? 0.5 : 1)));
+
+        if (CompanyProcessSettings::isMedicalLeaveType((string) $leave->leave_type)) {
+            $casualAvail = $this->getAvailableDaysForLeaveType($employee, $orgAssignment, 'Casual Leave', $asOfDate, (int) $leave->id);
+            $annualAvail = $this->getAvailableDaysForLeaveType($employee, $orgAssignment, 'Annual Leave', $asOfDate, (int) $leave->id);
+            $fromCasual = min($requested, max(0, $casualAvail));
+            $remaining = round($requested - $fromCasual, 4);
+            $fromAnnual = min($remaining, max(0, $annualAvail));
+            $fromBalance = round($fromCasual + $fromAnnual, 4);
+            $nopayDays = max(0, round($requested - $fromBalance, 4));
+            $updates = [
+                'requested_days' => $requested,
+                'leave_balance_days' => $fromBalance,
+                'leave_duration' => $fromBalance > 0 ? $fromBalance : 0,
+                'nopay_days' => $nopayDays,
+                'over_limit' => $nopayDays,
+                'nopay_applied' => $nopayDays > 0.0001,
+            ];
+            if (Schema::hasColumn('leave_masters', 'medical_casual_days')) {
+                $updates['medical_casual_days'] = round($fromCasual, 4);
+                $updates['medical_annual_days'] = round($fromAnnual, 4);
+            }
+            $nopayRecordId = null;
+            if ($nopayDays > 0.0001) {
+                $record = NoPayRecord::create([
+                    'employee_id' => $leave->employee_id,
+                    'date' => $asOfDate->toDateString(),
+                    'no_pay_count' => $nopayDays,
+                    'description' => "Auto NoPay from medical leave shortfall | Leave #{$leave->id} | "
+                        . "Requested {$requested} day(s), Casual {$fromCasual}, Annual {$fromAnnual}, NoPay {$nopayDays}",
+                    'status' => 'Approved',
+                    'processed_by' => Auth::id(),
+                    'type' => 'LEAVE_SHORTFALL',
+                    'hours' => null,
+                    'minutes' => null,
+                ]);
+                $nopayRecordId = $record->id;
+                $updates['nopay_record_id'] = $nopayRecordId;
+            }
+            $leave->update($updates);
+            return;
+        }
 
         // Pre-marked combined-split NoPay shortfall row — do not take from leave balance
         $premarkedNopayOnly = ((float) ($leave->leave_balance_days ?? 0) <= 0.0001)

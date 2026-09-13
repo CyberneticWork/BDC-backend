@@ -20,6 +20,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withSchedule(function (Schedule $schedule): void {
         $minutes = max(1, (int) config('hikvision.poll_interval_minutes', 5));
         $schedule->command('hikvision:sync-attendance')->cron("*/{$minutes} * * * *");
+        $schedule->command('attendance:missed-punch-alerts')->everyMinute();
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

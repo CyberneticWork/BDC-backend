@@ -10,6 +10,7 @@ use App\Models\salary_process;
 use App\Models\SalaryAdvanceRequest;
 use App\Models\time_card;
 use App\Services\CompanyProcessSettings;
+use App\Services\FirebaseStorageService;
 use App\Services\LeaveNotificationService;
 use App\Services\MedicalClaimService;
 use App\Services\PendingPaymentService;
@@ -36,7 +37,13 @@ class EmployeePortalController extends Controller
             abort(403, 'No employee profile is linked to your login.');
         }
 
-        $emp = employee::with(['organizationAssignment.department', 'organizationAssignment.designation'])
+        $emp = employee::with([
+            'organizationAssignment.department',
+            'organizationAssignment.designation',
+            'organizationAssignment.company',
+            'employmentType',
+            'contactDetail',
+        ])
             ->find($user->employee_id);
 
         if (!$emp) {
@@ -101,7 +108,10 @@ class EmployeePortalController extends Controller
 
         $dept = $emp->organizationAssignment->department->name ?? null;
         $desig = $emp->organizationAssignment->designation->name ?? null;
+        $company = $emp->organizationAssignment->company->name ?? null;
+        $contact = $emp->contactDetail;
         $leaveWorkflow = CompanyProcessSettings::usesLeaveWorkflow($emp);
+        $medicalLeaveEnabled = CompanyProcessSettings::usesMedicalLeave($emp);
 
         $leaveBalances = [];
         try {
@@ -126,9 +136,35 @@ class EmployeePortalController extends Controller
             'employee' => [
                 'id' => $emp->id,
                 'fullName' => $emp->full_name ?: $emp->name_with_initials,
+                'displayName' => $emp->display_name,
+                'nameWithInitials' => $emp->name_with_initials,
+                'title' => $emp->title,
                 'employeeNo' => $emp->attendance_employee_no,
+                'epf' => $emp->epf,
+                'nic' => $emp->nic,
+                'dob' => $emp->dob,
+                'gender' => $emp->gender,
+                'religion' => $emp->religion,
+                'maritalStatus' => $emp->marital_status,
+                'email' => $emp->email ?: ($contact->email ?? null),
+                'mobile' => $contact->mobile_line ?? null,
+                'landLine' => $contact->land_line ?? null,
+                'permanentAddress' => $contact->permanent_address ?? null,
+                'temporaryAddress' => $contact->temporary_address ?? null,
+                'district' => $contact->district ?? null,
+                'province' => $contact->province ?? null,
+                'emergencyName' => $contact->emg_name ?? null,
+                'emergencyPhone' => $contact->emg_tel ?? null,
+                'emergencyRelationship' => $contact->emg_relationship ?? null,
                 'designation' => $desig,
                 'department' => $dept,
+                'company' => $company,
+                'employmentType' => $emp->employmentType->name ?? null,
+                'dateOfJoining' => $emp->organizationAssignment->date_of_joining ?? null,
+                'dayOff' => $emp->organizationAssignment->day_off ?? null,
+                'supervisor' => $emp->organizationAssignment->current_supervisor ?? null,
+                'photo' => $emp->profile_photo_path,
+                'isActive' => (bool) $emp->is_active,
             ],
             'month' => $month,
             'year' => $year,
@@ -146,6 +182,7 @@ class EmployeePortalController extends Controller
             'pendingAdvance' => $pendingAdvance,
             'advances' => $advances,
             'leaveWorkflow' => $leaveWorkflow,
+            'medicalLeaveEnabled' => $medicalLeaveEnabled,
             'leaveBalances' => $leaveBalances,
             'coveringPending' => $coveringPending,
             'smsAvailable' => false,
@@ -249,9 +286,18 @@ class EmployeePortalController extends Controller
                     'id' => $s->id,
                     'salaryMonth' => (int) $s->month,
                     'salaryYear' => (int) $s->year,
+                    'employeeNo' => $s->employee_no ?: $emp->attendance_employee_no,
+                    'fullName' => $s->full_name ?: ($emp->full_name ?: $emp->name_with_initials),
+                    'companyName' => $s->company_name ?: ($emp->organizationAssignment->company->name ?? null),
+                    'departmentName' => $s->department_name ?: ($emp->organizationAssignment->department->name ?? null),
+                    'basicSalary' => (float) ($s->basic_salary ?? $sb['basic_salary'] ?? 0),
                     'grossPay' => (float) ($sb['gross_salary'] ?? 0),
                     'netPay' => (float) ($sb['net_salary'] ?? $sb['net_pay'] ?? 0),
+                    'totalDeductions' => (float) ($sb['total_deductions'] ?? 0),
                     'status' => $s->status,
+                    'enableEpfEtf' => (bool) $s->enable_epf_etf,
+                    'allowances' => is_array($s->allowances) ? $s->allowances : [],
+                    'deductions' => is_array($s->deductions) ? $s->deductions : [],
                     'breakdown' => $sb,
                 ];
             });
@@ -273,73 +319,96 @@ class EmployeePortalController extends Controller
     public function storeLeave(Request $request)
     {
         $emp = $this->requireEmployee($request);
+        $leaveType = (string) $request->leave_type;
+        $isMedical = CompanyProcessSettings::isMedicalLeaveType($leaveType);
+        if ($isMedical && !CompanyProcessSettings::usesMedicalLeave($emp)) {
+            return response()->json(['message' => 'Medical leave is not enabled for your company.'], 422);
+        }
+        if ($isMedical) {
+            $leaveType = 'Medical Leave';
+        }
+
         $validator = Validator::make($request->all(), [
             'leave_type' => 'required|string|max:255',
             'leave_from' => 'required|date',
             'leave_to' => 'required|date|after_or_equal:leave_from',
             'reason' => 'required|string|max:1000',
             'day_type' => 'nullable|in:FULL,HALF,SHORT',
+            'covering_employee_id' => 'nullable|exists:employees,id',
+            'evidence' => 'nullable|file|mimes:jpg,jpeg,png,pdf,webp|max:8192',
         ]);
 
         if ($validator->fails()) {
             return response()->json(['message' => 'Validation failed', 'errors' => $validator->errors()], 422);
         }
 
+        $evidencePath = null;
+        $evidenceName = null;
+        if ($request->hasFile('evidence')) {
+            $file = $request->file('evidence');
+            $evidencePath = app(FirebaseStorageService::class)->storeFile($file, 'hr/medical-leave');
+            $evidenceName = $file->getClientOriginalName();
+        }
+
         $dayType = strtoupper((string) $request->input('day_type', 'FULL'));
-        $from = Carbon::parse($request->leave_from);
-        $to = Carbon::parse($request->leave_to);
-        $calendarDays = $from->diffInDays($to) + 1;
-        $unit = 1.0;
-        if ($dayType === 'HALF') {
-            $unit = 0.5;
-        } elseif ($dayType === 'SHORT') {
-            $unit = 0.25;
-        }
-        $days = round($calendarDays * $unit, 4);
-
-        if (CompanyProcessSettings::usesLeaveWorkflow($emp)) {
-            $inner = Request::create('/leave-masters', 'POST', [
-                'employee_id' => $emp->id,
-                'reporting_date' => now()->toDateString(),
-                'leave_type' => $request->leave_type,
-                'leave_from' => $request->leave_from,
-                'leave_to' => $request->leave_to,
-                'leave_date' => $request->leave_from === $request->leave_to ? $request->leave_from : null,
-                'reason' => $request->reason,
-                'status' => 'Pending',
-                'is_half_day' => $dayType === 'HALF',
-                'is_short_leave' => $dayType === 'SHORT',
-                'covering_employee_id' => $request->input('covering_employee_id'),
-            ]);
-            $inner->setUserResolver(fn () => $request->user());
-            $response = app(LeaveMasterController::class)->store($inner);
-            if ($response->getStatusCode() >= 400) {
-                return $response;
-            }
-
-            return response()->json([
-                'message' => 'Leave request submitted for covering approval',
-                'data' => json_decode($response->getContent(), true),
-            ], 201);
-        }
-
-        $leave = leave_master::create([
+        $inner = Request::create('/leave-masters', 'POST', [
             'employee_id' => $emp->id,
             'reporting_date' => now()->toDateString(),
-            'leave_type' => $request->leave_type,
+            'leave_type' => $leaveType,
             'leave_from' => $request->leave_from,
             'leave_to' => $request->leave_to,
             'leave_date' => $request->leave_from === $request->leave_to ? $request->leave_from : null,
-            'leave_duration' => $days,
-            'requested_days' => $days,
             'reason' => $request->reason,
             'status' => 'Pending',
             'is_half_day' => $dayType === 'HALF',
             'is_short_leave' => $dayType === 'SHORT',
-            'over_limit' => 0,
+            'covering_employee_id' => $request->input('covering_employee_id'),
+            'evidence_path' => $evidencePath,
+            'evidence_name' => $evidenceName,
+        ]);
+        $inner->setUserResolver(fn () => $request->user());
+        $response = app(LeaveMasterController::class)->store($inner);
+        if ($response->getStatusCode() >= 400) {
+            return $response;
+        }
+
+        $payload = json_decode($response->getContent(), true);
+        return response()->json([
+            'message' => $isMedical
+                ? 'Medical leave submitted. HR can approve only after medical evidence is attached.'
+                : ($payload['message'] ?? 'Leave request submitted'),
+            'data' => $payload,
+        ], 201);
+    }
+
+    public function attachLeaveEvidence(Request $request, $id)
+    {
+        $emp = $this->requireEmployee($request);
+        if (!CompanyProcessSettings::usesMedicalLeave($emp)) {
+            return response()->json(['message' => 'Medical leave is not enabled for your company.'], 422);
+        }
+        $leave = leave_master::where('employee_id', $emp->id)->findOrFail($id);
+        if (!CompanyProcessSettings::isMedicalLeaveType((string) $leave->leave_type)) {
+            return response()->json(['message' => 'Evidence is only for medical leave.'], 422);
+        }
+        if (in_array($leave->status, ['Approved', 'HR_Approved', 'Rejected'], true)) {
+            return response()->json(['message' => 'This leave can no longer accept evidence.'], 422);
+        }
+        $validator = Validator::make($request->all(), [
+            'evidence' => 'required|file|mimes:jpg,jpeg,png,pdf,webp|max:8192',
+        ]);
+        if ($validator->fails()) {
+            return response()->json(['message' => 'Upload a medical report or photo (JPG, PNG, PDF).'], 422);
+        }
+        $file = $request->file('evidence');
+        $path = app(FirebaseStorageService::class)->storeFile($file, 'hr/medical-leave');
+        $leave->update([
+            'requires_evidence' => true,
+            'evidence_path' => $path,
+            'evidence_name' => $file->getClientOriginalName(),
         ]);
 
-        return response()->json(['message' => 'Leave request submitted', 'data' => $leave], 201);
+        return response()->json(['message' => 'Medical evidence attached', 'data' => $leave->fresh()]);
     }
 
     public function coveringColleagues(Request $request)
@@ -549,5 +618,131 @@ class EmployeePortalController extends Controller
         $user->save();
 
         return response()->json(['message' => 'Password changed successfully.']);
+    }
+
+    public function punchStatus(Request $request)
+    {
+        $emp = $this->requireEmployee($request);
+        $cfg = CompanyProcessSettings::mobilePunchForEmployee($emp);
+        $today = now('Asia/Colombo')->toDateString();
+        $punches = time_card::where('employee_id', $emp->id)
+            ->where('date', $today)
+            ->orderBy('time')
+            ->get()
+            ->map(fn ($r) => [
+                'id' => $r->id,
+                'clockTime' => $r->time,
+                'status' => $r->status,
+                'fingerprintClock' => $r->fingerprint_clock,
+            ]);
+        $last = $punches->last();
+        $lastStatus = is_array($last) ? ($last['status'] ?? null) : ($last->status ?? null);
+        $nextStatus = in_array($lastStatus, ['IN', 'Late Coming'], true) ? 'OUT' : 'IN';
+
+        return response()->json([
+            'enabled' => (bool) $cfg['enabled'],
+            'officeName' => $cfg['officeName'],
+            'latitude' => $cfg['latitude'],
+            'longitude' => $cfg['longitude'],
+            'radiusMeters' => $cfg['radiusMeters'],
+            'requireBiometric' => $cfg['requireBiometric'],
+            'gpsRequired' => true,
+            'disabledReason' => $cfg['disabledReason'],
+            'scope' => $cfg['scope'],
+            'nextStatus' => $nextStatus,
+            'today' => $punches,
+            'employee' => [
+                'id' => $emp->id,
+                'fullName' => $emp->full_name ?: $emp->name_with_initials,
+                'employeeNo' => $emp->attendance_employee_no,
+            ],
+        ]);
+    }
+
+    public function punch(Request $request)
+    {
+        $emp = $this->requireEmployee($request);
+        $cfg = CompanyProcessSettings::mobilePunchForEmployee($emp);
+        if (!$cfg['enabled']) {
+            return response()->json([
+                'message' => $cfg['disabledReason'] ?: 'Mobile fingerprint is disabled for your company or department.',
+            ], 403);
+        }
+
+        if ($cfg['requireBiometric'] && !$request->boolean('biometric_ok')) {
+            return response()->json(['message' => 'Confirm with fingerprint / Face ID, or hold the punch button.'], 400);
+        }
+
+        $lat = $request->input('latitude');
+        $lng = $request->input('longitude');
+        $distance = 0;
+        if (!is_numeric($lat) || !is_numeric($lng)) {
+            return response()->json(['message' => 'Turn on location and punch at the selected premises.'], 400);
+        }
+        $distance = (int) round($this->haversineMeters((float) $lat, (float) $lng, $cfg['latitude'], $cfg['longitude']));
+        $accuracy = is_numeric($request->input('accuracy')) ? (float) $request->input('accuracy') : 80;
+        $slack = min(max($accuracy, 0), 120);
+        if ($distance > ($cfg['radiusMeters'] + $slack)) {
+            return response()->json([
+                'message' => "You are {$distance}m from {$cfg['officeName']}. Fingerprint punch is only allowed at that premises.",
+            ], 403);
+        }
+
+        $now = now('Asia/Colombo');
+        $recent = time_card::where('employee_id', $emp->id)
+            ->where('date', $now->toDateString())
+            ->where('created_at', '>=', $now->copy()->subSeconds(90))
+            ->orderByDesc('id')
+            ->first();
+        if ($recent) {
+            return response()->json(['message' => 'Punch already recorded. Wait a minute before the next punch.'], 409);
+        }
+
+        $last = time_card::where('employee_id', $emp->id)
+            ->where('date', $now->toDateString())
+            ->orderByDesc('time')
+            ->orderByDesc('id')
+            ->first();
+        $isOut = $last && in_array($last->status, ['IN', 'Late Coming'], true);
+        $status = $isOut ? 'OUT' : 'IN';
+        $entry = $isOut ? 2 : 1;
+        $clock = $now->format('H:i:s');
+
+        $payload = [
+            'employee_id' => $emp->id,
+            'date' => $now->toDateString(),
+            'time' => $clock,
+            'status' => $status,
+            'entry' => $entry,
+            'reason' => 'Phone fingerprint punch at '.$cfg['officeName']." ({$distance}m)",
+            'created_by' => $request->user()->id,
+        ];
+        if (Schema::hasColumn('time_cards', 'fingerprint_clock')) {
+            $payload['fingerprint_clock'] = now('Asia/Colombo');
+        }
+        if (Schema::hasColumn('time_cards', 'entry_source')) {
+            $payload['entry_source'] = 'MOBILE';
+        }
+        $card = time_card::create($payload);
+
+        return response()->json([
+            'message' => "{$status} recorded at {$clock}",
+            'status' => $status,
+            'clockTime' => $clock,
+            'distance' => $distance,
+            'officeName' => $cfg['officeName'],
+            'nextStatus' => $status === 'IN' || $status === 'Late Coming' ? 'OUT' : 'IN',
+            'card' => $card,
+        ], 201);
+    }
+
+    private function haversineMeters(float $lat1, float $lon1, float $lat2, float $lon2): float
+    {
+        $R = 6371000;
+        $dLat = deg2rad($lat2 - $lat1);
+        $dLon = deg2rad($lon2 - $lon1);
+        $a = sin($dLat / 2) ** 2 + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLon / 2) ** 2;
+
+        return 2 * $R * asin(min(1, sqrt($a)));
     }
 }

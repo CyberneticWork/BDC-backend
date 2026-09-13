@@ -27,6 +27,11 @@ class loans extends Model
         'interest_deduct_from',
         'deduct_basic_amount',
         'deduct_bonus_amount',
+        'reason',
+        'notes',
+        'submitted_via',
+        'processed_by',
+        'processed_at',
     ];
 
 

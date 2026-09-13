@@ -38,6 +38,7 @@ class AclService
             'leave_workflow' => CompanyProcessSettings::usesLeaveWorkflow($company),
             'weekly_off' => CompanyProcessSettings::usesWeeklyOff($company),
             'medical_claims' => CompanyProcessSettings::usesMedicalClaims($company),
+            'medical_leave' => CompanyProcessSettings::usesMedicalLeave($company),
             'salary_advance' => CompanyProcessSettings::usesSalaryAdvancePack($company),
         ];
     }
@@ -88,7 +89,9 @@ class AclService
             return $this->fullMap($enabled, true);
         }
 
-        if ($role === 'employee') {
+        $portalOnly = $role === 'employee'
+            || ($user->employee_id && !in_array($role, ['admin', 'hr', 'supervisor'], true));
+        if ($portalOnly) {
             return $this->intersectEnabled($this->roleTemplate('employee'), $enabled);
         }
 
@@ -120,6 +123,9 @@ class AclService
         $data['permissions'] = $this->effectivePermissions($user);
         $data['company_features'] = $this->companyFeatures($company);
         $data['acl_assignable'] = strtolower((string) $user->role) === 'admin';
+        $role = strtolower((string) $user->role);
+        $data['portal_only'] = $role === 'employee'
+            || ($user->employee_id && !in_array($role, ['admin', 'hr', 'supervisor'], true));
 
         return $data;
     }
@@ -285,8 +291,7 @@ class AclService
                 'dashboard', 'leaveMaster', 'leavecalendar', 'createNewBonus',
             ],
             'employee' => [
-                'dashboard', 'employeePortal', 'myProfile', 'changePassword', 'viewLoans',
-                'salaryRecords', 'downloadSalarySlip', 'leaveMaster', 'attendanceReport', 'SalaryPage',
+                'employeePortal',
             ],
         ];
 

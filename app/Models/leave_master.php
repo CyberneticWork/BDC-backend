@@ -29,6 +29,11 @@ class leave_master extends Model
         'cancel_from',
         'cancel_to',
         'reason',
+        'requires_evidence',
+        'evidence_path',
+        'evidence_name',
+        'medical_casual_days',
+        'medical_annual_days',
         'status',
         'over_limit',
         'covering_employee_id',
@@ -44,6 +49,9 @@ class leave_master extends Model
         'nopay_days' => 'float',
         'nopay_applied' => 'boolean',
         'over_limit' => 'float',
+        'requires_evidence' => 'boolean',
+        'medical_casual_days' => 'float',
+        'medical_annual_days' => 'float',
     ];
 
     public function employee()

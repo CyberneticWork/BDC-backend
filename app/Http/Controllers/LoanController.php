@@ -7,7 +7,12 @@ use App\Models\loans;
 use App\Models\employee;
 use App\Services\LoanReportService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Schema;
+use App\Models\Notification;
+use App\Models\User;
+use App\Services\FcmPushService;
+use App\Services\LeaveNotificationService;
 
 class LoanController extends Controller
 {
@@ -49,7 +54,7 @@ class LoanController extends Controller
             'deduct_from'             => 'sometimes|in:basic,bonus,split',
             'installment_deduct_from' => 'sometimes|in:basic,bonus',
             'interest_deduct_from'    => 'sometimes|in:basic,bonus',
-            'status'                  => 'sometimes|in:active,completed,cancelled',
+            'status'                  => 'sometimes|in:active,completed,cancelled,pending,rejected',
         ]);
 
         $validated = array_merge($validated, $this->normalizeDeductTargets($validated, $loan));
@@ -135,6 +140,12 @@ class LoanController extends Controller
             $loan->installment_count = (int) ($validated['installment_count'] ?? $totalInstallments);
             $loan->status = 'active';
             $loan->schedule = $schedule;
+            if (Schema::hasColumn('loans', 'submitted_via')) {
+                $loan->submitted_via = $request->input('submitted_via', 'hr');
+            }
+            if (Schema::hasColumn('loans', 'reason') && $request->filled('reason')) {
+                $loan->reason = $request->input('reason');
+            }
             if (Schema::hasColumn('loans', 'deduct_from')) {
                 $loan->deduct_from = $validated['deduct_from'];
             }
@@ -360,6 +371,227 @@ class LoanController extends Controller
         }
 
         return date('Y-m-01', $ts);
+    }
+
+    public function portalIndex(Request $request)
+    {
+        $emp = app(EmployeePortalController::class)->linkedEmployee($request);
+        $items = loans::where('employee_id', $emp->id)->orderByDesc('id')->limit(50)->get();
+
+        return response()->json(['items' => $items]);
+    }
+
+    public function portalStore(Request $request)
+    {
+        $emp = app(EmployeePortalController::class)->linkedEmployee($request);
+        $validated = $request->validate([
+            'loan_amount' => 'required|numeric|min:0.01',
+            'installment_amount' => 'required|numeric|min:0.01',
+            'start_from' => 'required|date',
+            'reason' => 'required|string|min:8|max:1000',
+            'installment_deduct_from' => 'nullable|in:basic,bonus',
+        ]);
+
+        $blocked = loans::where('employee_id', $emp->id)
+            ->whereIn('status', ['pending', 'active'])
+            ->exists();
+        if ($blocked) {
+            return response()->json([
+                'message' => 'You already have a pending or active loan. Wait for HR to finish that request.',
+            ], 422);
+        }
+
+        $amount = (float) $validated['loan_amount'];
+        $installment = (float) $validated['installment_amount'];
+        if ($installment > $amount) {
+            return response()->json(['message' => 'Installment cannot be larger than the loan amount.'], 422);
+        }
+        $startFrom = $this->firstOfMonth($validated['start_from']);
+        $schedule = $this->buildEqualSchedule($amount, $installment, $startFrom);
+        $deduct = $validated['installment_deduct_from'] ?? 'bonus';
+
+        $loan = new loans();
+        $loan->loan_id = 'LOAN-REQ-'.$emp->attendance_employee_no.'-'.time();
+        $loan->employee_id = $emp->id;
+        $loan->loan_amount = $amount;
+        $loan->installment_amount = $installment;
+        $loan->start_from = $startFrom;
+        $loan->interest_rate_per_annum = 0;
+        $loan->with_interest = false;
+        $loan->installment_count = count($schedule);
+        $loan->status = 'pending';
+        $loan->schedule = $schedule;
+        if (Schema::hasColumn('loans', 'request_date')) {
+            $loan->request_date = now('Asia/Colombo')->toDateString();
+        }
+        if (Schema::hasColumn('loans', 'reason')) {
+            $loan->reason = $validated['reason'];
+        }
+        if (Schema::hasColumn('loans', 'submitted_via')) {
+            $loan->submitted_via = 'portal';
+        }
+        if (Schema::hasColumn('loans', 'deduct_from')) {
+            $loan->deduct_from = $deduct;
+        }
+        if (Schema::hasColumn('loans', 'installment_deduct_from')) {
+            $loan->installment_deduct_from = $deduct;
+        }
+        if (Schema::hasColumn('loans', 'interest_deduct_from')) {
+            $loan->interest_deduct_from = $deduct;
+        }
+        $loan->save();
+
+        $this->notifyHrLoanRequest($emp, $loan);
+
+        return response()->json([
+            'message' => 'Loan request submitted. HR will review and approve it.',
+            'data' => $loan,
+        ], 201);
+    }
+
+    public function hrIndex(Request $request)
+    {
+        if ($request->user()?->role === 'employee') {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
+        $q = loans::with('employee:id,full_name,name_with_initials,attendance_employee_no')
+            ->orderByDesc('id');
+        if ($status = $request->query('status')) {
+            $q->where('status', $status);
+        }
+
+        return response()->json(['items' => $q->limit(300)->get()]);
+    }
+
+    public function review(Request $request, $id)
+    {
+        if ($request->user()?->role === 'employee') {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
+        $validated = $request->validate([
+            'action' => 'required|in:approve,reject,APPROVE,REJECT',
+            'notes' => 'nullable|string|max:1000',
+            'installment_amount' => 'nullable|numeric|min:0.01',
+            'start_from' => 'nullable|date',
+            'installment_deduct_from' => 'nullable|in:basic,bonus',
+        ]);
+
+        $loan = loans::findOrFail($id);
+        if (strtolower((string) $loan->status) !== 'pending') {
+            return response()->json(['message' => 'This loan request has already been reviewed.'], 422);
+        }
+
+        $action = strtolower($validated['action']);
+        if ($action === 'reject') {
+            $loan->status = 'rejected';
+            if (Schema::hasColumn('loans', 'notes')) {
+                $loan->notes = $validated['notes'] ?? null;
+            }
+            if (Schema::hasColumn('loans', 'processed_by')) {
+                $loan->processed_by = $request->user()->id;
+            }
+            if (Schema::hasColumn('loans', 'processed_at')) {
+                $loan->processed_at = now();
+            }
+            $loan->save();
+            LeaveNotificationService::notifyEmployee((int) $loan->employee_id, 'Loan request declined', $validated['notes'] ?? 'HR declined your loan request.', [
+                'type' => 'loan',
+                'loan_id' => $loan->id,
+            ]);
+
+            return response()->json(['message' => 'Loan request rejected', 'data' => $loan->fresh('employee')]);
+        }
+
+        $amount = (float) $loan->loan_amount;
+        $installment = (float) ($validated['installment_amount'] ?? $loan->installment_amount);
+        $startFrom = $this->firstOfMonth($validated['start_from'] ?? (string) $loan->start_from);
+        if ($installment > $amount) {
+            return response()->json(['message' => 'Installment cannot be larger than the loan amount.'], 422);
+        }
+        $schedule = $this->buildEqualSchedule($amount, $installment, $startFrom);
+        $deduct = $validated['installment_deduct_from'] ?? $loan->installment_deduct_from ?? 'bonus';
+
+        $loan->installment_amount = $installment;
+        $loan->start_from = $startFrom;
+        $loan->schedule = $schedule;
+        $loan->installment_count = count($schedule);
+        $loan->status = 'active';
+        if (Schema::hasColumn('loans', 'notes')) {
+            $loan->notes = $validated['notes'] ?? null;
+        }
+        if (Schema::hasColumn('loans', 'processed_by')) {
+            $loan->processed_by = $request->user()->id;
+        }
+        if (Schema::hasColumn('loans', 'processed_at')) {
+            $loan->processed_at = now();
+        }
+        if (Schema::hasColumn('loans', 'deduct_from')) {
+            $loan->deduct_from = $deduct;
+        }
+        if (Schema::hasColumn('loans', 'installment_deduct_from')) {
+            $loan->installment_deduct_from = $deduct;
+        }
+        if (Schema::hasColumn('loans', 'interest_deduct_from')) {
+            $loan->interest_deduct_from = $deduct;
+        }
+        $loan->save();
+
+        LeaveNotificationService::notifyEmployee((int) $loan->employee_id, 'Loan approved', 'HR approved your loan. Deductions start from the agreed month.', [
+            'type' => 'loan',
+            'loan_id' => $loan->id,
+        ]);
+
+        return response()->json(['message' => 'Loan approved and now active', 'data' => $loan->fresh('employee')]);
+    }
+
+    private function buildEqualSchedule(float $amount, float $installment, string $startFrom): array
+    {
+        $rows = [];
+        $balance = $amount;
+        $n = 0;
+        $start = new \DateTime($startFrom);
+        while ($balance > 0.009 && $n < 240) {
+            $n++;
+            $pay = min($installment, $balance);
+            $balance = round($balance - $pay, 2);
+            $due = (clone $start)->modify('+'.($n - 1).' month');
+            $rows[] = [
+                'no' => $n,
+                'dueDate' => $due->format('d M Y'),
+                'dueDateIso' => $due->format('Y-m-d'),
+                'due_date' => $due->format('Y-m-d'),
+                'installmentAmount' => $pay,
+                'capitalRepayment' => $pay,
+                'interestPayment' => 0,
+                'dueBalance' => $balance,
+            ];
+        }
+
+        return $rows;
+    }
+
+    private function notifyHrLoanRequest(employee $employee, loans $loan): void
+    {
+        $name = $employee->full_name ?: $employee->name_with_initials ?: 'Employee';
+        $title = 'Loan request';
+        $body = "{$name} requested a loan of {$loan->loan_amount}. Review it in Loan approval.";
+        $hrIds = User::whereIn('role', ['hr', 'admin'])->pluck('id')->all();
+        foreach ($hrIds as $userId) {
+            if (Schema::hasTable('notifications')) {
+                Notification::create([
+                    'user_id' => $userId,
+                    'type' => 'loan',
+                    'title' => $title,
+                    'message' => $body,
+                    'data' => ['loan_id' => $loan->id],
+                    'is_read' => false,
+                ]);
+            }
+        }
+        app(FcmPushService::class)->sendToUsers($hrIds, $title, $body, [
+            'type' => 'loan',
+            'loan_id' => (string) $loan->id,
+        ]);
     }
 }
 

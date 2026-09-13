@@ -46,6 +46,14 @@ class CompanyProcessSettings
                 'available' => true,
             ],
             [
+                'key' => 'medical_leave',
+                'label' => 'Medical leave with evidence',
+                'group' => 'Leave',
+                'summary' => 'Off = hide medical leave on the employee portal. On = separate medical-leave request, optional report upload, HR cannot approve until evidence is attached, and days deduct Casual first then Annual.',
+                'affects' => ['leave', 'employee_portal'],
+                'available' => true,
+            ],
+            [
                 'key' => 'medical_claims',
                 'label' => 'Medical claims',
                 'group' => 'Benefits',
@@ -231,6 +239,18 @@ class CompanyProcessSettings
         return self::packEnabled($source, 'medical_claims');
     }
 
+    public static function usesMedicalLeave($source): bool
+    {
+        return self::packEnabled($source, 'medical_leave');
+    }
+
+    public static function isMedicalLeaveType(?string $type): bool
+    {
+        $normalized = strtolower(trim((string) $type));
+
+        return $normalized !== '' && str_contains($normalized, 'medical') && !str_contains($normalized, 'claim');
+    }
+
     public static function usesSalaryAdvancePack($source): bool
     {
         return self::packEnabled($source, 'salary_advance');
@@ -272,5 +292,70 @@ class CompanyProcessSettings
         }
 
         return null;
+    }
+
+    public static function mobilePunchForEmployee(employee $employee): array
+    {
+        $employee->loadMissing('organizationAssignment.company', 'organizationAssignment.department');
+        $cfg = self::packConfig($employee, 'mobile_punch');
+        $company = $employee->organizationAssignment?->company;
+        $deptId = (int) ($employee->organizationAssignment?->department_id ?? 0);
+        $enabledFlag = !empty($cfg['enabled']);
+        $scope = strtolower(trim((string) ($cfg['scope'] ?? 'company')));
+        if (!in_array($scope, ['company', 'department'], true)) {
+            $scope = 'company';
+        }
+        $deptIds = array_values(array_unique(array_map('intval', $cfg['department_ids'] ?? [])));
+        $inScope = false;
+        if ($enabledFlag && $scope === 'department') {
+            $inScope = $deptId > 0 && in_array($deptId, $deptIds, true);
+        } elseif ($enabledFlag) {
+            $inScope = true;
+        }
+
+        $lat = is_numeric($cfg['latitude'] ?? null) ? (float) $cfg['latitude'] : null;
+        $lng = is_numeric($cfg['longitude'] ?? null) ? (float) $cfg['longitude'] : null;
+        $deptPins = is_array($cfg['department_locations'] ?? null) ? $cfg['department_locations'] : [];
+        $pin = $deptPins[(string) $deptId] ?? $deptPins[$deptId] ?? null;
+        if (is_array($pin)) {
+            if (is_numeric($pin['latitude'] ?? null)) {
+                $lat = (float) $pin['latitude'];
+            }
+            if (is_numeric($pin['longitude'] ?? null)) {
+                $lng = (float) $pin['longitude'];
+            }
+        }
+
+        $gpsSet = $lat !== null && $lng !== null;
+        $radius = (float) ($cfg['radiusMeters'] ?? $cfg['radius_meters'] ?? 400);
+        $office = trim((string) ($cfg['officeName'] ?? $cfg['office_name'] ?? $company?->name ?? 'Office')) ?: 'Office';
+
+        $disabledReason = '';
+        if (!$enabledFlag) {
+            $disabledReason = 'Cybernetic Admin has not enabled mobile fingerprint for this company.';
+        } elseif (!$inScope) {
+            $disabledReason = $scope === 'department'
+                ? 'Mobile fingerprint is only allowed for selected departments.'
+                : 'Mobile fingerprint is not available for your login.';
+        } elseif (!$gpsSet) {
+            $disabledReason = 'Office location is not set. Ask Cybernetic Admin to save the premises pin.';
+        }
+
+        return [
+            'enabled' => $enabledFlag && $inScope && $gpsSet,
+            'inScope' => $inScope,
+            'scope' => $scope,
+            'gpsRequired' => true,
+            'latitude' => $lat,
+            'longitude' => $lng,
+            'radiusMeters' => $radius > 20 ? min($radius, 2000) : 400,
+            'officeName' => $office,
+            'requireBiometric' => array_key_exists('requireBiometric', $cfg)
+                ? !empty($cfg['requireBiometric'])
+                : !empty($cfg['require_biometric'] ?? true),
+            'disabledReason' => $disabledReason,
+            'departmentId' => $deptId ?: null,
+            'departmentName' => $employee->organizationAssignment?->department?->name,
+        ];
     }
 }
