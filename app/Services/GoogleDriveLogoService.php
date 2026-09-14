@@ -123,7 +123,7 @@ class GoogleDriveLogoService
         $response = Http::withHeaders([
             'User-Agent' => 'Mozilla/5.0 HR-Logo/1.0',
             'Accept' => 'image/*,*/*',
-        ])->timeout(20)->get($url);
+        ])->timeout(4)->connectTimeout(2)->get($url);
 
         if (!$response->successful() || !$response->body()) {
             return null;

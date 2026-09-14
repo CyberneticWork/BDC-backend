@@ -284,7 +284,7 @@ class AclService
                 'hrLeaveApproval', 'supervisorLeaveApproval', 'leaveMaster', 'leavecalendar',
                 'timeCardApproval', 'weeklyOffManagement', 'medicalClaims', 'pendingPayments',
                 'timeCardAuditReport', 'deletedTimeCardReport', 'monthlyWorkingHoursReport',
-                'monthlyOtHoursReport', 'midShiftBreaks', 'allowancesReport', 'createNewBonus',
+                'monthlyOtHoursReport', 'dailyOtHoursReport', 'midShiftBreaks', 'allowancesReport', 'createNewBonus',
                 'dinnerAllowance',
             ],
             'user' => [

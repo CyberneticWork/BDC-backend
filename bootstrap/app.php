@@ -16,6 +16,14 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'cybernetic' => \App\Http\Middleware\EnsureCyberneticAdmin::class,
         ]);
+        $middleware->trustProxies(at: '*');
+        $middleware->web(append: [
+            \App\Http\Middleware\SecurityHeaders::class,
+        ]);
+        $middleware->api(prepend: [
+            \App\Http\Middleware\SecurityHeaders::class,
+            \App\Http\Middleware\RequireApiAuth::class,
+        ]);
     })
     ->withSchedule(function (Schedule $schedule): void {
         $minutes = max(1, (int) config('hikvision.poll_interval_minutes', 5));

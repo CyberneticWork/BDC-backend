@@ -112,4 +112,7 @@ return [
 
     'password_timeout' => env('AUTH_PASSWORD_TIMEOUT', 10800),
 
+    'jwt_secret' => env('JWT_SECRET', env('APP_KEY')),
+    'jwt_ttl_days' => (int) env('JWT_TTL_DAYS', 30),
+
 ];

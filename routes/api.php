@@ -22,6 +22,7 @@ use App\Http\Controllers\HikvisionController;
 use App\Http\Controllers\AttendanceExceptionController;
 use App\Http\Controllers\ShiftHoursReportController;
 use App\Http\Controllers\MonthlyHoursReportController;
+use App\Http\Controllers\DailyOtHoursReportController;
 use App\Http\Controllers\DeductionController;
 use App\Http\Controllers\AllowancesController;
 use App\Http\Controllers\DepartmentsController;
@@ -74,20 +75,25 @@ use App\Models\EmployeeWiseAllowance;
 Route::middleware('auth:sanctum')->get('/user', [\App\Http\Controllers\AclController::class, 'me']);
 
 Route::post('/cybernetic-admin/login', [CyberneticAdminController::class, 'login'])
-    ->middleware('throttle:10,1');
+    ->middleware('throttle:8,1');
 Route::get('/cybernetic-admin/me', [CyberneticAdminController::class, 'me'])
     ->middleware('cybernetic');
-Route::get('/cybernetic-admin/process-catalog', [CyberneticAdminController::class, 'processCatalog']);
+Route::get('/cybernetic-admin/process-catalog', [CyberneticAdminController::class, 'processCatalog'])
+    ->middleware('cybernetic');
 
 Route::middleware('auth:sanctum')->get('/logout', function (Request $request) {
-    $request->user()->currentAccessToken()->delete();
+    $token = $request->user()?->currentAccessToken();
+    if ($token && method_exists($token, 'delete')) {
+        $token->delete();
+    }
+
     return response()->noContent();
 });
 
-Route::post('/login', [AuthController::class, 'login']);
-Route::post('/send-otp', [AuthController::class, 'sendOtp']);
-Route::post('/login/otp', [AuthController::class, 'loginWithOtp']);
-Route::post('/register', [AuthController::class, 'register']);
+Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:8,1');
+Route::post('/send-otp', [AuthController::class, 'sendOtp'])->middleware('throttle:5,1');
+Route::post('/login/otp', [AuthController::class, 'loginWithOtp'])->middleware('throttle:8,1');
+Route::post('/register', [AuthController::class, 'register'])->middleware('throttle:3,1');
 
 // Protected routes
 Route::middleware('auth:sanctum')->group(function () {
@@ -278,6 +284,7 @@ Route::post('/attendance', [TimeCardController::class, 'attendance']);
 // Route::post('/attendance/mark-absentees', [TimeCardController::class, 'markAbsentees']);
 Route::get('/time-cards/search-employee', [TimeCardController::class, 'searchByEmployee']);
 Route::post('/attendance/import-excel', [TimeCardController::class, 'importExcel']);
+Route::post('/attendance/import-reland-excel', [\App\Http\Controllers\RelandAttendanceController::class, 'importExcel']);
 Route::get('/companies', [CompanyController::class, 'index']);
 Route::get('/attendance/absentees', [TimeCardController::class, 'fetchAbsentees']);
 Route::get('/attendance-template', [TimeCardController::class, 'downloadTemplate']);
@@ -405,6 +412,7 @@ Route::get('/reports/time-cards/deleted', [TimeCardApprovalController::class, 'd
 // Within-shift hours & Extra hours reports
 Route::get('/reports/shift-hours', [ShiftHoursReportController::class, 'index']);
 Route::get('/reports/monthly-hours', [MonthlyHoursReportController::class, 'index']);
+Route::get('/reports/daily-ot-hours', [DailyOtHoursReportController::class, 'index']);
 // ✅ special route FIRST
 //Route::get('/loans/employee-by-number/{number}', [LoanController::class, 'getEmployeeByNumber']);
 
@@ -694,6 +702,7 @@ Route::middleware('auth:sanctum')->prefix('me')->group(function () {
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/hr/advance-requests', [App\Http\Controllers\EmployeePortalController::class, 'listAdvances']);
+    Route::post('/hr/advance-requests', [App\Http\Controllers\EmployeePortalController::class, 'hrStoreAdvance']);
     Route::post('/hr/advance-requests/{id}/review', [App\Http\Controllers\EmployeePortalController::class, 'reviewAdvance']);
     Route::get('/hr/weekly-offs', [App\Http\Controllers\WeeklyOffController::class, 'hrIndex']);
     Route::post('/hr/weekly-offs', [App\Http\Controllers\WeeklyOffController::class, 'hrStore']);

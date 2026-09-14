@@ -65,8 +65,16 @@ class CompanyProcessSettings
                 'key' => 'salary_advance',
                 'label' => 'Salary advance quota',
                 'group' => 'Benefits',
-                'summary' => 'Off = keep the current portal advance (no quota). On = show available amount, validate the request, portal notify on HR decision, and approved advances go to Pending Payments.',
+                'summary' => 'Off = keep the current portal advance (no quota). On = show available amount, validate the request, portal notify on HR decision, and approved advances go to Pending Payments. HR create/approve can deduct from basic salary or monthly bonus (employee portal cannot choose).',
                 'affects' => ['salary_advance', 'employee_portal', 'pending_payments'],
+                'available' => true,
+            ],
+            [
+                'key' => 'reland_excel_import',
+                'label' => 'Reland fingerprint Excel import',
+                'group' => 'Attendance',
+                'summary' => 'Off = hide Reland import on Time Card. On = HR can upload Raw Clock-InOut Log.xls from Reland and write IN/OUT punches to time cards for this company.',
+                'affects' => ['attendance', 'time_card'],
                 'available' => true,
             ],
             [
@@ -121,6 +129,7 @@ class CompanyProcessSettings
 
     public const OT_CURRENT = 'current';
     public const OT_MINUTE_BAND = 'minute_band';
+    public const OT_SHIFT_END_BAND = 'shift_end_band';
 
     public static function otHourMode($source): string
     {
@@ -136,8 +145,9 @@ class CompanyProcessSettings
 
         $cfg = is_array($company?->process_config) ? $company->process_config : [];
         $mode = strtolower(trim((string) ($cfg['ot_hour_calculation'] ?? self::OT_CURRENT)));
+        $allowed = [self::OT_CURRENT, self::OT_MINUTE_BAND, self::OT_SHIFT_END_BAND];
 
-        return $mode === self::OT_MINUTE_BAND ? self::OT_MINUTE_BAND : self::OT_CURRENT;
+        return in_array($mode, $allowed, true) ? $mode : self::OT_CURRENT;
     }
 
     public static function usesMinuteBandOt($source): bool
@@ -145,14 +155,67 @@ class CompanyProcessSettings
         return self::otHourMode($source) === self::OT_MINUTE_BAND;
     }
 
+    public static function usesShiftEndBandOt($source): bool
+    {
+        return self::otHourMode($source) === self::OT_SHIFT_END_BAND;
+    }
+
+    public static function otMinimumHours($source): float
+    {
+        $mode = self::otHourMode($source);
+        if (in_array($mode, [self::OT_MINUTE_BAND, self::OT_SHIFT_END_BAND], true)) {
+            return 0.0;
+        }
+
+        return 0.5;
+    }
+
     public static function otHoursFromMinutes(int $minutes, $source): float
     {
         $minutes = max(0, $minutes);
-        if (self::usesMinuteBandOt($source)) {
+        $mode = self::otHourMode($source);
+        if ($mode === self::OT_SHIFT_END_BAND) {
+            return self::roundShiftEndBand($minutes);
+        }
+        if ($mode === self::OT_MINUTE_BAND) {
             return self::roundMinuteBand($minutes);
         }
 
         return round(((int) floor($minutes / 30) * 30) / 60, 2);
+    }
+
+    /**
+     * After shift end: 0–30m = 0. From 31m = 0.30. From 45m = 0.45.
+     * From 60m = 1.00. After the first full hour, every 15 minutes adds 0.15.
+     */
+    public static function roundShiftEndBand(int $minutes): float
+    {
+        $minutes = max(0, $minutes);
+        $hours = intdiv($minutes, 60);
+        $mins = $minutes % 60;
+
+        if ($hours === 0) {
+            if ($mins <= 30) {
+                return 0.0;
+            }
+            if ($mins >= 45) {
+                return 0.45;
+            }
+
+            return 0.30;
+        }
+
+        if ($mins <= 14) {
+            return (float) $hours;
+        }
+        if ($mins <= 29) {
+            return $hours + 0.15;
+        }
+        if ($mins <= 44) {
+            return $hours + 0.30;
+        }
+
+        return $hours + 0.45;
     }
 
     public static function roundMinuteBand(int $minutes): float
@@ -254,6 +317,20 @@ class CompanyProcessSettings
     public static function usesSalaryAdvancePack($source): bool
     {
         return self::packEnabled($source, 'salary_advance');
+    }
+
+    /** HR create/approve only: deduct salary advance from basic or monthly bonus. */
+    public static function salaryAdvanceHrDeductFrom($source): string
+    {
+        $cfg = self::packConfig($source, 'salary_advance');
+        $v = strtolower(trim((string) ($cfg['hr_deduct_from'] ?? 'bonus')));
+
+        return $v === 'basic' ? 'basic' : 'bonus';
+    }
+
+    public static function usesRelandExcelImport($source): bool
+    {
+        return self::packEnabled($source, 'reland_excel_import');
     }
 
     public static function packConfig($source, string $key): array

@@ -604,8 +604,8 @@ class LeaveMasterController extends Controller
         $leaves = leave_master::with(['employee.employmentType', 'coveringEmployee'])
             ->where(function ($q) {
                 $q->whereHas('employee.employmentType', function ($query) {
-                    $query->where('name', 'LIKE', '%training%')
-                        ->orWhere('name', 'LIKE', '%trainee%');
+                $query->where('name', 'LIKE', '%training%')
+                    ->orWhere('name', 'LIKE', '%trainee%');
                 })->orWhere('status', 'Pending_Supervisor');
             })
             ->orderBy('created_at', 'desc')
@@ -721,25 +721,25 @@ class LeaveMasterController extends Controller
         if ($request->leave_from && $request->leave_to) {
             // For ranges, keep strict overlap check unless it's a same-day range handled above
             if ($request->leave_from !== $request->leave_to || !$request->leave_date) {
-                $query = leave_master::where('employee_id', $employeeId)
-                    ->where('status', '!=', 'Rejected')
-                    ->where(function ($query) use ($request) {
-                        $query->where(function ($q) use ($request) {
-                            $q->whereBetween('leave_date', [$request->leave_from, $request->leave_to]);
-                        })->orWhere(function ($q) use ($request) {
-                            $q->where(function ($subQ) use ($request) {
-                                $subQ->where('leave_from', '<=', $request->leave_to)
-                                    ->where('leave_to', '>=', $request->leave_from);
-                            });
+            $query = leave_master::where('employee_id', $employeeId)
+                ->where('status', '!=', 'Rejected')
+                ->where(function ($query) use ($request) {
+                    $query->where(function ($q) use ($request) {
+                        $q->whereBetween('leave_date', [$request->leave_from, $request->leave_to]);
+                    })->orWhere(function ($q) use ($request) {
+                        $q->where(function ($subQ) use ($request) {
+                            $subQ->where('leave_from', '<=', $request->leave_to)
+                                ->where('leave_to', '>=', $request->leave_from);
                         });
                     });
+                });
 
                 if ($excludeId) {
                     $query->where('id', '!=', $excludeId);
                 }
-                $existing = $query->first();
+            $existing = $query->first();
 
-                if ($existing) {
+            if ($existing) {
                     // Same calendar day range with room under 1 day is allowed via leave_date path
                     if ($request->leave_from === $request->leave_to) {
                         $newDuration = $this->resolveRequestLeaveDuration($request);
@@ -756,7 +756,7 @@ class LeaveMasterController extends Controller
                     $existingDateStr = $existing->leave_date
                         ? $existing->leave_date
                         : "{$existing->leave_from} to {$existing->leave_to}";
-                    return "Your requested leave period overlaps with an existing leave: {$existingDateStr} ({$existing->status})";
+                return "Your requested leave period overlaps with an existing leave: {$existingDateStr} ({$existing->status})";
                 }
             }
         }
@@ -948,27 +948,27 @@ class LeaveMasterController extends Controller
         }
 
         // Default: Shop & Office Act statutory calculation only (Annual + Casual).
-        $usedCasual = $this->getUsedLeaveDays($employee->id, 'Casual Leave', $currentYear);
-        $eligibleLeaves[] = [
-            'leave_type' => 'Casual Leave',
+            $usedCasual = $this->getUsedLeaveDays($employee->id, 'Casual Leave', $currentYear);
+            $eligibleLeaves[] = [
+                'leave_type' => 'Casual Leave',
             'total_days' => $law['casual_days'],
-            'used_days' => $usedCasual,
+                'used_days' => $usedCasual,
             'available_days' => max(0, $law['casual_days'] - $usedCasual),
-            'is_half_day_only' => false,
+                'is_half_day_only' => false,
             'source' => 'shop_and_office_act',
             'note' => $law['casual_note'],
-        ];
+            ];
 
-        $usedAnnual = $this->getUsedLeaveDays($employee->id, 'Annual Leave', $currentYear);
-        $eligibleLeaves[] = [
-            'leave_type' => 'Annual Leave',
+            $usedAnnual = $this->getUsedLeaveDays($employee->id, 'Annual Leave', $currentYear);
+            $eligibleLeaves[] = [
+                'leave_type' => 'Annual Leave',
             'total_days' => $law['annual_days'],
-            'used_days' => $usedAnnual,
+                'used_days' => $usedAnnual,
             'available_days' => max(0, $law['annual_days'] - $usedAnnual),
-            'is_half_day_only' => false,
+                'is_half_day_only' => false,
             'source' => 'shop_and_office_act',
             'note' => $law['annual_note'],
-        ];
+            ];
 
         return response()->json([
             'employee_id' => $employee->id,
