@@ -24,13 +24,14 @@ use Carbon\Carbon;
 use App\Models\EmployeeBonus;
 use App\Models\SalaryProcessAudit;
 use App\Models\MonthlyLateDeductionItem;
+use App\Services\ContractEmployeeScope;
 use App\Services\ExcessLateService;
 
 class SalaryProcessController extends Controller
 {
     /**
      * Late coming NoPay (after leave balances):
-     * amount = monthly_bonus / company_nopay_working_days × nopay_days
+     * amount = (basic + monthly_bonus) / company_nopay_working_days × nopay_days
      * Entire amount is deducted from the MONTHLY BONUS side (not basic).
      */
     private function resolveLateComingBonusNoPay(
@@ -40,7 +41,8 @@ class SalaryProcessController extends Controller
         float $sqlMonthlyLateNoPays,
         float $sqlMajorLateNoPays,
         float $monthlyBonus,
-        float $workingDays = 30.0
+        float $workingDays = 30.0,
+        float $basicSalary = 0.0
     ): array {
         $appliedItem = null;
         try {
@@ -69,15 +71,18 @@ class SalaryProcessController extends Controller
         }
 
         $divisor = max(1.0, (float) $workingDays);
-        $perDayFromBonus = max(0, (float) $monthlyBonus) / $divisor;
-        $amount = round(max(0, $days) * $perDayFromBonus, 2);
+        $rateBase = max(0, (float) $basicSalary) + max(0, (float) $monthlyBonus);
+        $perDayFromTotal = $rateBase / $divisor;
+        $amount = round(max(0, $days) * $perDayFromTotal, 2);
 
         return [
             'days' => round(max(0, $days), 4),
             'amount' => $amount,
             'source' => $source,
-            'per_day_from_bonus' => round($perDayFromBonus, 4),
-            'per_day_from_basic' => round($perDayFromBonus, 4), // legacy key for older UI
+            'per_day_from_bonus' => round($perDayFromTotal, 4),
+            'per_day_from_basic' => round($perDayFromTotal, 4),
+            'per_day_from_total' => round($perDayFromTotal, 4),
+            'rate_base' => 'basic_plus_bonus',
             'working_days' => $divisor,
             'deduct_from' => 'bonus',
         ];
@@ -1288,6 +1293,7 @@ public function getEmployeesByMonthAndCompany(Request $request)
             LEFT JOIN no_pay_records npr ON e.id = npr.employee_id AND LOWER(npr.status) = 'approved' AND npr.date BETWEEN ? AND ?
 
             WHERE e.is_active = '1'
+            " . ContractEmployeeScope::sqlExclude('e') . "
         ";
 
         $params = [
@@ -1540,7 +1546,8 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 $monthlyLateNoPays,
                 $policyOn ? 0.0 : $majorLateNoPaysSql,
                 $monthlyBonusTotal,
-                $nopayWorkingDays
+                $nopayWorkingDays,
+                $basicSalary
             );
             $majorLateDeduction = $lateBonusNoPay['amount'];
             $majorLateNoPays = $lateBonusNoPay['days'];
@@ -1660,14 +1667,16 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 'leave_shortfall_nopay_bonus_per_day' => $leaveShortfallNoPay['bonus_per_day'],
                 'leave_shortfall_nopay_combined_per_day' => $leaveShortfallNoPay['combined_per_day'],
                 'nopay_working_days' => $leaveShortfallNoPay['divisor'],
-                // Late deduction NoPay: monthly_bonus / company_days × days — all under monthly bonus
+                // Late deduction NoPay: (basic + monthly bonus) / company_days × days — deducted from monthly bonus
                 'major_late_deduction' => round($majorLateDeduction, 2),
                 'monthly_late_nopay_deduction' => round($majorLateDeduction, 2),
                 'monthly_late_nopay_days' => $lateBonusNoPay['days'],
                 'late_nopay_deduct_from' => 'bonus',
                 'late_nopay_source' => $lateBonusNoPay['source'],
+                'late_nopay_rate_base' => $lateBonusNoPay['rate_base'] ?? 'basic_plus_bonus',
                 'late_nopay_per_day_from_bonus' => $lateBonusNoPay['per_day_from_bonus'],
-                'late_nopay_per_day_from_basic' => $lateBonusNoPay['per_day_from_bonus'],
+                'late_nopay_per_day_from_basic' => $lateBonusNoPay['per_day_from_basic'],
+                'late_nopay_per_day_from_total' => $lateBonusNoPay['per_day_from_total'] ?? $lateBonusNoPay['per_day_from_bonus'],
                 'excess_late_nopay_basic' => round((float) ($excessLate['basic_amount'] ?? 0), 2),
                 'excess_late_nopay_bonus' => round((float) ($excessLate['bonus_amount'] ?? 0), 2),
                 'excess_late_nopay_days' => $excessLate['days'] ?? 0,

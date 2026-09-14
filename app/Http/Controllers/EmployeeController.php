@@ -46,6 +46,7 @@ class EmployeeController extends Controller
                 $q->where('name', $typeName);
             })
             ->where('is_active', true)
+            ->excludeContract()
             ->orderBy('full_name')
             ->get();
 
@@ -63,7 +64,7 @@ class EmployeeController extends Controller
             'organizationAssignment.department',
             'organizationAssignment.subDepartment',
             'organizationAssignment.designation',
-        ])->get();
+        ])->excludeContract()->get();
         return response()->json($employees, 200);
     }
 
@@ -130,7 +131,7 @@ class EmployeeController extends Controller
             'employment_type_id',
             'organization_assignment_id',
             'nic'
-        ]);
+        ])->excludeContract();
 
         if ($search) {
             $query->where(function ($q) use ($search) {
@@ -185,6 +186,7 @@ class EmployeeController extends Controller
                 'attendance_employee_no',
                 'nic'
             ])
+            ->excludeContract()
             ->limit(10);
 
         if ($search) {
@@ -220,6 +222,7 @@ class EmployeeController extends Controller
             'organizationAssignment.subDepartment',
             'organizationAssignment.designation',
         ])
+            ->excludeContract()
             ->where('attendance_employee_no', $attendanceNo)
             ->first();
 
@@ -783,7 +786,7 @@ class EmployeeController extends Controller
             return response()->json(['data' => [$this->formatEmployeeExport($employee)]]);
         }
 
-        $employees = employee::with($relations)->where('is_active', true)->orderBy('full_name')->get();
+        $employees = employee::with($relations)->where('is_active', true)->excludeContract()->orderBy('full_name')->get();
 
         return response()->json([
             'data' => $employees->map(fn ($emp) => $this->formatEmployeeExport($emp)),

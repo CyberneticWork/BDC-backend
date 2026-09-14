@@ -6,6 +6,7 @@ use App\Models\employee;
 use App\Models\Roster;
 use App\Models\shifts;
 use App\Models\time_card;
+use App\Services\ContractEmployeeScope;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
@@ -33,7 +34,8 @@ class ShiftHoursReportController extends Controller
         $reportType = $validated['report_type'] ?? 'both';
 
         $employeesQuery = employee::with(['organizationAssignment.company', 'organizationAssignment.department', 'compensation'])
-            ->where('is_active', 1);
+            ->where('is_active', 1)
+            ->excludeContract();
 
         if (!empty($validated['company_id']) || !empty($validated['department_id'])) {
             $employeesQuery->whereHas('organizationAssignment', function ($q) use ($validated) {

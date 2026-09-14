@@ -174,7 +174,8 @@ class AbsentReportController extends Controller
                 'organizationAssignment.subDepartment',
             ])
             ->whereIn('id', $absentEmployeeIds)
-            ->where('is_active', 1);
+            ->where('is_active', 1)
+            ->excludeContract();
 
         if ($search) {
             $employeeQuery->where(function ($q) use ($search) {
@@ -521,7 +522,8 @@ class AbsentReportController extends Controller
                 'organizationAssignment.subDepartment',
             ])
             ->whereIn('id', $absentEmployeeIds)
-            ->where('is_active', 1);
+            ->where('is_active', 1)
+            ->excludeContract();
 
         if ($search) {
             $employeeQuery->where(function ($q) use ($search) {

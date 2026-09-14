@@ -100,4 +100,14 @@ class employee extends Model
     {
         return $this->hasMany(EmployeeWiseAllowance::class);
     }
+
+    public function scopeExcludeContract($query)
+    {
+        return \App\Services\ContractEmployeeScope::exclude($query);
+    }
+
+    public function scopeOnlyContract($query)
+    {
+        return \App\Services\ContractEmployeeScope::only($query);
+    }
 }

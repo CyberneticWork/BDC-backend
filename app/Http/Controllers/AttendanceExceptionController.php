@@ -6,6 +6,7 @@ use App\Models\employee;
 use App\Models\Roster;
 use App\Models\shifts;
 use App\Models\time_card;
+use App\Services\ContractEmployeeScope;
 use App\Services\TimeCardAuditService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -30,6 +31,7 @@ class AttendanceExceptionController extends Controller
         $query = time_card::with(['employee.organizationAssignment.company', 'employee.organizationAssignment.department'])
             ->whereNull('deleted_at')
             ->whereIn('status', ['Late Coming', 'Early OUT']);
+        ContractEmployeeScope::excludeRelated($query);
 
         if (!empty($validated['status'])) {
             $query->where('status', $validated['status']);

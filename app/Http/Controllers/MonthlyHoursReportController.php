@@ -37,7 +37,8 @@ class MonthlyHoursReportController extends Controller
         }
 
         $employeesQuery = employee::with(['organizationAssignment.company', 'organizationAssignment.department'])
-            ->where('is_active', 1);
+            ->where('is_active', 1)
+            ->excludeContract();
 
         if (!empty($validated['company_id']) || !empty($validated['department_id'])) {
             $employeesQuery->whereHas('organizationAssignment', function ($q) use ($validated) {

@@ -8,6 +8,7 @@ use App\Models\employee;
 use App\Models\LeaveSetting;
 use App\Models\NoPayRecord;
 use App\Services\CompanyProcessSettings;
+use App\Services\ContractEmployeeScope;
 use App\Services\LeaveNotificationService;
 use Illuminate\Support\Facades\Validator;
 use App\Mail\LeaveApprovedMail;
@@ -34,7 +35,9 @@ class LeaveMasterController extends Controller
 
     public function index()
     {
-        $leaveMasters = leave_master::with(['employee', 'coveringEmployee'])->get();
+        $leaveMasters = leave_master::with(['employee', 'coveringEmployee']);
+        ContractEmployeeScope::excludeRelated($leaveMasters);
+        $leaveMasters = $leaveMasters->get();
         return response()->json($leaveMasters);
     }
 

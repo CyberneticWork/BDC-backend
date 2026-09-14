@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\time_card;
 use App\Models\time_card_audit;
+use App\Services\ContractEmployeeScope;
 use App\Services\TimeCardAuditService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
@@ -196,6 +197,8 @@ class TimeCardApprovalController extends Controller
 
     private function applyEmployeeFilters($query, array $validated): void
     {
+        ContractEmployeeScope::excludeRelated($query);
+
         if (empty($validated['company_id']) && empty($validated['department_id']) && empty($validated['search'])) {
             return;
         }

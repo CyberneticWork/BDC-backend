@@ -33,7 +33,7 @@ class EmployeeReportService
             'organizationAssignment.department:id,name',
             'organizationAssignment.subDepartment:id,name',
             'organizationAssignment.designation:id,name',
-        ])->orderBy('full_name');
+        ])->excludeContract()->orderBy('full_name');
 
         if ($employeeId) {
             $query->where('id', $employeeId);

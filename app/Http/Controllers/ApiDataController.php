@@ -13,13 +13,16 @@ use Illuminate\Http\Request;
 use App\Models\sub_departments;
 use App\Models\organization_assignment;
 use App\Services\CompanyHostScope;
+use App\Services\ContractEmployeeScope;
 
 class ApiDataController extends Controller
 {
     public function companies(Request $request)
     {
         $query = CompanyHostScope::apply(company::query(), $request);
-        $companies = $query->withCount('employees')->get()->map(function ($company) {
+        $companies = $query->withCount(['employees as employees_count' => function ($q) {
+            ContractEmployeeScope::exclude($q);
+        }])->get()->map(function ($company) {
             $displayName = trim(($company->company_code ? $company->company_code : '') . ($company->company_code && $company->name ? ' - ' : '') . ($company->name ?: ''));
 
             return [
@@ -59,7 +62,7 @@ class ApiDataController extends Controller
             $employeeCount = organization_assignment::where('department_id', $dept->id)
                 ->pluck('id')
                 ->pipe(function ($assignmentIds) {
-                    return employee::whereIn('organization_assignment_id', $assignmentIds)->count();
+                    return employee::whereIn('organization_assignment_id', $assignmentIds)->excludeContract()->count();
                 });
 
             return [
@@ -89,7 +92,7 @@ class ApiDataController extends Controller
             $employeeCount = organization_assignment::where('sub_department_id', $sub->id)
                 ->pluck('id')
                 ->pipe(function ($assignmentIds) {
-                    return employee::whereIn('organization_assignment_id', $assignmentIds)->count();
+                    return employee::whereIn('organization_assignment_id', $assignmentIds)->excludeContract()->count();
                 });
 
             return [
@@ -155,6 +158,7 @@ class ApiDataController extends Controller
         }
 
         $employees = employee::where('is_active', 1)
+            ->excludeContract()
             ->whereHas('organizationAssignment', function ($query) use ($id) {
                 $query->where('sub_department_id', $id);
             })->get(['id', 'full_name']);
@@ -170,6 +174,7 @@ class ApiDataController extends Controller
         }
 
         $employees = employee::where('is_active', 1)
+            ->excludeContract()
             ->whereHas('organizationAssignment', function ($query) use ($id) {
                 $query->where('company_id', $id);
             })->get(['id', 'full_name', 'attendance_employee_no', 'epf', 'nic']);
@@ -179,7 +184,7 @@ class ApiDataController extends Controller
 
     public function Absentees()
     {
-        $employeeIdsWithRosters = employee::whereHas('rosters')->pluck('id')->toArray();
+        $employeeIdsWithRosters = employee::whereHas('rosters')->excludeContract()->pluck('id')->toArray();
         $presentEmployees = time_card::distinct()->pluck('employee_id')->toArray();
         $absentEmployeeIds = array_diff($employeeIdsWithRosters, $presentEmployees);
 

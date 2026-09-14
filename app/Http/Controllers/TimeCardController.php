@@ -11,6 +11,7 @@ use App\Models\Roster;
 use App\Models\shifts;
 use App\Models\time_card;
 use App\Services\CompanyProcessSettings;
+use App\Services\ContractEmployeeScope;
 use App\Services\Overtime\OvertimeCalculator;
 use App\Services\RosterShiftResolver;
 use App\Services\TimeCardAuditService;
@@ -43,6 +44,7 @@ class TimeCardController extends Controller
 
         $query = time_card::with(['employee.organizationAssignment.department'])
             ->whereNull('deleted_at');
+        ContractEmployeeScope::excludeRelated($query);
 
         if ($request->filled('date')) {
             $query->whereDate('date', $request->date);

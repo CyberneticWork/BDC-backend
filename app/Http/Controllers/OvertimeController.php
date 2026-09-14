@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\over_time;
 use App\Models\time_card;
+use App\Services\ContractEmployeeScope;
 use Illuminate\Http\Request;
 
 class OvertimeController extends Controller
@@ -16,7 +17,9 @@ class OvertimeController extends Controller
                 'shift',
                 'timeCard'
             ])
-            ->whereNull('deleted_at')
+            ->whereNull('deleted_at');
+        ContractEmployeeScope::excludeRelated($overtimes);
+        $overtimes = $overtimes
             ->get()
             ->map(function ($overtime) {
                 $outTimeCard = $overtime->timeCard;

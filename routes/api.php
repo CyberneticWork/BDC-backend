@@ -22,6 +22,7 @@ use App\Http\Controllers\HikvisionController;
 use App\Http\Controllers\AttendanceExceptionController;
 use App\Http\Controllers\ShiftHoursReportController;
 use App\Http\Controllers\MonthlyHoursReportController;
+use App\Http\Controllers\ContractAttendanceReportController;
 use App\Http\Controllers\DeductionController;
 use App\Http\Controllers\AllowancesController;
 use App\Http\Controllers\DepartmentsController;
@@ -405,6 +406,7 @@ Route::get('/reports/time-cards/deleted', [TimeCardApprovalController::class, 'd
 // Within-shift hours & Extra hours reports
 Route::get('/reports/shift-hours', [ShiftHoursReportController::class, 'index']);
 Route::get('/reports/monthly-hours', [MonthlyHoursReportController::class, 'index']);
+Route::get('/reports/contract-attendance', [ContractAttendanceReportController::class, 'index']);
 // ✅ special route FIRST
 //Route::get('/loans/employee-by-number/{number}', [LoanController::class, 'getEmployeeByNumber']);
 

@@ -126,7 +126,7 @@ class AttendanceReportController extends Controller
         }
 
         // 1. Company, Department සහ Search වලට ගැලපෙන සේවකයින්ගේ ID සෙවීම
-        $employeeQuery = employee::query();
+        $employeeQuery = employee::query()->excludeContract();
 
         if ($company_id || $department_id) {
             $employeeQuery->whereHas('organizationAssignment', function ($q) use ($company_id, $department_id) {
@@ -376,7 +376,7 @@ class AttendanceReportController extends Controller
             return response()->json(['message' => 'from_date must be before or equal to to_date'], 400);
         }
 
-        $employeeQuery = employee::query();
+        $employeeQuery = employee::query()->excludeContract();
 
         if ($company_id || $department_id) {
             $employeeQuery->whereHas('organizationAssignment', function ($q) use ($company_id, $department_id) {
@@ -496,7 +496,7 @@ class AttendanceReportController extends Controller
         $endDate = date('Y-m-t', strtotime($startDate));
 
         // 1. Company, Department සහ Search වලට ගැලපෙන සේවකයින්ගේ ID සෙවීම
-        $employeeQuery = employee::query();
+        $employeeQuery = employee::query()->excludeContract();
 
         if ($company_id || $department_id) {
             $employeeQuery->whereHas('organizationAssignment', function ($q) use ($company_id, $department_id) {

@@ -60,6 +60,7 @@ return [
         ['key' => 'shiftHoursReport', 'label' => 'Shift Hours Reports', 'group' => 'Reports', 'actions' => ['view']],
         ['key' => 'monthlyWorkingHoursReport', 'label' => 'Monthly Working Hours', 'group' => 'Reports', 'actions' => ['view']],
         ['key' => 'monthlyOtHoursReport', 'label' => 'Monthly OT Hours', 'group' => 'Reports', 'actions' => ['view']],
+        ['key' => 'contractAttendanceReport', 'label' => 'Contract Time Attendance', 'group' => 'Reports', 'actions' => ['view']],
         ['key' => 'timeCardAuditReport', 'label' => 'Time Card Audit Report', 'group' => 'Reports', 'actions' => ['view']],
         ['key' => 'deletedTimeCardReport', 'label' => 'Deleted Time Card Report', 'group' => 'Reports', 'actions' => ['view']],
         ['key' => 'allowancesReport', 'label' => 'Allowances Report', 'group' => 'Reports', 'actions' => ['view']],
