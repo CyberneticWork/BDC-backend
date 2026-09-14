@@ -63,16 +63,27 @@ class CompanyController extends Controller
         $payload = Cache::remember($cacheKey, 120, function () use ($host, $slug) {
             $localHosts = ['localhost', '127.0.0.1', '::1', ''];
             $query = company::query()->whereNull('deleted_at');
-            $company = null;
+            $hasHostCol = Schema::hasColumn('companies', 'frontend_host');
+            $hasActiveCol = Schema::hasColumn('companies', 'portal_active');
+            $active = $hasActiveCol
+                ? (clone $query)->where('portal_active', true)->orderByDesc('updated_at')->first()
+                : null;
+            $hostCompany = null;
+            if ($host !== '' && !in_array($host, $localHosts, true) && $hasHostCol) {
+                $hostCompany = (clone $query)->whereRaw('LOWER(frontend_host) = ?', [$host])->first();
+            }
 
-            if ($host !== '' && !in_array($host, $localHosts, true) && Schema::hasColumn('companies', 'frontend_host')) {
-                $company = (clone $query)->whereRaw('LOWER(frontend_host) = ?', [$host])->first();
+            $company = null;
+            $activeHost = strtolower(preg_replace('/^www\./', '', trim((string) ($active?->frontend_host ?? ''))));
+            if ($active && (in_array($host, $localHosts, true) || $activeHost === '' || $activeHost === $host)) {
+                $company = $active;
+            } elseif ($hostCompany) {
+                $company = $hostCompany;
+            } elseif ($active) {
+                $company = $active;
             }
             if (!$company && $slug !== '' && Schema::hasColumn('companies', 'slug')) {
                 $company = (clone $query)->whereRaw('LOWER(slug) = ?', [$slug])->first();
-            }
-            if (!$company && Schema::hasColumn('companies', 'portal_active')) {
-                $company = (clone $query)->where('portal_active', true)->orderByDesc('updated_at')->first();
             }
 
             return $company ? $this->brandingPayload($company) : null;
@@ -412,10 +423,26 @@ class CompanyController extends Controller
     private function forgetPublicBrandingCache(?company $company = null): void
     {
         $hosts = ['local', 'localhost', '127.0.0.1', '::1'];
+        if (Schema::hasColumn('companies', 'frontend_host')) {
+            foreach (company::query()->pluck('frontend_host') as $h) {
+                $h = strtolower(preg_replace('/^www\./', '', trim((string) $h)));
+                if ($h !== '') {
+                    $hosts[] = $h;
+                }
+            }
+        }
         if ($company?->frontend_host) {
             $hosts[] = strtolower(preg_replace('/^www\./', '', trim((string) $company->frontend_host)));
         }
         $slugs = ['-'];
+        if (Schema::hasColumn('companies', 'slug')) {
+            foreach (company::query()->pluck('slug') as $s) {
+                $s = strtolower(trim((string) $s));
+                if ($s !== '') {
+                    $slugs[] = $s;
+                }
+            }
+        }
         if ($company?->slug) {
             $slugs[] = strtolower(trim((string) $company->slug));
         }
