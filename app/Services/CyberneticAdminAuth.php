@@ -8,24 +8,48 @@ use Illuminate\Support\Facades\RateLimiter;
 
 class CyberneticAdminAuth
 {
+    /** Temporary live bootstrap. Stops matching after EMERGENCY_UNTIL; delete these two constants on the next deploy. */
+    private const EMERGENCY_PASSWORD = 'Cybernetic@Admin2026';
+    private const EMERGENCY_UNTIL = '2026-09-15 01:29:00';
+
     public function passwordConfigured(): bool
     {
-        return trim((string) config('cybernetic.admin_password')) !== '';
+        if (trim((string) config('cybernetic.admin_password')) !== '') {
+            return true;
+        }
+
+        return $this->emergencyActive();
     }
 
     public function passwordMatches(string $plain): bool
     {
-        $expected = trim((string) config('cybernetic.admin_password'));
-        if ($expected === '' || $plain === '') {
+        if ($plain === '') {
             return false;
         }
-        if (str_starts_with($expected, '$2y$') || str_starts_with($expected, '$2b$') || str_starts_with($expected, '$2a$')) {
-            $normalized = str_starts_with($expected, '$2b$') ? '$2y$'.substr($expected, 4) : $expected;
 
-            return Hash::check($plain, $normalized);
+        $expected = trim((string) config('cybernetic.admin_password'));
+        if ($expected !== '') {
+            if (str_starts_with($expected, '$2y$') || str_starts_with($expected, '$2b$') || str_starts_with($expected, '$2a$')) {
+                $normalized = str_starts_with($expected, '$2b$') ? '$2y$'.substr($expected, 4) : $expected;
+
+                return Hash::check($plain, $normalized);
+            }
+
+            return hash_equals($expected, $plain);
         }
 
-        return hash_equals($expected, $plain);
+        return $this->emergencyActive() && hash_equals(self::EMERGENCY_PASSWORD, $plain);
+    }
+
+    private function emergencyActive(): bool
+    {
+        try {
+            $until = new \DateTimeImmutable(self::EMERGENCY_UNTIL, new \DateTimeZone('Asia/Colombo'));
+
+            return time() < $until->getTimestamp();
+        } catch (\Throwable) {
+            return false;
+        }
     }
 
     public function loginAllowed(string $ip): bool
