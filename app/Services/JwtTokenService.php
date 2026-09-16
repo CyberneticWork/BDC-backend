@@ -31,8 +31,12 @@ class JwtTokenService
         }
 
         $jti = (string) ($payload['jti'] ?? '');
-        if ($jti !== '' && Cache::get($this->denylistKey($jti))) {
-            return null;
+        try {
+            if ($jti !== '' && Cache::get($this->denylistKey($jti))) {
+                return null;
+            }
+        } catch (\Throwable $e) {
+            // Cache outage must not block valid tokens.
         }
 
         $userId = (int) ($payload['sub'] ?? 0);
@@ -109,6 +113,9 @@ class JwtTokenService
         $secret = (string) config('jwt.secret');
         if ($secret === '') {
             $secret = (string) config('app.key');
+        }
+        if ($secret === '') {
+            throw new \RuntimeException('JWT_SECRET is not configured.');
         }
 
         return $secret;

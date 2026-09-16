@@ -9,10 +9,8 @@ use Symfony\Component\HttpFoundation\Response;
 
 class RequireApiAuth
 {
-    public function __construct(
-        private AuthenticateJwtOrSanctum $authenticator,
-        private CyberneticAdminAuth $cybernetic,
-    ) {
+    public function __construct(private CyberneticAdminAuth $cybernetic)
+    {
     }
 
     public function handle(Request $request, Closure $next): Response
@@ -29,7 +27,7 @@ class RequireApiAuth
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
-        $this->authenticator->authenticate($request);
+        app(AuthenticateJwtOrSanctum::class)->authenticate($request);
 
         if (!$request->user()) {
             return response()->json(['message' => 'Unauthenticated.'], 401);

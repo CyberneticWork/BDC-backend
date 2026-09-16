@@ -92,9 +92,9 @@ Route::middleware('auth.token')->get('/logout', function (Request $request) {
     return response()->noContent();
 });
 
-Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:5,1');
-Route::post('/send-otp', [AuthController::class, 'sendOtp'])->middleware('throttle:5,1');
-Route::post('/login/otp', [AuthController::class, 'loginWithOtp'])->middleware('throttle:5,1');
+Route::post('/login', [AuthController::class, 'login']);
+Route::post('/send-otp', [AuthController::class, 'sendOtp']);
+Route::post('/login/otp', [AuthController::class, 'loginWithOtp']);
 Route::post('/register', [AuthController::class, 'register'])->middleware('throttle:3,1');
 
 // Protected routes

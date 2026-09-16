@@ -59,37 +59,45 @@ class CompanyController extends Controller
         $host = preg_replace('/^www\./', '', $host);
         $slug = strtolower(trim((string) $request->query('slug', '')));
         $cacheKey = 'public-branding:'.($host ?: 'local').':'.($slug ?: '-');
+        $build = fn () => $this->buildPublicBrandingPayload($host, $slug);
 
-        $payload = Cache::remember($cacheKey, 120, function () use ($host, $slug) {
-            $localHosts = ['localhost', '127.0.0.1', '::1', ''];
-            $query = company::query()->whereNull('deleted_at');
-            $hasHostCol = Schema::hasColumn('companies', 'frontend_host');
-            $hasActiveCol = Schema::hasColumn('companies', 'portal_active');
-            $active = $hasActiveCol
-                ? (clone $query)->where('portal_active', true)->orderByDesc('updated_at')->first()
-                : null;
-            $hostCompany = null;
-            if ($host !== '' && !in_array($host, $localHosts, true) && $hasHostCol) {
-                $hostCompany = (clone $query)->whereRaw('LOWER(frontend_host) = ?', [$host])->first();
-            }
-
-            $company = null;
-            $activeHost = strtolower(preg_replace('/^www\./', '', trim((string) ($active?->frontend_host ?? ''))));
-            if ($active && (in_array($host, $localHosts, true) || $activeHost === '' || $activeHost === $host)) {
-                $company = $active;
-            } elseif ($hostCompany) {
-                $company = $hostCompany;
-            } elseif ($active) {
-                $company = $active;
-            }
-            if (!$company && $slug !== '' && Schema::hasColumn('companies', 'slug')) {
-                $company = (clone $query)->whereRaw('LOWER(slug) = ?', [$slug])->first();
-            }
-
-            return $company ? $this->brandingPayload($company) : null;
-        });
+        try {
+            $payload = Cache::remember($cacheKey, 120, $build);
+        } catch (\Throwable $e) {
+            $payload = $build();
+        }
 
         return response()->json(['data' => $payload]);
+    }
+
+    private function buildPublicBrandingPayload(string $host, string $slug): ?array
+    {
+        $localHosts = ['localhost', '127.0.0.1', '::1', ''];
+        $query = company::query()->whereNull('deleted_at');
+        $hasHostCol = Schema::hasColumn('companies', 'frontend_host');
+        $hasActiveCol = Schema::hasColumn('companies', 'portal_active');
+        $active = $hasActiveCol
+            ? (clone $query)->where('portal_active', true)->orderByDesc('updated_at')->first()
+            : null;
+        $hostCompany = null;
+        if ($host !== '' && !in_array($host, $localHosts, true) && $hasHostCol) {
+            $hostCompany = (clone $query)->whereRaw('LOWER(frontend_host) = ?', [$host])->first();
+        }
+
+        $company = null;
+        $activeHost = strtolower(preg_replace('/^www\./', '', trim((string) ($active?->frontend_host ?? ''))));
+        if ($active && (in_array($host, $localHosts, true) || $activeHost === '' || $activeHost === $host)) {
+            $company = $active;
+        } elseif ($hostCompany) {
+            $company = $hostCompany;
+        } elseif ($active) {
+            $company = $active;
+        }
+        if (!$company && $slug !== '' && Schema::hasColumn('companies', 'slug')) {
+            $company = (clone $query)->whereRaw('LOWER(slug) = ?', [$slug])->first();
+        }
+
+        return $company ? $this->brandingPayload($company) : null;
     }
 
     /** Public image for login branding (works for Google Drive and local files). */

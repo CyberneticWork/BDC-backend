@@ -35,10 +35,8 @@ class AuthController extends Controller
         $password = (string) $request->password;
         $throttleKey = 'hr-login:'.Str::lower($identifier).'|'.$request->ip();
 
-        if (RateLimiter::tooManyAttempts($throttleKey, 6)) {
-            return response()->json([
-                'message' => 'Too many login attempts. Try again later.',
-            ], 429);
+        if ($response = $this->tooManyLoginAttempts($throttleKey)) {
+            return $response;
         }
 
         $user = $this->findUserByIdentifier($identifier);
@@ -46,12 +44,12 @@ class AuthController extends Controller
         $ok = $this->passwordMatches($password, $hash);
 
         if (!$user || !$ok) {
-            RateLimiter::hit($throttleKey, 15 * 60);
+            $this->hitLoginAttempts($throttleKey);
 
             return $this->invalidCredentials();
         }
 
-        RateLimiter::clear($throttleKey);
+        $this->clearLoginAttempts($throttleKey);
 
         return $this->issueJwtResponse($user);
     }
@@ -61,6 +59,39 @@ class AuthController extends Controller
         return response()->json([
             'message' => 'The provided credentials are incorrect.',
         ], 401);
+    }
+
+    private function tooManyLoginAttempts(string $key): ?JsonResponse
+    {
+        try {
+            if (RateLimiter::tooManyAttempts($key, 6)) {
+                return response()->json([
+                    'message' => 'Too many login attempts. Try again later.',
+                ], 429);
+            }
+        } catch (\Throwable $e) {
+            Log::warning('Login rate limiter unavailable.');
+        }
+
+        return null;
+    }
+
+    private function hitLoginAttempts(string $key): void
+    {
+        try {
+            RateLimiter::hit($key, 15 * 60);
+        } catch (\Throwable $e) {
+            // Continue without throttle if cache is down.
+        }
+    }
+
+    private function clearLoginAttempts(string $key): void
+    {
+        try {
+            RateLimiter::clear($key);
+        } catch (\Throwable $e) {
+            // Continue without throttle if cache is down.
+        }
     }
 
     private function issueJwtResponse(User $user): JsonResponse

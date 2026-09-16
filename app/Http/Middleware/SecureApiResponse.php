@@ -10,7 +10,7 @@ class SecureApiResponse
 {
     public function handle(Request $request, Closure $next): Response
     {
-        $request->headers->set('Connection', 'close');
+        $request->headers->remove('Connection');
 
         /** @var Response $response */
         $response = $next($request);
