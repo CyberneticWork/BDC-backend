@@ -135,8 +135,8 @@ class ReportController extends Controller
             $salaryAdvance = self::sumDeductionsByPattern($deductions, ['salary advance', 'salary_advance', 'advance']);
             $customBonusDeductions = self::sumCustomBonusDeductions($deductions);
 
-            // Salary for EPF = adjusted basic (raw + BR + increment), excludes travel/allowances
-            $salaryForEpf = round($adjustedBasic, 2);
+            // Salary for EPF/ETF = (basic − basic NoPay)
+            $salaryForEpf = round((float)($breakdown['epf_etf_base'] ?? $adjustedBasic), 2);
             if ($salaryForEpf <= 0 && $epf8 > 0) {
                 $salaryForEpf = round($epf8 / 0.08, 2);
             }

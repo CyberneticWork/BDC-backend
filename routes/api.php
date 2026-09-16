@@ -72,26 +72,33 @@ use App\Http\Controllers\MonthlyLateDeductionController;
 use App\Http\Controllers\ExcessLateController;
 use App\Models\EmployeeWiseAllowance;
 
-Route::middleware('auth:sanctum')->get('/user', [\App\Http\Controllers\AclController::class, 'me']);
+Route::middleware('auth.token')->get('/user', [\App\Http\Controllers\AclController::class, 'me']);
 
 Route::post('/cybernetic-admin/login', [CyberneticAdminController::class, 'login'])
     ->middleware('throttle:10,1');
 Route::get('/cybernetic-admin/me', [CyberneticAdminController::class, 'me'])
     ->middleware('cybernetic');
-Route::get('/cybernetic-admin/process-catalog', [CyberneticAdminController::class, 'processCatalog']);
+Route::get('/cybernetic-admin/process-catalog', [CyberneticAdminController::class, 'processCatalog'])
+    ->middleware('cybernetic');
 
-Route::middleware('auth:sanctum')->get('/logout', function (Request $request) {
-    $request->user()->currentAccessToken()->delete();
+Route::middleware('auth.token')->get('/logout', function (Request $request) {
+    app(\App\Services\JwtTokenService::class)->revokeBearer($request->bearerToken());
+    try {
+        $request->user()?->currentAccessToken()?->delete();
+    } catch (\Throwable $e) {
+        // JWT sessions have no Sanctum token to delete
+    }
+
     return response()->noContent();
 });
 
-Route::post('/login', [AuthController::class, 'login']);
-Route::post('/send-otp', [AuthController::class, 'sendOtp']);
-Route::post('/login/otp', [AuthController::class, 'loginWithOtp']);
-Route::post('/register', [AuthController::class, 'register']);
+Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:5,1');
+Route::post('/send-otp', [AuthController::class, 'sendOtp'])->middleware('throttle:5,1');
+Route::post('/login/otp', [AuthController::class, 'loginWithOtp'])->middleware('throttle:5,1');
+Route::post('/register', [AuthController::class, 'register'])->middleware('throttle:3,1');
 
 // Protected routes
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware('auth.token')->group(function () {
     Route::post('/change-password', [AuthController::class, 'changePassword']);
     Route::get('/acl/catalog', [\App\Http\Controllers\AclController::class, 'catalog']);
     Route::get('/acl/users/{id}', [\App\Http\Controllers\AclController::class, 'show']);
@@ -105,7 +112,7 @@ Route::get('/dashboard/stats/weekly', [TimeCardController::class, 'getWeeklyAtte
 Route::apiResource('users', UserController::class);
 Route::apiResource('shifts', ShiftController::class);
 Route::apiResource('employees', EmployeeController::class);
-Route::post('/employees/change-password', [EmployeeController::class, 'changePassword'])->middleware('auth:sanctum');
+Route::post('/employees/change-password', [EmployeeController::class, 'changePassword'])->middleware('auth.token');
 Route::post('employes/post/update', [EmployeeController::class, 'update']);
 Route::get('/emp/table', [EmployeeController::class, 'getEmployeesForTable']);
 Route::get('/employees/export/data', [EmployeeController::class, 'export']);
@@ -224,7 +231,7 @@ Route::apiResource('customers', CustomerController::class);
 // Discount levels (index/show are public; create/update/delete require auth)
 Route::get('/discount-levels', [DiscountLevelController::class, 'index']);
 Route::get('/discount-levels/{id}', [DiscountLevelController::class, 'show']);
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware('auth.token')->group(function () {
     Route::post('/discount-levels', [DiscountLevelController::class, 'store']);
     Route::put('/discount-levels/{id}', [DiscountLevelController::class, 'update']);
     Route::delete('/discount-levels/{id}', [DiscountLevelController::class, 'destroy']);
@@ -429,7 +436,7 @@ Route::get('journal-entries-next-number', [JournalEntryController::class, 'getNe
 //Route::apiResource('account-groups', AccountGroupController::class);
 
 Route::delete('/attachments/{id}', [LMSController::class, 'removeAttachment']);
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware('auth.token')->group(function () {
     // Exam routes
     Route::apiResource('exams', ExamController::class);
     Route::post('exams/{id}/submit', [ExamController::class, 'submitExam']);
@@ -446,7 +453,7 @@ Route::middleware('auth:sanctum')->group(function () {
 });
 
 // LMS Admin Dashboard Routes
-Route::middleware('auth:sanctum')->prefix('admin/lms')->group(function () {
+Route::middleware('auth.token')->prefix('admin/lms')->group(function () {
     Route::get('users/course-progress', [LMSAdmincontroller::class, 'listAllUsersCourseProgress']);
     Route::get('users/exam-progress', [LMSAdmincontroller::class, 'listAllUsersExamProgress']);
     Route::get('users/{userId}/course-progress', [LMSAdmincontroller::class, 'getUserCourseProgress']);
@@ -455,7 +462,7 @@ Route::middleware('auth:sanctum')->prefix('admin/lms')->group(function () {
 });
 
 // PMS Related Data Endpoints
-Route::middleware(['auth:sanctum'])->group(function () {
+Route::middleware(['auth.token'])->group(function () {
     // PMS Related Data Endpoints - MOVED INSIDE AUTH
     Route::get('/kpi-tasks', [PmsController::class, 'getKpiTasks']);
     Route::get('/creator-roles', [PmsController::class, 'getCreatorRoles']);
@@ -535,7 +542,7 @@ Route::get('/pms/employee-performance', [PmsController::class, 'getEmployeePerfo
 
 // Add these routes in the authenticated section
 
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware('auth.token')->group(function () {
     // ... existing routes ...
 
     // Performance Appraisal routes
@@ -545,7 +552,7 @@ Route::middleware('auth:sanctum')->group(function () {
 });
 
 // Performance Evaluation routes - using the new controller
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware('auth.token')->group(function () {
     // CRUD operations
     Route::get('/performance-evaluations', [App\Http\Controllers\PerformanceEvaluationController::class, 'index']);
     Route::post('/performance-evaluations', [App\Http\Controllers\PerformanceEvaluationController::class, 'store']);
@@ -591,7 +598,7 @@ Route::post(
 
 
 // Performance Appraisal routes - using the new controller
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware('auth.token')->group(function () {
     // CRUD operations
     Route::get('/performance-appraisals', [App\Http\Controllers\PerformanceAppraisalController::class, 'index']);
     Route::post('/performance-appraisals', [App\Http\Controllers\PerformanceAppraisalController::class, 'store']);
@@ -627,7 +634,7 @@ Route::get('product-types/stats/overview', [ProductTypeController::class, 'getSt
 Route::delete('product-types/{id}/force', [ProductTypeController::class, 'forceDestroy']);
 
 // Product routes
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware('auth.token')->group(function () {
     // Add this new route
     Route::post('/pms/kpi-task-assignments/check-weights', [PmsController::class, 'checkAssigneeWeights']);
 });
@@ -665,7 +672,7 @@ Route::put('emergency-contact-relationship-types/{id}', [EmergencyContactRelatio
 Route::delete('emergency-contact-relationship-types/{id}', [EmergencyContactRelationshipTypesController::class, 'destroy']);
 
 // Employee self-service portal (Solar-style)
-Route::middleware('auth:sanctum')->prefix('me')->group(function () {
+Route::middleware('auth.token')->prefix('me')->group(function () {
     Route::get('/portal', [App\Http\Controllers\EmployeePortalController::class, 'home']);
     Route::get('/attendance', [App\Http\Controllers\EmployeePortalController::class, 'attendance']);
     Route::get('/overtime', [App\Http\Controllers\EmployeePortalController::class, 'overtime']);
@@ -694,7 +701,7 @@ Route::middleware('auth:sanctum')->prefix('me')->group(function () {
     Route::post('/loans', [LoanController::class, 'portalStore']);
 });
 
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware('auth.token')->group(function () {
     Route::get('/hr/advance-requests', [App\Http\Controllers\EmployeePortalController::class, 'listAdvances']);
     Route::post('/hr/advance-requests/{id}/review', [App\Http\Controllers\EmployeePortalController::class, 'reviewAdvance']);
     Route::get('/hr/weekly-offs', [App\Http\Controllers\WeeklyOffController::class, 'hrIndex']);

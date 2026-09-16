@@ -193,7 +193,7 @@ class SalaryController extends Controller
                     $epfEligibleAllowances += (float)($allowance['amount'] ?? 0);
                 }
             }
-            $epfEtfBase = $adjustedBasic + $epfEligibleAllowances;
+            $epfEtfBase = max(0, (float) $adjustedBasic);
             $epfEmployeeDeduction = $request->enable_epf_etf ? $epfEtfBase * 0.08 : 0;
             $epfEmployerContribution = $request->enable_epf_etf ? $epfEtfBase * 0.12 : 0;
             $etfEmployerContribution = $request->enable_epf_etf ? $epfEtfBase * 0.03 : 0;

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
+use App\Services\JwtTokenService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
@@ -14,34 +15,41 @@ use Carbon\Carbon;
 
 class AuthController extends Controller
 {
+    public function __construct(private JwtTokenService $jwt)
+    {
+    }
+
     public function login(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'identifier' => 'required|string|min:3',
-            'password' => 'required|string',
+            'identifier' => 'required|string|min:3|max:190',
+            'password' => 'required|string|max:255',
         ]);
 
         if ($validator->fails()) {
-            return response()->json([
-                'message' => 'Validation failed',
-                'errors' => $validator->errors(),
-            ], 422);
+            return $this->invalidCredentials();
         }
 
-        $identifier = trim($request->identifier);
-        $password = $request->password;
-
+        $identifier = trim((string) $request->identifier);
+        $password = (string) $request->password;
         $user = $this->findUserByIdentifier($identifier);
+        $hash = $user?->getAuthPassword();
+        $ok = $this->passwordMatches($password, $hash);
 
-        if (!$user || !$this->passwordMatches($password, $user->getAuthPassword())) {
-            return response()->json([
-                'message' => 'The provided credentials are incorrect.',
-            ], 401);
+        if (!$user || !$ok) {
+            return $this->invalidCredentials();
         }
 
-        $token = $user->createToken($identifier)->plainTextToken;
+        $token = $this->jwt->issue($user);
 
         return response()->json(['token' => $token], 200);
+    }
+
+    private function invalidCredentials()
+    {
+        return response()->json([
+            'message' => 'The provided credentials are incorrect.',
+        ], 401);
     }
 
     private function findUserByIdentifier(string $identifier): ?User
@@ -70,24 +78,19 @@ class AuthController extends Controller
      */
     private function passwordMatches(string $plain, ?string $hashed): bool
     {
-        if (!$hashed) {
-            return false;
-        }
-
-        $normalized = $hashed;
-        if (str_starts_with($hashed, '$2b$')) {
-            $normalized = '$2y$' . substr($hashed, 4);
+        $dummy = '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi';
+        $normalized = $hashed ?: $dummy;
+        if (str_starts_with($normalized, '$2b$')) {
+            $normalized = '$2y$' . substr($normalized, 4);
         }
 
         try {
-            if (Hash::check($plain, $normalized)) {
-                return true;
-            }
-        } catch (\RuntimeException $e) {
-            // Fall through to password_verify for other bcrypt prefixes
+            $ok = Hash::check($plain, $normalized);
+        } catch (\Throwable $e) {
+            $ok = password_verify($plain, $normalized);
         }
 
-        return password_verify($plain, $hashed) || password_verify($plain, $normalized);
+        return $hashed ? $ok : false;
     }
 
     // OTP Login for first-time employees
@@ -99,40 +102,29 @@ class AuthController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return response()->json([
-                'message' => 'Validation failed',
-                'errors' => $validator->errors(),
-            ], 422);
+            return $this->invalidCredentials();
         }
 
-        $user = User::where('email', $request->email)
-                    ->where('otp', $request->otp)
-                    ->first();
+        $user = User::where('email', $request->email)->first();
 
-        if (!$user) {
-            return response()->json([
-                'message' => 'Invalid OTP or email.',
-            ], 401);
+        if (!$user || !$user->otp || !Hash::check($request->otp, $user->otp)) {
+            return $this->invalidCredentials();
         }
 
-        // Check if OTP expired
         if ($user->otp_expires_at && Carbon::parse($user->otp_expires_at)->isPast()) {
-            return response()->json([
-                'message' => 'OTP has expired.',
-            ], 401);
+            return $this->invalidCredentials();
         }
 
-        // Clear OTP after successful login
         $user->otp = null;
         $user->otp_expires_at = null;
         $user->save();
 
-        $token = $user->createToken($request->email)->plainTextToken;
+        $token = $this->jwt->issue($user);
 
         return response()->json([
             'access_token' => $token,
             'token' => $token,
-            'is_first_login' => $user->is_first_login
+            'is_first_login' => (bool) $user->is_first_login,
         ], 200);
     }
 
@@ -177,44 +169,34 @@ class AuthController extends Controller
 
         if ($validator->fails()) {
             return response()->json([
-                'message' => 'Validation failed',
-                'errors' => $validator->errors(),
-            ], 422);
+                'message' => 'If that account exists, an OTP has been sent.',
+            ], 200);
         }
 
         $user = User::where('email', $request->email)->first();
-        
-        if (!$user) {
-            return response()->json([
-                'message' => 'Email not found.',
-            ], 404);
-        }
 
-        // Generate 6-digit OTP
-        $otp = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
-        
-        $user->otp = $otp;
-        $user->otp_expires_at = Carbon::now()->addMinutes(10);
-        $user->save();
+        if ($user) {
+            $otp = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+            $user->otp = Hash::make($otp);
+            $user->otp_expires_at = Carbon::now()->addMinutes(10);
+            $user->save();
 
-        // Send email
-        try {
-            Mail::raw(
-                "Your OTP for login:\n\nOTP: {$otp}\n\nThis OTP will expire in 10 minutes.",
-                function ($message) use ($user) {
-                    $message->to($user->email)
+            try {
+                Mail::raw(
+                    "Your OTP for login:\n\nOTP: {$otp}\n\nThis OTP will expire in 10 minutes.",
+                    function ($message) use ($user) {
+                        $message->to($user->email)
                             ->subject('Your Login OTP');
-                }
-            );
-            return response()->json([
-                'message' => 'OTP sent successfully to your email.',
-            ], 200);
-        } catch (\Exception $e) {
-            Log::error('Failed to send OTP email: ' . $e->getMessage());
-            return response()->json([
-                'message' => 'Failed to send OTP. Please try again.',
-            ], 500);
+                    }
+                );
+            } catch (\Exception $e) {
+                Log::error('Failed to send OTP email.');
+            }
         }
+
+        return response()->json([
+            'message' => 'If that account exists, an OTP has been sent.',
+        ], 200);
     }
 
     // Generate and send OTP (for admin creating employee)
@@ -227,9 +209,9 @@ class AuthController extends Controller
         }
 
         // Generate 6-digit OTP
-        $otp = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+        $otp = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
         
-        $user->otp = $otp;
+        $user->otp = Hash::make($otp);
         $user->otp_expires_at = Carbon::now()->addHours(24);
         $user->is_first_login = true;
         $user->save();
@@ -252,29 +234,6 @@ class AuthController extends Controller
 
     public function register(Request $request)
     {
-        $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255',
-            'email' => 'required|string|email|max:255|unique:users',
-            'password' => 'required|string|min:8',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'message' => 'Validation failed',
-                'errors' => $validator->errors(),
-            ], 422);
-        }
-
-        $user = User::create([
-            'name' => $request->name,
-            'email' => $request->email,
-            'password' => Hash::make($request->password),
-        ]);
-
-        $token = $user->createToken($request->name)->plainTextToken;
-
-        return response()->json([
-            'token' => $token,
-        ]);
+        return response()->json(['message' => 'Registration is disabled.'], 403);
     }
 }

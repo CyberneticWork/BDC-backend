@@ -1587,9 +1587,15 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 }
             }
 
-            // EPF/ETF calculated from basic salary only
-            $epfEtfBase = $basicSalary;
-            $epfEmployeeDeduction = !empty($employeeData['enable_epf_etf']) ? ($epfEtfBase * 0.08) : 0;
+            // EPF 8% + employer EPF 12% + ETF 3% all use (basic − basic NoPay)
+            $basicNoPayForEpf = (float) $fullDayNoPayDeduction
+                + (float) $leaveShortfallBasicDeduction
+                + (float) ($excessLate['basic_amount'] ?? 0);
+            $epfEtfBase = max(0, (float) $basicSalary - $basicNoPayForEpf);
+            $epfEnabled = !empty($employeeData['enable_epf_etf']);
+            $epfEmployeeDeduction = $epfEnabled ? round($epfEtfBase * 0.08, 2) : 0;
+            $epfEmployerContribution = $epfEnabled ? round($epfEtfBase * 0.12, 2) : 0;
+            $etfEmployerContribution = $epfEnabled ? round($epfEtfBase * 0.03, 2) : 0;
 
             // Sports fund: percentage of total salary (basic + monthly bonus)
             $sportsFundPct = $employeeData['sports_fund_percentage'] ?? $employeeData['default_sports_fund_percentage'] ?? 0;
@@ -1686,6 +1692,10 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 'bonus_nopay_from_leave_shortfall' => $leaveShortfallBonusDeduction,
                 'bonus_nopay_from_late' => round($majorLateDeduction, 2),
                 'epf_employee_deduction' => round($epfEmployeeDeduction, 2),
+                'epf_employer_contribution' => round($epfEmployerContribution, 2),
+                'etf_employer_contribution' => round($etfEmployerContribution, 2),
+                'epf_etf_base' => round($epfEtfBase, 2),
+                'epf_basic_nopay' => round($basicNoPayForEpf, 2),
                 'epf_etf_fixed_deductions' => round($epfEtfDeductions, 2),
                 'sports_fund_deduction' => $sportsFundDeduction,
                 'staff_fund_deduction' => $staffFundDeduction,
