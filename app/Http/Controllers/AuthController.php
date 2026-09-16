@@ -16,11 +16,20 @@ use Carbon\Carbon;
 
 class AuthController extends Controller
 {
-    public function __construct(private JwtTokenService $jwt)
+    public function login(Request $request)
     {
+        try {
+            return $this->attemptLogin($request);
+        } catch (\Throwable $e) {
+            Log::error($e);
+
+            return response()->json([
+                'message' => 'Login service is unavailable. Please try again.',
+            ], 503);
+        }
     }
 
-    public function login(Request $request)
+    private function attemptLogin(Request $request)
     {
         $validator = Validator::make($request->all(), [
             'identifier' => 'required|string|min:3|max:190',
@@ -96,7 +105,7 @@ class AuthController extends Controller
 
     private function issueJwtResponse(User $user): JsonResponse
     {
-        $token = $this->jwt->issue($user);
+        $token = app(JwtTokenService::class)->issue($user);
 
         return response()->json([
             'token' => $token,
@@ -160,6 +169,19 @@ class AuthController extends Controller
     }
 
     public function loginWithOtp(Request $request)
+    {
+        try {
+            return $this->attemptOtpLogin($request);
+        } catch (\Throwable $e) {
+            Log::error($e);
+
+            return response()->json([
+                'message' => 'Login service is unavailable. Please try again.',
+            ], 503);
+        }
+    }
+
+    private function attemptOtpLogin(Request $request)
     {
         $validator = Validator::make($request->all(), [
             'email' => 'required|email',
