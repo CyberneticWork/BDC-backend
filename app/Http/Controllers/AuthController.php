@@ -6,10 +6,11 @@ use App\Models\User;
 use App\Services\JwtTokenService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Str;
 use Illuminate\Http\JsonResponse;
 use Carbon\Carbon;
 
@@ -32,17 +33,27 @@ class AuthController extends Controller
 
         $identifier = trim((string) $request->identifier);
         $password = (string) $request->password;
+        $throttleKey = 'hr-login:'.Str::lower($identifier).'|'.$request->ip();
+
+        if (RateLimiter::tooManyAttempts($throttleKey, 6)) {
+            return response()->json([
+                'message' => 'Too many login attempts. Try again later.',
+            ], 429);
+        }
+
         $user = $this->findUserByIdentifier($identifier);
         $hash = $user?->getAuthPassword();
         $ok = $this->passwordMatches($password, $hash);
 
         if (!$user || !$ok) {
+            RateLimiter::hit($throttleKey, 15 * 60);
+
             return $this->invalidCredentials();
         }
 
-        $token = $this->jwt->issue($user);
+        RateLimiter::clear($throttleKey);
 
-        return response()->json(['token' => $token], 200);
+        return $this->issueJwtResponse($user);
     }
 
     private function invalidCredentials()
@@ -52,12 +63,24 @@ class AuthController extends Controller
         ], 401);
     }
 
+    private function issueJwtResponse(User $user): JsonResponse
+    {
+        $token = $this->jwt->issue($user);
+
+        return response()->json([
+            'token' => $token,
+            'access_token' => $token,
+            'token_type' => 'Bearer',
+            'is_first_login' => (bool) $user->is_first_login,
+        ], 200);
+    }
+
     private function findUserByIdentifier(string $identifier): ?User
     {
         $identifier = trim($identifier);
         $lower = strtolower($identifier);
 
-        $user = User::query()
+        return User::query()
             ->where(function ($query) use ($lower, $identifier) {
                 $query->whereRaw('LOWER(email) = ?', [$lower])
                     ->orWhereRaw('LOWER(nic) = ?', [$lower]);
@@ -69,8 +92,6 @@ class AuthController extends Controller
                 }
             })
             ->first();
-
-        return $user;
     }
 
     /**
@@ -93,7 +114,20 @@ class AuthController extends Controller
         return $hashed ? $ok : false;
     }
 
-    // OTP Login for first-time employees
+    private function otpMatches(string $plain, ?string $stored): bool
+    {
+        if ($stored === null || $stored === '' || $plain === '') {
+            return false;
+        }
+        if (str_starts_with($stored, '$2y$') || str_starts_with($stored, '$2b$') || str_starts_with($stored, '$2a$')) {
+            $normalized = str_starts_with($stored, '$2b$') ? '$2y$'.substr($stored, 4) : $stored;
+
+            return Hash::check($plain, $normalized);
+        }
+
+        return hash_equals($stored, $plain);
+    }
+
     public function loginWithOtp(Request $request)
     {
         $validator = Validator::make($request->all(), [
@@ -107,7 +141,7 @@ class AuthController extends Controller
 
         $user = User::where('email', $request->email)->first();
 
-        if (!$user || !$user->otp || !Hash::check($request->otp, $user->otp)) {
+        if (!$user || !$this->otpMatches((string) $request->otp, $user->otp)) {
             return $this->invalidCredentials();
         }
 
@@ -119,16 +153,9 @@ class AuthController extends Controller
         $user->otp_expires_at = null;
         $user->save();
 
-        $token = $this->jwt->issue($user);
-
-        return response()->json([
-            'access_token' => $token,
-            'token' => $token,
-            'is_first_login' => (bool) $user->is_first_login,
-        ], 200);
+        return $this->issueJwtResponse($user);
     }
 
-    // Change password
     public function changePassword(Request $request)
     {
         $validator = Validator::make($request->all(), [
@@ -160,7 +187,6 @@ class AuthController extends Controller
         ], 200);
     }
 
-    // Generate and send OTP
     public function sendOtp(Request $request)
     {
         $validator = Validator::make($request->all(), [
@@ -199,24 +225,21 @@ class AuthController extends Controller
         ], 200);
     }
 
-    // Generate and send OTP (for admin creating employee)
     public function generateOtp($userId)
     {
         $user = User::find($userId);
-        
+
         if (!$user) {
             return false;
         }
 
-        // Generate 6-digit OTP
         $otp = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
-        
+
         $user->otp = Hash::make($otp);
         $user->otp_expires_at = Carbon::now()->addHours(24);
         $user->is_first_login = true;
         $user->save();
 
-        // Send email
         try {
             Mail::raw(
                 "Your login credentials:\n\nEmail: {$user->email}\nOTP: {$otp}\n\nThis OTP will expire in 24 hours.\n\nPlease login and change your password.",
@@ -227,7 +250,7 @@ class AuthController extends Controller
             );
             return true;
         } catch (\Exception $e) {
-            Log::error('Failed to send OTP email: ' . $e->getMessage());
+            Log::error('Failed to send OTP email.');
             return false;
         }
     }

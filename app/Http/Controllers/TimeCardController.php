@@ -608,7 +608,7 @@ class TimeCardController extends Controller
                 }
                 $alreadyOut = time_card::where('employee_id', $employee->id)
                     ->whereIn('status', ['OUT', 'Early OUT'])
-                    ->whereNull('deleted_at')
+                ->whereNull('deleted_at')
                     ->where(function ($q) use ($card, $shift) {
                         if (Schema::hasColumn('time_cards', 'shift_id') && $shift) {
                             $q->where('shift_id', $shift->id);
@@ -618,8 +618,8 @@ class TimeCardController extends Controller
                                 ->orWhere(function ($d) use ($card) {
                                     $d->whereNull('actual_date')->where('date', $card->date);
                                 });
-                        });
-                    })
+                    });
+                })
                     ->exists();
                 if (!$alreadyOut) {
                     $best = $card;
@@ -635,7 +635,7 @@ class TimeCardController extends Controller
             ->whereIn('status', ['IN', 'Late Coming'])
             ->where('time', '<', $storeTime)
             ->orderBy('time', 'desc')
-            ->first();
+                ->first();
         if ($sameDay) {
             return $sameDay;
         }
@@ -645,8 +645,8 @@ class TimeCardController extends Controller
             ->where('date', '<', $date)
             ->orderBy('date', 'desc')
             ->orderBy('time', 'desc')
-            ->first();
-    }
+                ->first();
+        }
 
     private function computeWorkingHours(employee $employee, Carbon $inDateTime, Carbon $outDateTime, ?shifts $shift): float
     {
@@ -837,7 +837,7 @@ class TimeCardController extends Controller
             $totalHolidayAmount = $hShiftAmount + $hOutsideAmount;
 
             // Client threshold: current OT keeps 30-minute (0.5h) minimum. Minute-band OT stores 0.30 / 0.45.
-            $minHours = CompanyProcessSettings::usesMinuteBandOt($employee) ? 0.0 : 0.5;
+            $minHours = CompanyProcessSettings::otMinimumHours($employee);
             if ($totalHolidayHours <= $minHours) {
                 return;
             }
@@ -874,7 +874,7 @@ class TimeCardController extends Controller
                 'total'           => 0.0,
             ], $breakdown['amounts'] ?? []);
 
-            $minHours = CompanyProcessSettings::usesMinuteBandOt($employee) ? 0.0 : 0.5;
+            $minHours = CompanyProcessSettings::otMinimumHours($employee);
             if ($hours['total'] <= $minHours) {
                 return;
             }
@@ -1033,6 +1033,23 @@ class TimeCardController extends Controller
         $rows = Excel::toArray(new class implements \Maatwebsite\Excel\Concerns\ToArray {
             public function array(array $array) {}
         }, $uploaded)[0];
+
+        $header = array_map(fn ($v) => strtolower(trim((string) $v)), $rows[0] ?? []);
+        $joined = implode(' ', $header);
+        if (str_contains($joined, 'user id') || str_contains($joined, 'enroll id') || str_contains($joined, 'att type')) {
+            try {
+                $result = app(\App\Services\RelandExcelImportService::class)->import(
+                    $uploaded->getRealPath(),
+                    (int) $companyId,
+                    $fromDate,
+                    $toDate
+                );
+            } catch (\Throwable $e) {
+                return response()->json(['message' => $e->getMessage(), 'imported' => 0, 'skipped' => 0, 'errors' => [$e->getMessage()]], 422);
+            }
+
+            return response()->json($result);
+        }
 
         $results = ['imported' => 0, 'absent' => 0, 'errors' => []];
 

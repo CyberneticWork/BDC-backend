@@ -521,14 +521,19 @@ class EmployeePortalController extends Controller
             }
         }
 
-        $row = SalaryAdvanceRequest::create([
+        $attrs = [
             'employee_id' => $emp->id,
             'amount' => $request->amount,
             'reason' => $request->reason,
             'needed_on' => $request->needed_on,
             'status' => 'PENDING',
             'created_by' => $request->user()->id,
-        ]);
+        ];
+        if (Schema::hasColumn('salary_advance_requests', 'source')) {
+            $attrs['source'] = 'employee';
+        }
+        // Employee portal never chooses basic vs bonus.
+        $row = SalaryAdvanceRequest::create($attrs);
 
         return response()->json(['message' => 'Advance request submitted', 'data' => $row], 201);
     }
@@ -540,14 +545,92 @@ class EmployeePortalController extends Controller
             return response()->json(['message' => 'Forbidden'], 403);
         }
 
-        $q = SalaryAdvanceRequest::with('employee:id,name_with_initials,full_name,attendance_employee_no')
+        $q = SalaryAdvanceRequest::with('employee.organizationAssignment.company')
             ->orderByDesc('id');
 
         if ($status = $request->query('status')) {
             $q->where('status', strtoupper($status));
         }
 
-        return response()->json(['items' => $q->limit(200)->get()]);
+        $items = $q->limit(200)->get()->map(function (SalaryAdvanceRequest $row) {
+            $emp = $row->employee;
+            $pack = $emp && CompanyProcessSettings::usesSalaryAdvancePack($emp);
+            $row->setAttribute('hr_deduct_from', $pack
+                ? CompanyProcessSettings::salaryAdvanceHrDeductFrom($emp)
+                : null);
+            $row->setAttribute('company_name', $emp?->organizationAssignment?->company?->name);
+            return $row;
+        });
+
+        return response()->json(['items' => $items]);
+    }
+
+    public function hrStoreAdvance(Request $request)
+    {
+        $user = $request->user();
+        if ($user->role === 'employee') {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'employee_id' => 'required|integer|exists:employees,id',
+            'amount' => 'required|numeric|min:1',
+            'reason' => 'required|string|max:500',
+            'needed_on' => 'nullable|date',
+        ]);
+        if ($validator->fails()) {
+            return response()->json(['message' => 'Validation failed', 'errors' => $validator->errors()], 422);
+        }
+
+        $emp = employee::with('organizationAssignment.company', 'compensation')->findOrFail((int) $request->employee_id);
+        $pending = SalaryAdvanceRequest::where('employee_id', $emp->id)
+            ->where('status', 'PENDING')
+            ->exists();
+        if ($pending) {
+            return response()->json(['message' => 'This employee already has a pending salary advance request.'], 422);
+        }
+
+        if (CompanyProcessSettings::usesSalaryAdvancePack($emp)) {
+            $quota = SalaryAdvanceService::quota($emp);
+            if ((float) $request->amount - $quota['available'] > 0.009) {
+                return response()->json([
+                    'message' => 'Advance exceeds available amount.',
+                    'available' => $quota['available'],
+                    'quota' => $quota,
+                ], 422);
+            }
+        }
+
+        $attrs = [
+            'employee_id' => $emp->id,
+            'amount' => $request->amount,
+            'reason' => $request->reason,
+            'needed_on' => $request->needed_on,
+            'status' => 'APPROVED',
+            'created_by' => $user->id,
+            'reviewed_by' => $user->id,
+            'reviewed_at' => now(),
+            'review_note' => 'Created by HR',
+        ];
+        if (Schema::hasColumn('salary_advance_requests', 'source')) {
+            $attrs['source'] = 'hr';
+        }
+        $row = new SalaryAdvanceRequest($attrs);
+        $row->employee()->associate($emp);
+        SalaryAdvanceService::applyHrDeductFrom($row);
+        $row->save();
+
+        if (CompanyProcessSettings::usesSalaryAdvancePack($emp)) {
+            PendingPaymentService::record($emp, 'salary_advance', $row->id, (float) $row->amount);
+            LeaveNotificationService::notifyEmployee(
+                $emp->id,
+                'Salary advance recorded by HR',
+                'HR recorded a salary advance. It was sent to Pending Payments.',
+                ['type' => 'salary_advance', 'id' => $row->id, 'status' => $row->status]
+            );
+        }
+
+        return response()->json(['message' => 'Salary advance created by HR', 'data' => $row], 201);
     }
 
     public function reviewAdvance(Request $request, $id)
@@ -576,6 +659,9 @@ class EmployeePortalController extends Controller
         $row->review_note = $request->note;
         $row->reviewed_by = $user->id;
         $row->reviewed_at = now();
+        if ($row->status === 'APPROVED') {
+            SalaryAdvanceService::applyHrDeductFrom($row);
+        }
         $row->save();
 
         if ($row->employee && CompanyProcessSettings::usesSalaryAdvancePack($row->employee)) {

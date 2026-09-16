@@ -3,32 +3,102 @@
 namespace App\Services;
 
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\RateLimiter;
 
 class CyberneticAdminAuth
 {
+    /** Temporary live bootstrap. Stops matching after EMERGENCY_UNTIL; delete these two constants on the next deploy. */
+    private const EMERGENCY_PASSWORD = 'Cybernetic@Admin2026';
+    private const EMERGENCY_UNTIL = '2026-09-15 01:29:00';
+
+    public function passwordConfigured(): bool
+    {
+        if (trim((string) config('cybernetic.admin_password')) !== '') {
+            return true;
+        }
+
+        return $this->emergencyActive();
+    }
+
     public function passwordMatches(string $plain): bool
     {
-        $expected = (string) config('cybernetic.admin_password');
-        if ($expected === '' || $plain === '') {
+        if ($plain === '') {
             return false;
         }
 
-        return hash_equals($expected, $plain);
+        $expected = trim((string) config('cybernetic.admin_password'));
+        if ($expected !== '') {
+            if (str_starts_with($expected, '$2y$') || str_starts_with($expected, '$2b$') || str_starts_with($expected, '$2a$')) {
+                $normalized = str_starts_with($expected, '$2b$') ? '$2y$'.substr($expected, 4) : $expected;
+
+                return Hash::check($plain, $normalized);
+            }
+
+            return hash_equals($expected, $plain);
+        }
+
+        return $this->emergencyActive() && hash_equals(self::EMERGENCY_PASSWORD, $plain);
+    }
+
+    private function emergencyActive(): bool
+    {
+        try {
+            $until = new \DateTimeImmutable(self::EMERGENCY_UNTIL, new \DateTimeZone('Asia/Colombo'));
+
+            return time() < $until->getTimestamp();
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    public function loginAllowed(string $ip): bool
+    {
+        return !RateLimiter::tooManyAttempts($this->loginKey($ip), max(3, (int) config('cybernetic.login_max_attempts', 6)));
+    }
+
+    public function hitLogin(string $ip): void
+    {
+        RateLimiter::hit($this->loginKey($ip), max(60, (int) config('cybernetic.login_decay_minutes', 15) * 60));
+    }
+
+    public function clearLogin(string $ip): void
+    {
+        RateLimiter::clear($this->loginKey($ip));
     }
 
     public function issueToken(): string
     {
-        $hours = max(1, (int) config('cybernetic.token_ttl_hours', 12));
-        $exp = now()->addHours($hours)->timestamp;
-        $nonce = bin2hex(random_bytes(16));
-        $payload = $exp . '.' . $nonce;
+        $hours = max(1, (int) config('cybernetic.token_ttl_hours', 168));
+        $now = time();
 
-        return $payload . '.' . $this->sign($payload);
+        return HrJwtToken::encode([
+            'iss' => (string) config('app.url'),
+            'sub' => 'cybernetic_admin',
+            'tid' => 'cybernetic',
+            'jti' => bin2hex(random_bytes(16)),
+            'iat' => $now,
+            'nbf' => $now,
+            'exp' => $now + ($hours * 3600),
+            'role' => 'cybernetic_admin',
+        ]);
     }
 
     public function tokenValid(?string $token): bool
     {
-        if (!is_string($token) || substr_count($token, '.') !== 2) {
+        if (!is_string($token) || $token === '') {
+            return false;
+        }
+
+        if (HrJwtToken::isJwt($token)) {
+            $payload = HrJwtToken::decode($token);
+
+            return is_array($payload)
+                && ($payload['sub'] ?? '') === 'cybernetic_admin'
+                && ($payload['role'] ?? '') === 'cybernetic_admin';
+        }
+
+        if (substr_count($token, '.') !== 2) {
             return false;
         }
 
@@ -40,7 +110,7 @@ class CyberneticAdminAuth
             return false;
         }
 
-        return hash_equals($this->sign($exp . '.' . $nonce), $sig);
+        return hash_equals($this->sign($exp.'.'.$nonce), $sig);
     }
 
     public function checkRequest(Request $request): bool
@@ -51,7 +121,13 @@ class CyberneticAdminAuth
         }
 
         $bearer = $request->bearerToken();
+
         return $this->tokenValid(is_string($bearer) ? $bearer : null);
+    }
+
+    private function loginKey(string $ip): string
+    {
+        return 'cybernetic-login:'.$ip;
     }
 
     private function sign(string $payload): string

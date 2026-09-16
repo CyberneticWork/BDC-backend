@@ -49,6 +49,7 @@ class RequireApiAuth
             'api/cybernetic-admin/login',
             'api/hikvision/webhook/*',
             'api/hikvision/punches/*',
+            'api/hikvision/cloud-base',
         ]);
     }
 }

@@ -1,12 +1,12 @@
 -- Opt-in late attendance policy per company + >30m leave/reject decisions.
 -- Ignore duplicate-column / table errors.
 
--- Needed for NoPay day divisor (skip if this column already exists)
+-- Safe to re-run: skip columns that already exist (MariaDB / MySQL 8.0.12+).
 ALTER TABLE `companies`
-  ADD COLUMN `nopay_working_days` TINYINT UNSIGNED NOT NULL DEFAULT 30;
+  ADD COLUMN IF NOT EXISTS `nopay_working_days` TINYINT UNSIGNED NOT NULL DEFAULT 30;
 
 ALTER TABLE `companies`
-  ADD COLUMN `late_attendance_policy_enabled` TINYINT(1) NOT NULL DEFAULT 0;
+  ADD COLUMN IF NOT EXISTS `late_attendance_policy_enabled` TINYINT(1) NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS `excess_late_decisions` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,

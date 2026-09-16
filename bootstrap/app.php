@@ -17,8 +17,13 @@ return Application::configure(basePath: dirname(__DIR__))
             'cybernetic' => \App\Http\Middleware\EnsureCyberneticAdmin::class,
             'auth.token' => \App\Http\Middleware\AuthenticateJwtOrSanctum::class,
         ]);
+        $middleware->trustProxies(at: '*');
+        $middleware->web(append: [
+            \App\Http\Middleware\SecurityHeaders::class,
+        ]);
         $middleware->api(prepend: [
             \App\Http\Middleware\SecureApiResponse::class,
+            \App\Http\Middleware\SecurityHeaders::class,
             \App\Http\Middleware\RequireApiAuth::class,
         ]);
         $middleware->throttleApi();

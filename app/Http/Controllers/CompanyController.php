@@ -10,6 +10,7 @@ use App\Services\CyberneticAdminAuth;
 use App\Services\FirebaseStorageService;
 use App\Services\GoogleDriveLogoService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
@@ -57,22 +58,38 @@ class CompanyController extends Controller
         $host = strtolower(trim((string) $request->query('host', '')));
         $host = preg_replace('/^www\./', '', $host);
         $slug = strtolower(trim((string) $request->query('slug', '')));
-        $localHosts = ['localhost', '127.0.0.1', '::1', ''];
+        $cacheKey = 'public-branding:'.($host ?: 'local').':'.($slug ?: '-');
 
-        $query = company::query()->whereNull('deleted_at');
-        $company = null;
+        $payload = Cache::remember($cacheKey, 120, function () use ($host, $slug) {
+            $localHosts = ['localhost', '127.0.0.1', '::1', ''];
+            $query = company::query()->whereNull('deleted_at');
+            $hasHostCol = Schema::hasColumn('companies', 'frontend_host');
+            $hasActiveCol = Schema::hasColumn('companies', 'portal_active');
+            $active = $hasActiveCol
+                ? (clone $query)->where('portal_active', true)->orderByDesc('updated_at')->first()
+                : null;
+            $hostCompany = null;
+            if ($host !== '' && !in_array($host, $localHosts, true) && $hasHostCol) {
+                $hostCompany = (clone $query)->whereRaw('LOWER(frontend_host) = ?', [$host])->first();
+            }
 
-        if ($host !== '' && !in_array($host, $localHosts, true) && Schema::hasColumn('companies', 'frontend_host')) {
-            $company = (clone $query)->whereRaw('LOWER(frontend_host) = ?', [$host])->first();
-        }
-        if (!$company && $slug !== '' && Schema::hasColumn('companies', 'slug')) {
-            $company = (clone $query)->whereRaw('LOWER(slug) = ?', [$slug])->first();
-        }
-        if (!$company && Schema::hasColumn('companies', 'portal_active')) {
-            $company = (clone $query)->where('portal_active', true)->orderByDesc('updated_at')->first();
-        }
+            $company = null;
+            $activeHost = strtolower(preg_replace('/^www\./', '', trim((string) ($active?->frontend_host ?? ''))));
+            if ($active && (in_array($host, $localHosts, true) || $activeHost === '' || $activeHost === $host)) {
+                $company = $active;
+            } elseif ($hostCompany) {
+                $company = $hostCompany;
+            } elseif ($active) {
+                $company = $active;
+            }
+            if (!$company && $slug !== '' && Schema::hasColumn('companies', 'slug')) {
+                $company = (clone $query)->whereRaw('LOWER(slug) = ?', [$slug])->first();
+            }
 
-        return response()->json(['data' => $company ? $this->brandingPayload($company) : null]);
+            return $company ? $this->brandingPayload($company) : null;
+        });
+
+        return response()->json(['data' => $payload]);
     }
 
     /** Public image for login branding (works for Google Drive and local files). */
@@ -106,6 +123,7 @@ class CompanyController extends Controller
 
         $company = company::findOrFail($id);
         $this->makePortalActive($company);
+        $this->forgetPublicBrandingCache($company);
 
         return response()->json($company->fresh());
     }
@@ -163,6 +181,7 @@ class CompanyController extends Controller
         if (!empty($validated['portal_active'])) {
             $this->makePortalActive($company);
         }
+        $this->forgetPublicBrandingCache($company);
         return response()->json($company->fresh(), 201);
     }
 
@@ -272,6 +291,7 @@ class CompanyController extends Controller
         if (!empty($validated['portal_active'])) {
             $this->makePortalActive($company->fresh());
         }
+        $this->forgetPublicBrandingCache($company);
         return response()->json($company->fresh());
     }
 
@@ -313,6 +333,7 @@ class CompanyController extends Controller
             $payload['theme_json'] = $theme;
         }
         $company->update($payload);
+        $this->forgetPublicBrandingCache($company);
 
         return response()->json([
             'message' => 'Logo saved',
@@ -325,6 +346,7 @@ class CompanyController extends Controller
     {
         $company = company::findOrFail($id);
         $company->delete();
+        $this->forgetPublicBrandingCache($company);
         return response()->json(['message' => 'Deleted'], 204);
     }
 
@@ -398,6 +420,39 @@ class CompanyController extends Controller
         return $validated;
     }
 
+    private function forgetPublicBrandingCache(?company $company = null): void
+    {
+        $hosts = ['local', 'localhost', '127.0.0.1', '::1'];
+        if (Schema::hasColumn('companies', 'frontend_host')) {
+            foreach (company::query()->pluck('frontend_host') as $h) {
+                $h = strtolower(preg_replace('/^www\./', '', trim((string) $h)));
+                if ($h !== '') {
+                    $hosts[] = $h;
+                }
+            }
+        }
+        if ($company?->frontend_host) {
+            $hosts[] = strtolower(preg_replace('/^www\./', '', trim((string) $company->frontend_host)));
+        }
+        $slugs = ['-'];
+        if (Schema::hasColumn('companies', 'slug')) {
+            foreach (company::query()->pluck('slug') as $s) {
+                $s = strtolower(trim((string) $s));
+                if ($s !== '') {
+                    $slugs[] = $s;
+                }
+            }
+        }
+        if ($company?->slug) {
+            $slugs[] = strtolower(trim((string) $company->slug));
+        }
+        foreach (array_unique($hosts) as $host) {
+            foreach ($slugs as $slug) {
+                Cache::forget('public-branding:'.$host.':'.$slug);
+            }
+        }
+    }
+
     private function brandingPayload(company $company): array
     {
         $theme = $company->theme_json ?: [];
@@ -449,10 +504,7 @@ class CompanyController extends Controller
         if (!$company->logo_url) {
             return null;
         }
-        if ($this->driveLogos->isDriveValue($company->logo_url)) {
-            return url('/api/public/company-logo/' . $company->id);
-        }
 
-        return $company->logo_url;
+        return $this->driveLogos->displayUrl($company->logo_url) ?: $company->logo_url;
     }
 }

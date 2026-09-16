@@ -28,6 +28,10 @@ class over_time extends Model
         'total_ot_amount',
         'holiday_ot_hours',
         'holiday_ot_amount',
+        'holiday_shift_hours',
+        'holiday_outside_hours',
+        'holiday_shift_amount',
+        'holiday_outside_amount',
         'status',
     ];
 

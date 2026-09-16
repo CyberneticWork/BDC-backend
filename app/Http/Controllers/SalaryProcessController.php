@@ -26,6 +26,7 @@ use App\Models\SalaryProcessAudit;
 use App\Models\MonthlyLateDeductionItem;
 use App\Services\ContractEmployeeScope;
 use App\Services\ExcessLateService;
+use App\Services\SalaryAdvanceService;
 
 class SalaryProcessController extends Controller
 {
@@ -1577,11 +1578,18 @@ public function getEmployeesByMonthAndCompany(Request $request)
 
             $epfEtfDeductions = 0.0;
             $bonusFixedDeductions = 0.0;
+            $advancePayroll = SalaryAdvanceService::monthPayrollDeductions(
+                (int) $employeeData['id'],
+                (int) $year,
+                (int) $month
+            );
             foreach ($deductionsArr as $deduction) {
                 $cat = strtoupper($deduction['category'] ?? '');
                 $amount = (float) ($deduction['amount'] ?? 0);
                 if (in_array($cat, ['EPF', 'ETF'], true)) {
                     $epfEtfDeductions += $amount;
+                } elseif ($advancePayroll['total'] > 0 && SalaryAdvanceService::isNamedAdvanceDeduction($deduction['name'] ?? '')) {
+                    continue;
                 } else {
                     $bonusFixedDeductions += $amount;
                 }
@@ -1638,6 +1646,10 @@ public function getEmployeesByMonthAndCompany(Request $request)
 
             $basicDeductionsTotal += $loanBasicPrincipal + $loanBasicInterest;
             $bonusDeductionsTotal += $loanBonusPrincipal + $loanBonusInterest;
+            $salaryAdvanceBasic = (float) ($advancePayroll['basic'] ?? 0);
+            $salaryAdvanceBonus = (float) ($advancePayroll['bonus'] ?? 0);
+            $basicDeductionsTotal += $salaryAdvanceBasic;
+            $bonusDeductionsTotal += $salaryAdvanceBonus;
 
             // Totals
             $grossSalary = $basicGross + $bonusGross + $morning_ot_fees + $night_ot_fees + $holiday_ot_fees;
@@ -1711,6 +1723,10 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 'loan_basic_interest' => round($loanBasicInterest, 2),
                 'loan_bonus_principal' => round($loanBonusPrincipal, 2),
                 'loan_bonus_interest' => round($loanBonusInterest, 2),
+
+                'salary_advance_basic' => round($salaryAdvanceBasic, 2),
+                'salary_advance_bonus' => round($salaryAdvanceBonus, 2),
+                'salary_advance' => round($salaryAdvanceBasic + $salaryAdvanceBonus, 2),
 
                 'basic_deductions_total' => round($basicDeductionsTotal, 2),
                 'bonus_deductions_total' => round($bonusDeductionsTotal, 2),

@@ -17,6 +17,8 @@ class SalaryAdvanceRequest extends Model
         'reason',
         'needed_on',
         'status',
+        'deduct_from',
+        'source',
         'review_note',
         'reviewed_by',
         'reviewed_at',

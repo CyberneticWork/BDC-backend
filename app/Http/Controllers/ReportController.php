@@ -132,8 +132,18 @@ class ReportController extends Controller
 
             $sportsFund = (float)($breakdown['sports_fund_deduction'] ?? 0);
             $staffFund = (float)($breakdown['staff_fund_deduction'] ?? 0);
-            $salaryAdvance = self::sumDeductionsByPattern($deductions, ['salary advance', 'salary_advance', 'advance']);
+            $salaryAdvanceBasic = (float)($breakdown['salary_advance_basic'] ?? 0);
+            $salaryAdvanceBonus = (float)($breakdown['salary_advance_bonus'] ?? 0);
+            $salaryAdvanceFromDeductions = self::sumDeductionsByPattern($deductions, ['salary advance', 'salary_advance', 'advance']);
+            $salaryAdvance = round($salaryAdvanceBasic + $salaryAdvanceBonus, 2);
+            if ($salaryAdvance <= 0) {
+                $salaryAdvance = $salaryAdvanceFromDeductions;
+                $salaryAdvanceBonus = $salaryAdvanceFromDeductions;
+            }
             $customBonusDeductions = self::sumCustomBonusDeductions($deductions);
+            if ($salaryAdvanceBasic + $salaryAdvanceBonus > 0) {
+                $customBonusDeductions = max(0, round($customBonusDeductions - $salaryAdvanceFromDeductions, 2));
+            }
 
             // Salary for EPF/ETF = (basic − basic NoPay)
             $salaryForEpf = round((float)($breakdown['epf_etf_base'] ?? $adjustedBasic), 2);
@@ -143,14 +153,14 @@ class ReportController extends Controller
 
             // Salary track (Sch 01–06): basic-side deductions
             $basicOtherDeductions = round($probation + $epfEtfFixed, 2);
-            $epfScheduleDeductions = round($epf8 + $epfEtfFixed + $probation + $loanOnBasic, 2);
+            $epfScheduleDeductions = round($epf8 + $epfEtfFixed + $probation + $loanOnBasic + $salaryAdvanceBasic, 2);
             $epfScheduleNet = round($salaryComponent - $basicNoPay - $epfScheduleDeductions, 2);
 
             // Allowance / bonus track
             $allowanceOtherDeductions = round($customBonusDeductions + $stampDuty, 2);
             $allowanceGross = round($allowanceComponent, 2);
             $allowanceDeductions = round(
-                $bonusNoPay + $salaryAdvance + $loanOnBonus + $loanInterest
+                $bonusNoPay + $salaryAdvanceBonus + $loanOnBonus + $loanInterest
                 + $sportsFund + $staffFund + $allowanceOtherDeductions,
                 2
             );

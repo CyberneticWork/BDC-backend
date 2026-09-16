@@ -79,6 +79,10 @@ function apiOrigin(urlStr) {
     const mapped = {
       'spmhr.cyberneticde.site': 'https://apispmhr.cyberneticde.site',
       'apispmhr.cyberneticde.site': 'https://apispmhr.cyberneticde.site',
+      'jcfood.cyberneticde.site': 'https://apijcfood.cyberneticde.site',
+      'apijcfood.cyberneticde.site': 'https://apijcfood.cyberneticde.site',
+      'urbanhr.cyberneticde.site': 'https://apiurbanhr.cyberneticde.site',
+      'apiurbanhr.cyberneticde.site': 'https://apiurbanhr.cyberneticde.site',
     };
     if (mapped[host]) return mapped[host];
     return u.origin;
