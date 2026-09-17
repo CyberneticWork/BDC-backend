@@ -19,11 +19,11 @@ class RequireApiAuth
             return $next($request);
         }
 
-        if ($request->is('api/cybernetic-admin/*')) {
-            if ($this->cybernetic->checkRequest($request)) {
-                return $next($request);
-            }
+        if ($this->cybernetic->checkRequest($request) && $this->isCyberneticRoute($request)) {
+            return $next($request);
+        }
 
+        if ($request->is('api/cybernetic-admin/*')) {
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
@@ -49,5 +49,22 @@ class RequireApiAuth
             'api/hikvision/punches/*',
             'api/hikvision/cloud-base',
         ]);
+    }
+
+    private function isCyberneticRoute(Request $request): bool
+    {
+        $path = preg_replace('#^index\.php/#', '', trim($request->path(), '/'));
+
+        return str_starts_with($path, 'api/cybernetic-admin')
+            || $path === 'api/companies'
+            || str_starts_with($path, 'api/companies/')
+            || $path === 'api/media/firebase'
+            || $request->is([
+                'api/cybernetic-admin',
+                'api/cybernetic-admin/*',
+                'api/companies',
+                'api/companies/*',
+                'api/media/firebase',
+            ]);
     }
 }
