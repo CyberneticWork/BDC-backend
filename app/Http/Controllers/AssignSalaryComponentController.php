@@ -7,9 +7,11 @@ use App\Models\deduction;
 use App\Models\employee;
 use App\Models\employee_allowances;
 use App\Models\employee_deductions;
+use App\Services\SalaryAdvanceService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Validator;
 
 class AssignSalaryComponentController extends Controller
@@ -159,6 +161,7 @@ class AssignSalaryComponentController extends Controller
             'month' => 'required_if:value_type,variable|nullable|integer|min:1|max:12',
             'year' => 'required_if:value_type,variable|nullable|integer|min:2000|max:2100',
             'amount' => 'required_if:value_type,variable|nullable|numeric|min:0',
+            'deduct_from' => 'nullable|in:basic,bonus',
         ]);
 
         if ($validator->fails()) {
@@ -167,6 +170,11 @@ class AssignSalaryComponentController extends Controller
 
         $deduction = deduction::findOrFail($request->deduction_id);
         $companyId = $request->company_id ?: $deduction->company_id;
+        $isAdvance = SalaryAdvanceService::isNamedAdvanceDeduction($deduction->deduction_name)
+            || SalaryAdvanceService::isNamedAdvanceDeduction($deduction->deduction_code);
+        $deductFrom = $isAdvance
+            ? SalaryAdvanceService::normalizeDeductFrom($request->input('deduct_from'))
+            : null;
 
         $months = $this->resolveMonths($request);
         if (isset($months['error'])) {
@@ -188,6 +196,14 @@ class AssignSalaryComponentController extends Controller
             foreach ($employeeIds as $employeeId) {
                 $attendanceNo = employee::where('id', $employeeId)->value('attendance_employee_no');
                 foreach ($months as [$month, $year]) {
+                    $payload = [
+                            'attendance_employee_no' => $attendanceNo,
+                            'custom_amount' => $amount,
+                            'is_active' => 1,
+                    ];
+                    if ($deductFrom && Schema::hasColumn('employee_deductions', 'deduct_from')) {
+                        $payload['deduct_from'] = $deductFrom;
+                    }
                     employee_deductions::updateOrCreate(
                         [
                             'employee_id' => $employeeId,
@@ -195,11 +211,7 @@ class AssignSalaryComponentController extends Controller
                             'month' => $month,
                             'year' => $year,
                         ],
-                        [
-                            'attendance_employee_no' => $attendanceNo,
-                            'custom_amount' => $amount,
-                            'is_active' => 1,
-                        ]
+                        $payload
                     );
                     $created++;
                 }
@@ -316,6 +328,7 @@ class AssignSalaryComponentController extends Controller
             'month' => $row->month,
             'year' => $row->year,
             'amount' => (float) ($row->custom_amount ?? $row->deduction->amount ?? 0),
+            'deduct_from' => $row->deduct_from ?? null,
         ];
     }
 }

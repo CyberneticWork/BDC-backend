@@ -14,8 +14,10 @@ class CyberneticAdminAuth
 
     public function passwordConfigured(): bool
     {
-        if (trim((string) config('cybernetic.admin_password')) !== '') {
-            return true;
+        foreach ($this->passwordCandidates() as $expected) {
+            if ($expected !== '') {
+                return true;
+            }
         }
 
         return $this->emergencyActive();
@@ -23,22 +25,67 @@ class CyberneticAdminAuth
 
     public function passwordMatches(string $plain): bool
     {
+        $plain = $this->normalizeSecret($plain);
         if ($plain === '') {
             return false;
         }
 
-        $expected = trim((string) config('cybernetic.admin_password'));
-        if ($expected !== '') {
+        foreach ($this->passwordCandidates() as $expected) {
+            if ($expected === '') {
+                continue;
+            }
             if (str_starts_with($expected, '$2y$') || str_starts_with($expected, '$2b$') || str_starts_with($expected, '$2a$')) {
                 $normalized = str_starts_with($expected, '$2b$') ? '$2y$'.substr($expected, 4) : $expected;
-
-                return Hash::check($plain, $normalized);
+                if (Hash::check($plain, $normalized)) {
+                    return true;
+                }
+                continue;
             }
-
-            return hash_equals($expected, $plain);
+            if (hash_equals($expected, $plain)) {
+                return true;
+            }
         }
 
         return $this->emergencyActive() && hash_equals(self::EMERGENCY_PASSWORD, $plain);
+    }
+
+    /** @return list<string> */
+    private function passwordCandidates(): array
+    {
+        $keys = ['CYBERNETIC_ADMIN_PASSWORD'];
+        $raw = [
+            (string) config('cybernetic.admin_password'),
+        ];
+        foreach ($keys as $key) {
+            $raw[] = (string) (getenv($key) ?: '');
+            $raw[] = (string) ($_ENV[$key] ?? '');
+            $raw[] = (string) ($_SERVER[$key] ?? '');
+        }
+
+        $out = [];
+        foreach ($raw as $value) {
+            $value = $this->normalizeSecret($value);
+            if ($value !== '' && !in_array($value, $out, true)) {
+                $out[] = $value;
+            }
+        }
+
+        return $out;
+    }
+
+    private function normalizeSecret(string $value): string
+    {
+        $value = trim($value);
+        $value = preg_replace('/^\xEF\xBB\xBF/', '', $value) ?? $value;
+        $value = trim($value);
+        if (
+            (str_starts_with($value, '"') && str_ends_with($value, '"'))
+            || (str_starts_with($value, "'") && str_ends_with($value, "'"))
+        ) {
+            $value = substr($value, 1, -1);
+        }
+
+        return str_replace(["\r", "\n"], '', trim($value));
     }
 
     private function emergencyActive(): bool

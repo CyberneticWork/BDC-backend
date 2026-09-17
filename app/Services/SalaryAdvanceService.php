@@ -56,16 +56,30 @@ class SalaryAdvanceService
         ];
     }
 
-    public static function applyHrDeductFrom(SalaryAdvanceRequest $row): void
+    public static function normalizeDeductFrom(?string $value, string $fallback = 'bonus'): string
+    {
+        $v = strtolower(trim((string) $value));
+        if ($v === 'basic') {
+            return 'basic';
+        }
+        if ($v === 'bonus') {
+            return 'bonus';
+        }
+
+        return strtolower(trim($fallback)) === 'basic' ? 'basic' : 'bonus';
+    }
+
+    public static function applyHrDeductFrom(SalaryAdvanceRequest $row, ?string $choice = null): void
     {
         if (!Schema::hasColumn('salary_advance_requests', 'deduct_from')) {
             return;
         }
         $row->loadMissing('employee.organizationAssignment.company');
-        if (!$row->employee || !CompanyProcessSettings::usesSalaryAdvancePack($row->employee)) {
-            return;
+        $fallback = 'bonus';
+        if ($row->employee) {
+            $fallback = CompanyProcessSettings::salaryAdvanceHrDeductFrom($row->employee);
         }
-        $row->deduct_from = CompanyProcessSettings::salaryAdvanceHrDeductFrom($row->employee);
+        $row->deduct_from = self::normalizeDeductFrom($choice ?? $row->deduct_from, $fallback);
     }
 
     public static function isNamedAdvanceDeduction(?string $name): bool
@@ -105,17 +119,15 @@ class SalaryAdvanceService
                     });
             });
 
-        if (Schema::hasColumn('salary_advance_requests', 'deduct_from')) {
-            $q->whereIn('deduct_from', ['basic', 'bonus']);
-        } else {
-            return $empty;
-        }
-
         $basic = 0.0;
         $bonus = 0.0;
-        foreach ($q->get(['amount', 'deduct_from']) as $row) {
+        $cols = ['amount'];
+        if (Schema::hasColumn('salary_advance_requests', 'deduct_from')) {
+            $cols[] = 'deduct_from';
+        }
+        foreach ($q->get($cols) as $row) {
             $amt = (float) $row->amount;
-            if (strtolower((string) $row->deduct_from) === 'basic') {
+            if (self::normalizeDeductFrom($row->deduct_from ?? null) === 'basic') {
                 $basic += $amt;
             } else {
                 $bonus += $amt;

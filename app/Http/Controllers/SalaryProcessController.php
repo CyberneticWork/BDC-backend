@@ -1127,6 +1127,9 @@ public function getEmployeesByMonthAndCompany(Request $request)
         $loanInterestDeductSql = Schema::hasColumn('loans', 'interest_deduct_from')
             ? 'MAX(lo.interest_deduct_from) AS loan_interest_deduct_from,'
             : 'NULL AS loan_interest_deduct_from,';
+        $edDeductFromSql = Schema::hasColumn('employee_deductions', 'deduct_from')
+            ? "REPLACE(IFNULL(ed.deduct_from, 'bonus'), '\"', '')"
+            : "'bonus'";
 
         $totalDaysInMonth = (int)$lastDay;
 
@@ -1237,7 +1240,7 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 -- Employee-wise deductions (assigned per employee per month)
                 (
                     SELECT COALESCE(CONCAT('[', GROUP_CONCAT(
-                        CONCAT('{\"id\":', dd.id, ',\"name\":\"', REPLACE(IFNULL(dd.deduction_name, ''), '\"', '\\\\\"'), '\",\"amount\":', COALESCE(ed.custom_amount, dd.amount, 0), ',\"is_custom\":1,\"code\":\"', REPLACE(IFNULL(dd.deduction_code, ''), '\"', '\\\\\"'), '\",\"category\":\"', REPLACE(IFNULL(dd.category, ''), '\"', '\\\\\"'), '\"}')
+                        CONCAT('{\"id\":', dd.id, ',\"name\":\"', REPLACE(IFNULL(dd.deduction_name, ''), '\"', '\\\\\"'), '\",\"amount\":', COALESCE(ed.custom_amount, dd.amount, 0), ',\"is_custom\":1,\"code\":\"', REPLACE(IFNULL(dd.deduction_code, ''), '\"', '\\\\\"'), '\",\"category\":\"', REPLACE(IFNULL(dd.category, ''), '\"', '\\\\\"'), '\",\"deduct_from\":\"', {$edDeductFromSql}, '\"}')
                     SEPARATOR ','), ']'), '[]')
                     FROM employee_deductions ed JOIN deductions dd ON dd.id = ed.deduction_id
                     WHERE ed.employee_id = e.id AND ed.is_active = 1 AND dd.status = 'active'
@@ -1578,6 +1581,8 @@ public function getEmployeesByMonthAndCompany(Request $request)
 
             $epfEtfDeductions = 0.0;
             $bonusFixedDeductions = 0.0;
+            $advanceFromAssignedBasic = 0.0;
+            $advanceFromAssignedBonus = 0.0;
             $advancePayroll = SalaryAdvanceService::monthPayrollDeductions(
                 (int) $employeeData['id'],
                 (int) $year,
@@ -1588,8 +1593,15 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 $amount = (float) ($deduction['amount'] ?? 0);
                 if (in_array($cat, ['EPF', 'ETF'], true)) {
                     $epfEtfDeductions += $amount;
-                } elseif ($advancePayroll['total'] > 0 && SalaryAdvanceService::isNamedAdvanceDeduction($deduction['name'] ?? '')) {
-                    continue;
+                } elseif (SalaryAdvanceService::isNamedAdvanceDeduction($deduction['name'] ?? '')) {
+                    if ($advancePayroll['total'] > 0) {
+                        continue;
+                    }
+                    if (SalaryAdvanceService::normalizeDeductFrom($deduction['deduct_from'] ?? null) === 'basic') {
+                        $advanceFromAssignedBasic += $amount;
+                    } else {
+                        $advanceFromAssignedBonus += $amount;
+                    }
                 } else {
                     $bonusFixedDeductions += $amount;
                 }
@@ -1646,8 +1658,8 @@ public function getEmployeesByMonthAndCompany(Request $request)
 
             $basicDeductionsTotal += $loanBasicPrincipal + $loanBasicInterest;
             $bonusDeductionsTotal += $loanBonusPrincipal + $loanBonusInterest;
-            $salaryAdvanceBasic = (float) ($advancePayroll['basic'] ?? 0);
-            $salaryAdvanceBonus = (float) ($advancePayroll['bonus'] ?? 0);
+            $salaryAdvanceBasic = (float) ($advancePayroll['basic'] ?? 0) + $advanceFromAssignedBasic;
+            $salaryAdvanceBonus = (float) ($advancePayroll['bonus'] ?? 0) + $advanceFromAssignedBonus;
             $basicDeductionsTotal += $salaryAdvanceBasic;
             $bonusDeductionsTotal += $salaryAdvanceBonus;
 

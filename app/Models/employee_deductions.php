@@ -14,6 +14,7 @@ class employee_deductions extends Model
         'year',
         'custom_amount',
         'is_active',
+        'deduct_from',
     ];
 
     public function employee()

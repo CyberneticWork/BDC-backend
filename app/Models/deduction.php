@@ -20,6 +20,7 @@ class deduction extends Model
         'status',
         'category',
         'deduction_type',
+        'deduct_from',
         'startDate',
         'endDate',
         'created_at',

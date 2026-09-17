@@ -577,6 +577,7 @@ class EmployeePortalController extends Controller
             'amount' => 'required|numeric|min:1',
             'reason' => 'required|string|max:500',
             'needed_on' => 'nullable|date',
+            'deduct_from' => 'nullable|in:basic,bonus',
         ]);
         if ($validator->fails()) {
             return response()->json(['message' => 'Validation failed', 'errors' => $validator->errors()], 422);
@@ -617,7 +618,7 @@ class EmployeePortalController extends Controller
         }
         $row = new SalaryAdvanceRequest($attrs);
         $row->employee()->associate($emp);
-        SalaryAdvanceService::applyHrDeductFrom($row);
+        SalaryAdvanceService::applyHrDeductFrom($row, $request->input('deduct_from'));
         $row->save();
 
         if (CompanyProcessSettings::usesSalaryAdvancePack($emp)) {
@@ -643,6 +644,7 @@ class EmployeePortalController extends Controller
         $validator = Validator::make($request->all(), [
             'action' => 'required|in:APPROVE,REJECT',
             'note' => 'nullable|string|max:500',
+            'deduct_from' => 'nullable|in:basic,bonus',
         ]);
 
         if ($validator->fails()) {
@@ -660,7 +662,7 @@ class EmployeePortalController extends Controller
         $row->reviewed_by = $user->id;
         $row->reviewed_at = now();
         if ($row->status === 'APPROVED') {
-            SalaryAdvanceService::applyHrDeductFrom($row);
+            SalaryAdvanceService::applyHrDeductFrom($row, $request->input('deduct_from'));
         }
         $row->save();
 

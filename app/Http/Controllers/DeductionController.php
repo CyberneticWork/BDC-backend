@@ -29,6 +29,7 @@ class DeductionController extends Controller
             'amount' => 'required|numeric|min:0',
             'status' => 'required|in:active,inactive',
             'category' => 'nullable|string|max:255',
+            'deduct_from' => 'nullable|in:basic,bonus',
         ]);
 
         // Fixed/variable is chosen at assignment time — clear legacy master date fields
@@ -58,6 +59,7 @@ class DeductionController extends Controller
             'amount' => 'required|numeric|min:0',
             'status' => 'required|in:active,inactive',
             'category' => 'nullable|string|max:255',
+            'deduct_from' => 'nullable|in:basic,bonus',
         ]);
 
         if ($validator->fails()) {
