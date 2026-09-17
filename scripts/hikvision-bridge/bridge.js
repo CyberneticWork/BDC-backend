@@ -85,6 +85,8 @@ function apiOrigin(urlStr) {
       'apiurbanhr.cyberneticde.site': 'https://apiurbanhr.cyberneticde.site',
       'sunfohr.cyberneticde.site': 'https://apisunfohr.cyberneticde.site',
       'apisunfohr.cyberneticde.site': 'https://apisunfohr.cyberneticde.site',
+      'bdchrnew.cyberneticde.site': 'https://apibdchrnew.cyberneticde.site',
+      'apibdchrnew.cyberneticde.site': 'https://apibdchrnew.cyberneticde.site',
     };
     if (mapped[host]) return mapped[host];
     return u.origin;

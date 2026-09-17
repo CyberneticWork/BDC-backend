@@ -88,7 +88,9 @@ class CompanyHostScope
         return str_contains($host, 'spmhr')
             || str_contains($host, 'apispmhr')
             || str_contains($host, 'sunfohr')
-            || str_contains($host, 'apisunfohr');
+            || str_contains($host, 'apisunfohr')
+            || str_contains($host, 'bdchr')
+            || str_contains($host, 'apibdchr');
     }
 
     private static function blueSkyCompanyId(): ?int
