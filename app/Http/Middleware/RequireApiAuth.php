@@ -58,12 +58,20 @@ class RequireApiAuth
         return str_starts_with($path, 'api/cybernetic-admin')
             || $path === 'api/companies'
             || str_starts_with($path, 'api/companies/')
+            || $path === 'api/apiData/companies'
+            || str_starts_with($path, 'api/apiData/companies/')
+            || $path === 'api/apiData/departments'
+            || str_starts_with($path, 'api/apiData/departments/')
             || $path === 'api/media/firebase'
             || $request->is([
                 'api/cybernetic-admin',
                 'api/cybernetic-admin/*',
                 'api/companies',
                 'api/companies/*',
+                'api/apiData/companies',
+                'api/apiData/companies/*',
+                'api/apiData/departments',
+                'api/apiData/departments/*',
                 'api/media/firebase',
             ]);
     }
