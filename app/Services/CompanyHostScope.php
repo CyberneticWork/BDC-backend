@@ -90,7 +90,9 @@ class CompanyHostScope
             || str_contains($host, 'sunfohr')
             || str_contains($host, 'apisunfohr')
             || str_contains($host, 'bdchr')
-            || str_contains($host, 'apibdchr');
+            || str_contains($host, 'apibdchr')
+            || str_contains($host, 'hilburn')
+            || str_contains($host, 'apihilburn');
     }
 
     private static function blueSkyCompanyId(): ?int
