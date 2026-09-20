@@ -1,32 +1,25 @@
 # =============================================================================
-# apihilburn.cyberneticde.site  — Laravel API only
+# apibdchrnew.cyberneticde.site  — Laravel API only (BDC)
 # =============================================================================
-# Live problem (2026-09-19): Cloudflare serves CityGreen Agro HTML on this
-# hostname. That is a DNS / vhost mistake, not an APP_URL or password bug.
-# Do NOT CNAME apihilburn to citygreen, and do NOT point it at apiurbanhr
-# (that host returns URBAN EATS company data).
+# CORS allows https://*.cyberneticde.site (see config/cors.php).
+# This vhost must be Laravel public/, not the SPA and not another tenant.
 #
 # Cloudflare DNS (zone cyberneticde.site)
-#   Name:  apihilburn
+#   Name:  apibdchrnew
 #   Type:  A
-#   IPv4:  THE SERVER WHERE Hilburn-backend IS CLONED  (not CityGreen)
+#   IPv4:  THE SERVER WHERE BDC-backend IS CLONED
 #   Proxy: DNS only (grey cloud) until the vhost below works, then orange.
-#   Remove any CNAME/A that targets CityGreen or a default site.
 #
-# cPanel (if used)
-#   Subdomains → apihilburn.cyberneticde.site
-#   Document Root:  .../Hilburn-backend/public     ← Laravel public/, NOT public_html of CityGreen
-#
-# After nginx -t && reload, this must return JSON (not CityGreen HTML):
-#   https://apihilburn.cyberneticde.site/index.php/api/public/branding
+# After nginx -t && reload, this must return JSON:
+#   https://apibdchrnew.cyberneticde.site/index.php/api/public/branding
 # =============================================================================
 
 server {
     listen 80;
     listen 443 ssl http2;
-    server_name apihilburn.cyberneticde.site;
+    server_name apibdchrnew.cyberneticde.site;
 
-    root /var/www/hilburn-backend/public;
+    root /var/www/bdc-backend/public;
     index index.php;
 
     charset utf-8;

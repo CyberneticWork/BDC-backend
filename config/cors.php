@@ -9,6 +9,8 @@ return [
 
     'allowed_origins_patterns' => [
         '#^https://([a-z0-9-]+\.)*cyberneticde\.site$#i',
+        '#^https://bdchrnew\.cyberneticde\.site$#i',
+        '#^https://apibdchrnew\.cyberneticde\.site$#i',
         '#^http://localhost(:\d+)?$#',
         '#^http://127\.0\.0\.1(:\d+)?$#',
     ],
