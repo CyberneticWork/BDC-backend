@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\User;
 use App\Services\AclService;
+use App\Services\SuperAdminAuth;
 use Illuminate\Http\Request;
 
 class AclController extends Controller
@@ -57,7 +58,7 @@ class AclController extends Controller
     private function assertAdmin(Request $request): void
     {
         $role = strtolower((string) ($request->user()?->role));
-        if ($role !== 'admin') {
+        if ($role !== 'admin' && !app(SuperAdminAuth::class)->isSuperAdmin($request->user())) {
             abort(403, 'Only Admin can allocate HR user ACL.');
         }
     }

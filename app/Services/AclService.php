@@ -85,7 +85,7 @@ class AclService
         $role = strtolower((string) $user->role);
         $enabled = $this->enabledCatalog($company);
 
-        if ($role === 'admin') {
+        if ($role === 'admin' || app(SuperAdminAuth::class)->isSuperAdmin($user)) {
             return $this->fullMap($enabled, true);
         }
 
@@ -122,18 +122,28 @@ class AclService
         $data = $user->toArray();
         $data['permissions'] = $this->effectivePermissions($user);
         $data['company_features'] = $this->companyFeatures($company);
-        $data['acl_assignable'] = strtolower((string) $user->role) === 'admin';
+        $isSuper = app(SuperAdminAuth::class)->isSuperAdmin($user);
+        $data['is_super_admin'] = $isSuper;
+        $data['acl_assignable'] = $this->isHrAdmin($user);
         $role = strtolower((string) $user->role);
-        $data['portal_only'] = $role === 'employee'
-            || ($user->employee_id && !in_array($role, ['admin', 'hr', 'supervisor'], true));
+        if ($isSuper) {
+            $data['role'] = 'admin';
+            $data['role_label'] = 'Super Admin';
+        }
+        $data['portal_only'] = !$isSuper && ($role === 'employee'
+            || ($user->employee_id && !in_array($role, ['admin', 'hr', 'supervisor'], true)));
 
         return $data;
     }
 
     public function saveUserAcl(User $actor, User $target, array $modules): array
     {
-        if (strtolower((string) $actor->role) !== 'admin') {
+        if (!$this->isHrAdmin($actor)) {
             abort(403, 'Only Admin can allocate HR user ACL.');
+        }
+
+        if (app(SuperAdminAuth::class)->isSuperAdmin($target) || (int) $target->id === 999999001) {
+            abort(422, 'Super Admin permissions cannot be changed.');
         }
 
         $targetRole = strtolower((string) $target->role);
@@ -205,11 +215,21 @@ class AclService
                 'name' => $target->name,
                 'email' => $target->email,
                 'role' => $target->role,
-                    'acl_customized' => Schema::hasColumn('users', 'acl_customized') && (bool) $target->acl_customized,
+                'acl_customized' => Schema::hasColumn('users', 'acl_customized') && (bool) $target->acl_customized,
             ],
             'company_features' => $this->companyFeatures($company),
             'modules' => $rows,
         ];
+    }
+
+    public function isHrAdmin(?User $user): bool
+    {
+        if (!$user) {
+            return false;
+        }
+
+        return strtolower((string) $user->role) === 'admin'
+            || app(SuperAdminAuth::class)->isSuperAdmin($user);
     }
 
     private function storedMap(User $user): array

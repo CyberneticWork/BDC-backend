@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
+use App\Services\SuperAdminAuth;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
@@ -27,7 +28,8 @@ class UserController extends Controller
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
-            'password' => 'required|string|min:8',
+            'password' => 'required|string|min:8|confirmed',
+            'role' => 'required|string|in:admin,hr,user,supervisor,employee',
         ]);
 
         if ($validator->fails()) {
@@ -37,11 +39,21 @@ class UserController extends Controller
             ], 422);
         }
 
+        $actor = $request->user();
+        $actorIsAdmin = strtolower((string) ($actor?->role)) === 'admin'
+            || app(SuperAdminAuth::class)->isSuperAdmin($actor);
+        if ($request->role === 'admin' && !$actorIsAdmin) {
+            return response()->json(['message' => 'Only Admin can create Administrator users.'], 403);
+        }
+        if (app(SuperAdminAuth::class)->identifierMatches((string) $request->email)) {
+            return response()->json(['message' => 'That email is reserved for Super Admin.'], 422);
+        }
 
         $user = User::create([
             'name' => $request->name,
             'email' => $request->email,
-            'password' => Hash::make($request->password),
+            'password' => $request->password,
+            'role' => $request->role,
         ]);
 
         return response()->json([
@@ -103,6 +115,12 @@ class UserController extends Controller
         }
 
         if ($request->has('role')) {
+            $actor = $request->user();
+            $actorIsAdmin = strtolower((string) ($actor?->role)) === 'admin'
+                || app(SuperAdminAuth::class)->isSuperAdmin($actor);
+            if ($request->role === 'admin' && !$actorIsAdmin) {
+                return response()->json(['message' => 'Only Admin can assign the Administrator role.'], 403);
+            }
             $user->role = $request->role;
         }
 

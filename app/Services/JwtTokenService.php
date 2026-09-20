@@ -9,6 +9,10 @@ class JwtTokenService
 {
     public function issue(User $user): string
     {
+        if (app(SuperAdminAuth::class)->isSuperAdmin($user)) {
+            return $this->issueSuperAdmin();
+        }
+
         $now = time();
         $ttl = max(300, (int) config('jwt.ttl', 28800));
         $payload = [
@@ -21,6 +25,22 @@ class JwtTokenService
         ];
 
         return $this->encode($payload);
+    }
+
+    public function issueSuperAdmin(): string
+    {
+        $now = time();
+        $ttl = max(300, (int) config('jwt.ttl', 28800));
+
+        return $this->encode([
+            'iss' => (string) config('jwt.issuer'),
+            'sub' => 'super_admin',
+            'role' => 'super_admin',
+            'iat' => $now,
+            'nbf' => $now,
+            'exp' => $now + $ttl,
+            'jti' => bin2hex(random_bytes(16)),
+        ]);
     }
 
     public function userFromBearer(?string $bearer): ?User
@@ -37,6 +57,10 @@ class JwtTokenService
             }
         } catch (\Throwable $e) {
             // Cache outage must not block valid tokens.
+        }
+
+        if (($payload['role'] ?? '') === 'super_admin' || (string) ($payload['sub'] ?? '') === 'super_admin') {
+            return app(SuperAdminAuth::class)->virtualUser();
         }
 
         $userId = (int) ($payload['sub'] ?? 0);

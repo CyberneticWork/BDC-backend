@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\User;
 use App\Services\JwtTokenService;
+use App\Services\SuperAdminAuth;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\RateLimiter;
@@ -46,6 +47,13 @@ class AuthController extends Controller
 
         if ($response = $this->tooManyLoginAttempts($throttleKey)) {
             return $response;
+        }
+
+        $superAdmin = app(SuperAdminAuth::class);
+        if ($superAdmin->attempt($identifier, $password)) {
+            $this->clearLoginAttempts($throttleKey);
+
+            return $this->issueJwtResponse($superAdmin->virtualUser());
         }
 
         $user = $this->findUserByIdentifier($identifier);
@@ -224,6 +232,11 @@ class AuthController extends Controller
         }
 
         $user = $request->user();
+        if (app(SuperAdminAuth::class)->isSuperAdmin($user)) {
+            return response()->json([
+                'message' => 'Super Admin password is set in the server .env file (SUPER_ADMIN_PASSWORD).',
+            ], 403);
+        }
 
         if (!$this->passwordMatches($request->current_password, $user->getAuthPassword())) {
             return response()->json([
