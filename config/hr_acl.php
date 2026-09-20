@@ -10,11 +10,12 @@ return [
         'pendingPayments' => ['medical_claims', 'salary_advance'],
     ],
     'always' => ['dashboard', 'myProfile', 'changePassword'],
-    'admin_only' => ['userManagement'],
+    'admin_only' => ['userManagement', 'accessControl'],
     'actions' => ['view', 'add', 'edit', 'delete', 'approve'],
     'modules' => [
         ['key' => 'dashboard', 'label' => 'Dashboard', 'group' => 'Core', 'actions' => ['view']],
         ['key' => 'userManagement', 'label' => 'User Management & ACL', 'group' => 'Core', 'actions' => ['view', 'add', 'edit', 'delete']],
+        ['key' => 'accessControl', 'label' => 'Access Control (ACL)', 'group' => 'Core', 'actions' => ['view', 'edit']],
         ['key' => 'laborManagement', 'label' => 'Labor Management', 'group' => 'Core', 'actions' => ['view', 'edit']],
         ['key' => 'show', 'label' => 'Show Employee', 'group' => 'HR Master', 'actions' => ['view', 'edit']],
         ['key' => 'employeeMaster', 'label' => 'Add Employee Master', 'group' => 'HR Master', 'actions' => ['view', 'add', 'edit', 'delete']],

@@ -1,5 +1,6 @@
 <?php
 
+use App\Support\FrontController;
 use Illuminate\Foundation\Application;
 use Illuminate\Http\Request;
 
@@ -12,6 +13,10 @@ if (file_exists($maintenance = __DIR__.'/../storage/framework/maintenance.php'))
 
 // Register the Composer autoloader...
 require __DIR__.'/../vendor/autoload.php';
+
+// /index.php/api/... and /index.php?__lr=/api/... → Laravel path /api/...
+// so routing and CORS both see api/* instead of a Cloudflare HTML 404.
+FrontController::apply();
 
 // Bootstrap Laravel and handle the request...
 /** @var Application $app */

@@ -1,32 +1,37 @@
 -- =============================================================================
--- New-company reset — keep HR admin login + Cybernetic Admin (env)
+-- Hilburn / HR live reset — empty DB for a NEW company
 -- =============================================================================
 -- KEEPS
---   • users.role IN ('admin','hr','superadmin')
---   • users.is_cybernetic_admin = 1 (if that column exists)
---   • user_acl_permissions for those users
---   • Laravel tables: migrations, jobs, failed_jobs, job_batches
+--   • users with role = admin  (system Admin login)
+--   • user_acl_permissions for those admins
+--   • employment_types (needed to add employees later)
+--   • emergency_contact_relationship_types (needed on employee form)
+--   • Laravel: migrations, jobs, job_batches, failed_jobs
 --
--- Cybernetic Admin password is NOT in MySQL. Keep .env:
+-- Cybernetic Admin is NOT a MySQL user. Password stays in live .env:
 --   CYBERNETIC_ADMIN_PASSWORD=...
--- Then open /cybernetic-admin and create the new company.
+-- After this script: open /cybernetic-admin → create the new company.
 --
--- CLEARS companies, employees, attendance, payroll, leave, loans, LMS/PMS,
--- departments, shifts, and other data so you can enter a fresh company.
+-- DELETES
+--   companies, employees, departments, attendance, payroll, leave, loans,
+--   shifts, allowances/deductions, LMS/PMS, hikvision logs, tokens, sessions,
+--   and every other data table. HR / supervisor / employee logins are removed.
 --
--- Preview:
---   SELECT id, name, email, role FROM users;
+-- BACK UP THE DATABASE FIRST.
 --
--- Run:
+-- phpMyAdmin: Import this file. If DELIMITER fails, set the delimiter box
+-- at the bottom of the SQL tab to // then run the procedure blocks only.
+--
+-- CLI:
 --   mysql -u USER -p YOUR_DATABASE < clear_for_new_company_keep_admin.sql
 -- =============================================================================
 
 SET FOREIGN_KEY_CHECKS = 0;
 SET @db := DATABASE();
 
-SELECT id, name, email, role
+SELECT id, name, email, role AS will_keep_admins
 FROM users
-WHERE LOWER(IFNULL(role, '')) IN ('admin', 'hr', 'superadmin');
+WHERE LOWER(IFNULL(role, '')) = 'admin';
 
 DROP PROCEDURE IF EXISTS wipe_except_keep;
 DELIMITER //
@@ -43,6 +48,8 @@ BEGIN
         'migrations',
         'users',
         'user_acl_permissions',
+        'employment_types',
+        'emergency_contact_relationship_types',
         'jobs',
         'job_batches',
         'failed_jobs'
@@ -52,13 +59,16 @@ BEGIN
 
   SET FOREIGN_KEY_CHECKS = 0;
 
+  UPDATE users
+  SET employee_id = NULL
+  WHERE LOWER(IFNULL(role, '')) = 'admin';
+
   OPEN cur;
   read_loop: LOOP
     FETCH cur INTO t;
     IF done = 1 THEN
       LEAVE read_loop;
     END IF;
-    -- DELETE not TRUNCATE: MariaDB/MySQL rejects TRUNCATE when FKs exist (#1701)
     SET @sql := CONCAT('DELETE FROM `', t, '`');
     PREPARE s FROM @sql;
     EXECUTE s;
@@ -78,31 +88,13 @@ DELIMITER ;
 CALL wipe_except_keep();
 DROP PROCEDURE IF EXISTS wipe_except_keep;
 
-DROP PROCEDURE IF EXISTS delete_non_admin_users;
+DROP PROCEDURE IF EXISTS keep_only_system_admin;
 DELIMITER //
-CREATE PROCEDURE delete_non_admin_users()
+CREATE PROCEDURE keep_only_system_admin()
 BEGIN
-  IF EXISTS (
-    SELECT 1 FROM information_schema.COLUMNS
-    WHERE TABLE_SCHEMA = @db AND TABLE_NAME = 'users' AND COLUMN_NAME = 'is_cybernetic_admin'
-  ) THEN
-    DELETE FROM users
-    WHERE LOWER(IFNULL(role, '')) NOT IN ('admin', 'hr', 'superadmin')
-      AND IFNULL(is_cybernetic_admin, 0) = 0;
-  ELSE
-    DELETE FROM users
-    WHERE LOWER(IFNULL(role, '')) NOT IN ('admin', 'hr', 'superadmin');
-  END IF;
-END //
-DELIMITER ;
+  DELETE FROM users
+  WHERE LOWER(IFNULL(role, '')) <> 'admin';
 
-CALL delete_non_admin_users();
-DROP PROCEDURE IF EXISTS delete_non_admin_users;
-
-DROP PROCEDURE IF EXISTS cleanup_user_acl;
-DELIMITER //
-CREATE PROCEDURE cleanup_user_acl()
-BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.TABLES
     WHERE TABLE_SCHEMA = @db AND TABLE_NAME = 'user_acl_permissions'
@@ -113,10 +105,12 @@ BEGIN
 END //
 DELIMITER ;
 
-CALL cleanup_user_acl();
-DROP PROCEDURE IF EXISTS cleanup_user_acl;
+CALL keep_only_system_admin();
+DROP PROCEDURE IF EXISTS keep_only_system_admin;
 
 SET FOREIGN_KEY_CHECKS = 1;
 
 SELECT id, name, email, role AS remaining_logins FROM users;
-SELECT 'Log into Cybernetic Admin with CYBERNETIC_ADMIN_PASSWORD from .env' AS next_step;
+SELECT COUNT(*) AS companies_left FROM companies;
+SELECT COUNT(*) AS employees_left FROM employees;
+SELECT 'Next: log in /cybernetic-admin with CYBERNETIC_ADMIN_PASSWORD from .env and add the new company' AS next_step;

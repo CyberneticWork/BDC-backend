@@ -23,7 +23,7 @@ class RequireApiAuth
             return $next($request);
         }
 
-        if ($request->is('api/cybernetic-admin/*')) {
+        if ($this->pathIs($request, 'api/cybernetic-admin/*')) {
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
@@ -38,7 +38,7 @@ class RequireApiAuth
 
     private function isPublic(Request $request): bool
     {
-        return $request->is([
+        return $this->pathIs($request, [
             'api/login',
             'api/send-otp',
             'api/login/otp',
@@ -49,6 +49,25 @@ class RequireApiAuth
             'api/hikvision/punches/*',
             'api/hikvision/cloud-base',
         ]);
+    }
+
+    private function pathIs(Request $request, array|string $patterns): bool
+    {
+        if ($request->is($patterns)) {
+            return true;
+        }
+
+        $path = preg_replace('#^index\.php/#', '', trim($request->path(), '/')) ?? '';
+        foreach ((array) $patterns as $pattern) {
+            if ($pattern !== '/') {
+                $pattern = trim($pattern, '/');
+            }
+            if ($pattern !== '' && \Illuminate\Support\Str::is($pattern, $path)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function isCyberneticRoute(Request $request): bool

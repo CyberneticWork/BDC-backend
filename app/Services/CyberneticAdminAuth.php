@@ -55,6 +55,7 @@ class CyberneticAdminAuth
         $keys = ['CYBERNETIC_ADMIN_PASSWORD'];
         $raw = [
             (string) config('cybernetic.admin_password'),
+            $this->passwordFromDotEnvFile(),
         ];
         foreach ($keys as $key) {
             $raw[] = (string) (getenv($key) ?: '');
@@ -71,6 +72,30 @@ class CyberneticAdminAuth
         }
 
         return $out;
+    }
+
+    /** Live .env even when `config:cache` froze an empty/old env() value. */
+    private function passwordFromDotEnvFile(): string
+    {
+        $path = base_path('.env');
+        if (!is_readable($path)) {
+            return '';
+        }
+
+        $lines = @file($path, FILE_IGNORE_NEW_LINES) ?: [];
+        foreach ($lines as $line) {
+            $line = ltrim($line, " \t");
+            if ($line === '' || str_starts_with($line, '#')) {
+                continue;
+            }
+            if (!preg_match('/^CYBERNETIC_ADMIN_PASSWORD\s*=\s*(.*)$/', $line, $m)) {
+                continue;
+            }
+
+            return $this->normalizeSecret((string) ($m[1] ?? ''));
+        }
+
+        return '';
     }
 
     private function normalizeSecret(string $value): string

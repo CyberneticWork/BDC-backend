@@ -17,6 +17,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'cybernetic' => \App\Http\Middleware\EnsureCyberneticAdmin::class,
             'auth.token' => \App\Http\Middleware\AuthenticateJwtOrSanctum::class,
         ]);
+        $middleware->prepend(\App\Http\Middleware\NormalizeIndexPhpPath::class);
         $middleware->trustProxies(at: '*');
         $middleware->web(append: [
             \App\Http\Middleware\SecurityHeaders::class,
@@ -36,7 +37,8 @@ return Application::configure(basePath: dirname(__DIR__))
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (\Throwable $e, \Illuminate\Http\Request $request) {
-            if (!$request->is('api/*') && !$request->expectsJson()) {
+            $path = preg_replace('#^index\.php/#', '', trim($request->path(), '/')) ?? '';
+            if (!str_starts_with($path, 'api/') && !$request->is('api/*') && !$request->expectsJson()) {
                 return null;
             }
             if ($e instanceof \Illuminate\Validation\ValidationException) {
