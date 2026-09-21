@@ -1,25 +1,25 @@
 # =============================================================================
-# apijcfood.cyberneticde.site  — Laravel API only (JC Food / Jay Seafood)
+# apisunfohr.cyberneticde.site  — Laravel API only (Sunfolanka)
 # =============================================================================
 # CORS allows https://*.cyberneticde.site (see config/cors.php).
 # This vhost must be Laravel public/, not the SPA and not another tenant.
 #
 # Cloudflare DNS (zone cyberneticde.site)
-#   Name:  apijcfood
+#   Name:  apisunfohr
 #   Type:  A
-#   IPv4:  THE SERVER WHERE JC-Food-Backend IS CLONED
+#   IPv4:  THE SERVER WHERE SunfolankaHRBackend IS CLONED
 #   Proxy: DNS only (grey cloud) until the vhost below works, then orange.
 #
 # After nginx -t && reload, this must return JSON:
-#   https://apijcfood.cyberneticde.site/index.php/api/public/branding
+#   https://apisunfohr.cyberneticde.site/index.php/api/public/branding
 # =============================================================================
 
 server {
     listen 80;
     listen 443 ssl http2;
-    server_name apijcfood.cyberneticde.site;
+    server_name apisunfohr.cyberneticde.site;
 
-    root /var/www/jcfood-backend/public;
+    root /var/www/sunfo-backend/public;
     index index.php;
 
     charset utf-8;

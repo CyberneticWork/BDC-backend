@@ -294,6 +294,7 @@ Route::get('/attendance-template', [TimeCardController::class, 'downloadTemplate
 // Hikvision fingerprint terminal integration (DS-K1T320 / Solar-parity sync + bridge)
 Route::post('/hikvision/webhook/{token}', [HikvisionController::class, 'webhook']);
 Route::post('/hikvision/punches/{token}', [HikvisionController::class, 'punches']);
+Route::get('/hikvision/punches/{token}', [HikvisionController::class, 'punchesPing']);
 Route::get('/hikvision/cloud-base', [HikvisionController::class, 'cloudBase']);
 Route::get('/hikvision/setup-guide', [HikvisionController::class, 'setupGuide']);
 Route::get('/hikvision/devices', [HikvisionController::class, 'index']);

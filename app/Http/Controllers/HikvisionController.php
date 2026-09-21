@@ -163,8 +163,7 @@ class HikvisionController extends Controller
             return response()->json(['message' => 'Unknown device'], 404);
         }
 
-        $secret = config('hikvision.webhook_secret');
-        if ($secret && $request->header('X-Hikvision-Secret') !== $secret) {
+        if (!$this->hikvisionSecretOk($request)) {
             return response()->json(['message' => 'Unauthorized'], 401);
         }
 
@@ -186,14 +185,30 @@ class HikvisionController extends Controller
             return response()->json(['message' => 'Device inactive'], 403);
         }
 
-        $secret = config('hikvision.webhook_secret');
-        if ($secret && $request->header('X-Hikvision-Secret') !== $secret) {
+        if (!$this->hikvisionSecretOk($request)) {
             return response()->json(['message' => 'Unauthorized'], 401);
         }
 
         $result = $this->attendanceService->handleAgentPunches($device, $request);
 
         return response()->json(['message' => 'OK', 'data' => $result]);
+    }
+
+    /** Browser GET — confirms the live punches URL before the office bridge POSTs. */
+    public function punchesPing(string $token)
+    {
+        $device = HikvisionDevice::where('webhook_token', $token)->first();
+
+        if (!$device) {
+            return response()->json(['message' => 'Unknown device'], 404);
+        }
+
+        return response()->json([
+            'ok' => true,
+            'device' => $device->name,
+            'active' => (bool) $device->is_active,
+            'message' => 'HR Hikvision punches URL is live. POST JSON { punches: [...] } from the office bridge.',
+        ]);
     }
 
     public function agentConfig(int $id)
@@ -210,7 +225,8 @@ class HikvisionController extends Controller
                     'password' => $device->password,
                 ],
                 'cloud' => [
-                    'public_api_url' => rtrim(config('app.url'), '/'),
+                    'public_api_url' => HikvisionDevice::publicApiBase(),
+                    'publicApiUrl' => HikvisionDevice::publicApiBase(),
                     'punches_url' => $device->punchesUrl(),
                     'webhook_url' => $device->webhookUrl(),
                     'poll_interval_seconds' => (int) config('hikvision.poll_interval_minutes', 5) * 60,
@@ -252,7 +268,7 @@ class HikvisionController extends Controller
                     [
                         'step' => 4,
                         'title' => 'Cloud ERP — office bridge',
-                        'detail' => 'Click Agent config, copy Punches URL into scripts/hikvision-bridge/.env on an office PC, then npm start / install-autostart.bat.',
+                        'detail' => 'Click Agent config → Download office .env into scripts/hikvision-bridge on an office PC, then npm start / install-autostart.bat.',
                     ],
                     [
                         'step' => 5,
@@ -260,15 +276,18 @@ class HikvisionController extends Controller
                         'detail' => 'Finger on device → Sync Now (LAN) or wait ~1 minute (bridge) → refresh Time Card.',
                     ],
                 ],
-                'public_api_url' => rtrim(config('app.url'), '/'),
+                'public_api_url' => HikvisionDevice::publicApiBase(),
             ],
         ]);
     }
 
     public function cloudBase()
     {
+        $base = HikvisionDevice::publicApiBase();
+
         return response()->json([
-            'public_api_url' => rtrim(config('app.url'), '/'),
+            'public_api_url' => $base,
+            'publicApiUrl' => $base,
             'updated_at' => now()->toIso8601String(),
         ]);
     }
@@ -335,5 +354,19 @@ class HikvisionController extends Controller
             'last_event_at' => $device->last_event_at,
             'last_error' => $device->last_error,
         ];
+    }
+
+    /**
+     * URL token is the credential. A global env secret is optional.
+     * Never 503 when HIKVISION_WEBHOOK_SECRET is unset — that blocked the office bridge.
+     */
+    private function hikvisionSecretOk(Request $request): bool
+    {
+        $secret = trim((string) config('hikvision.webhook_secret'));
+        if ($secret === '') {
+            return true;
+        }
+
+        return hash_equals($secret, (string) $request->header('X-Hikvision-Secret', ''));
     }
 }

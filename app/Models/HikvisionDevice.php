@@ -88,13 +88,23 @@ class HikvisionDevice extends Model
         return sprintf('%s://%s:%d', $scheme, $this->ip_address, $this->port);
     }
 
+    public static function publicApiBase(): string
+    {
+        return rtrim((string) config('app.url'), '/');
+    }
+
     public function webhookUrl(): string
     {
-        return rtrim(config('app.url'), '/') . '/api/hikvision/webhook/' . $this->webhook_token;
+        return self::publicApiBase() . '/api/hikvision/webhook/' . $this->webhook_token;
     }
 
     public function punchesUrl(): string
     {
-        return rtrim(config('app.url'), '/') . '/api/hikvision/punches/' . $this->webhook_token;
+        $base = self::publicApiBase();
+        if (preg_match('#/index\.php$#i', $base)) {
+            return $base . '/api/hikvision/punches/' . $this->webhook_token;
+        }
+
+        return $base . '/api/hikvision/punches/' . $this->webhook_token;
     }
 }

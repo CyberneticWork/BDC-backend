@@ -141,9 +141,10 @@ class HikvisionEventParser
                     'time' => $punch['time'] ?? $punch['clockTime'] ?? null,
                     'serialNo' => $punch['serialNo'] ?? $punch['serial_no'] ?? null,
                     'status' => $punch['status'] ?? null,
+                    'eventTime' => $punch['eventTime'] ?? $punch['event_at'] ?? null,
                     'dateTime' => isset($punch['date'], $punch['time'])
                         ? ($punch['date'] . 'T' . $punch['time'])
-                        : ($punch['dateTime'] ?? null),
+                        : ($punch['dateTime'] ?? $punch['eventTime'] ?? null),
                 ];
             }
         }
