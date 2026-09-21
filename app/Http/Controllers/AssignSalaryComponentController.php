@@ -45,9 +45,14 @@ class AssignSalaryComponentController extends Controller
 
     public function listDeductions(Request $request)
     {
+        $deductionCols = 'id,deduction_code,deduction_name,deduction_type,amount,company_id';
+        if (Schema::hasColumn('deductions', 'deduct_from')) {
+            $deductionCols .= ',deduct_from';
+        }
+
         $query = employee_deductions::with([
             'employee:id,attendance_employee_no,name_with_initials,full_name,display_name',
-            'deduction:id,deduction_code,deduction_name,deduction_type,amount,company_id',
+            'deduction:' . $deductionCols,
         ])->where('is_active', 1);
 
         if ($request->filled('company_id')) {
@@ -170,10 +175,11 @@ class AssignSalaryComponentController extends Controller
 
         $deduction = deduction::findOrFail($request->deduction_id);
         $companyId = $request->company_id ?: $deduction->company_id;
-        $isAdvance = SalaryAdvanceService::isNamedAdvanceDeduction($deduction->deduction_name)
-            || SalaryAdvanceService::isNamedAdvanceDeduction($deduction->deduction_code);
+        $isAdvance = SalaryAdvanceService::isAdvanceDeduction($deduction);
         $deductFrom = $isAdvance
-            ? SalaryAdvanceService::normalizeDeductFrom($request->input('deduct_from'))
+            ? SalaryAdvanceService::normalizeDeductFrom(
+                $request->input('deduct_from') ?: ($deduction->deduct_from ?? null)
+            )
             : null;
 
         $months = $this->resolveMonths($request);
@@ -201,7 +207,7 @@ class AssignSalaryComponentController extends Controller
                             'custom_amount' => $amount,
                             'is_active' => 1,
                     ];
-                    if ($deductFrom && Schema::hasColumn('employee_deductions', 'deduct_from')) {
+                    if ($isAdvance && Schema::hasColumn('employee_deductions', 'deduct_from')) {
                         $payload['deduct_from'] = $deductFrom;
                     }
                     employee_deductions::updateOrCreate(
@@ -229,6 +235,7 @@ class AssignSalaryComponentController extends Controller
             'rows_written' => $created,
             'amount' => $amount,
             'value_type' => $request->value_type,
+            'deduct_from' => $deductFrom,
         ]);
     }
 
@@ -316,6 +323,15 @@ class AssignSalaryComponentController extends Controller
     private function formatDeductionAssignment(employee_deductions $row): array
     {
         $emp = $row->employee;
+        $assignedFrom = strtolower(trim((string) ($row->deduct_from ?? '')));
+        $masterFrom = strtolower(trim((string) ($row->deduction?->deduct_from ?? '')));
+        $deductFrom = in_array($assignedFrom, ['basic', 'bonus'], true)
+            ? $assignedFrom
+            : (in_array($masterFrom, ['basic', 'bonus'], true) ? $masterFrom : null);
+        $isAdvance = SalaryAdvanceService::isAdvanceDeduction($row->deduction)
+            || SalaryAdvanceService::isNamedAdvanceDeduction($row->deduction?->deduction_name ?? null)
+            || $deductFrom !== null;
+
         return [
             'id' => $row->id,
             'employee_id' => $row->employee_id,
@@ -328,7 +344,7 @@ class AssignSalaryComponentController extends Controller
             'month' => $row->month,
             'year' => $row->year,
             'amount' => (float) ($row->custom_amount ?? $row->deduction->amount ?? 0),
-            'deduct_from' => $row->deduct_from ?? null,
+            'deduct_from' => $isAdvance ? ($deductFrom ?: 'bonus') : null,
         ];
     }
 }

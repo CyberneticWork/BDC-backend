@@ -89,9 +89,32 @@ class SalaryAdvanceService
             return false;
         }
 
+        $compact = preg_replace('/[\s_\-]+/', '', $n);
+        if (in_array($compact, ['advance', 'salaryadvance', 'advancesalary'], true)) {
+            return true;
+        }
+
         return str_contains($n, 'salary advance')
             || str_contains($n, 'salary_advance')
-            || $n === 'advance';
+            || str_contains($n, 'advance salary')
+            || str_contains($n, 'advance_salary')
+            || (bool) preg_match('/\badvance\b/', $n);
+    }
+
+    public static function isAdvanceDeduction($deduction): bool
+    {
+        if (!$deduction) {
+            return false;
+        }
+
+        $from = strtolower(trim((string) ($deduction->deduct_from ?? '')));
+        if ($from === 'basic' || $from === 'bonus') {
+            return true;
+        }
+
+        return self::isNamedAdvanceDeduction($deduction->deduction_name ?? null)
+            || self::isNamedAdvanceDeduction($deduction->deduction_code ?? null)
+            || self::isNamedAdvanceDeduction($deduction->category ?? null);
     }
 
     /**

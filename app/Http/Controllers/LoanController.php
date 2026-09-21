@@ -383,65 +383,85 @@ class LoanController extends Controller
 
     public function portalStore(Request $request)
     {
-        $emp = app(EmployeePortalController::class)->linkedEmployee($request);
-        $validated = $request->validate([
-            'loan_amount' => 'required|numeric|min:0.01',
-            'installment_amount' => 'required|numeric|min:0.01',
-            'start_from' => 'required|date',
-            'reason' => 'required|string|min:8|max:1000',
-            'installment_deduct_from' => 'nullable|in:basic,bonus',
-        ]);
+        try {
+            $emp = app(EmployeePortalController::class)->linkedEmployee($request);
+            $validated = $request->validate([
+                'loan_amount' => 'required|numeric|min:0.01',
+                'installment_amount' => 'required|numeric|min:0.01',
+                'start_from' => 'required|date',
+                'reason' => 'required|string|min:8|max:1000',
+                'installment_deduct_from' => 'nullable|in:basic,bonus',
+            ]);
 
-        $blocked = loans::where('employee_id', $emp->id)
-            ->whereIn('status', ['pending', 'active'])
-            ->exists();
-        if ($blocked) {
+            $blocked = loans::where('employee_id', $emp->id)
+                ->whereIn('status', ['pending', 'active'])
+                ->exists();
+            if ($blocked) {
+                return response()->json([
+                    'message' => 'You already have a pending or active loan. Wait for HR to finish that request.',
+                ], 422);
+            }
+
+            $amount = (float) $validated['loan_amount'];
+            $installment = (float) $validated['installment_amount'];
+            if ($installment > $amount) {
+                return response()->json(['message' => 'Installment cannot be larger than the loan amount.'], 422);
+            }
+            $startFrom = $this->firstOfMonth($validated['start_from']);
+            $schedule = $this->buildEqualSchedule($amount, $installment, $startFrom);
+            if (empty($schedule)) {
+                return response()->json(['message' => 'Could not build a repayment schedule. Check amount and installment.'], 422);
+            }
+            $deduct = $validated['installment_deduct_from'] ?? 'bonus';
+            $this->ensureLoanPortalColumns();
+
+            $loan = new loans();
+            $loan->loan_id = 'LOAN-REQ-'.($emp->attendance_employee_no ?: $emp->id).'-'.time();
+            $loan->employee_id = $emp->id;
+            $loan->loan_amount = $amount;
+            $loan->installment_amount = $installment;
+            $loan->start_from = $startFrom;
+            $loan->interest_rate_per_annum = 0;
+            $loan->with_interest = false;
+            $loan->installment_count = count($schedule);
+            $loan->status = 'pending';
+            if (Schema::hasColumn('loans', 'schedule')) {
+                $loan->schedule = $schedule;
+            }
+            if (Schema::hasColumn('loans', 'request_date')) {
+                $loan->request_date = now('Asia/Colombo')->toDateString();
+            }
+            if (Schema::hasColumn('loans', 'reason')) {
+                $loan->reason = $validated['reason'];
+            }
+            if (Schema::hasColumn('loans', 'submitted_via')) {
+                $loan->submitted_via = 'portal';
+            }
+            if (Schema::hasColumn('loans', 'deduct_from')) {
+                $loan->deduct_from = $deduct;
+            }
+            if (Schema::hasColumn('loans', 'installment_deduct_from')) {
+                $loan->installment_deduct_from = $deduct;
+            }
+            if (Schema::hasColumn('loans', 'interest_deduct_from')) {
+                $loan->interest_deduct_from = $deduct;
+            }
+            $loan->save();
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            throw $e;
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpExceptionInterface $e) {
+            throw $e;
+        } catch (\Throwable $e) {
             return response()->json([
-                'message' => 'You already have a pending or active loan. Wait for HR to finish that request.',
+                'message' => $this->friendlyLoanError($e),
             ], 422);
         }
 
-        $amount = (float) $validated['loan_amount'];
-        $installment = (float) $validated['installment_amount'];
-        if ($installment > $amount) {
-            return response()->json(['message' => 'Installment cannot be larger than the loan amount.'], 422);
+        try {
+            $this->notifyHrLoanRequest($emp, $loan);
+        } catch (\Throwable $e) {
+            // Loan is already saved; HR can still see it.
         }
-        $startFrom = $this->firstOfMonth($validated['start_from']);
-        $schedule = $this->buildEqualSchedule($amount, $installment, $startFrom);
-        $deduct = $validated['installment_deduct_from'] ?? 'bonus';
-
-        $loan = new loans();
-        $loan->loan_id = 'LOAN-REQ-'.$emp->attendance_employee_no.'-'.time();
-        $loan->employee_id = $emp->id;
-        $loan->loan_amount = $amount;
-        $loan->installment_amount = $installment;
-        $loan->start_from = $startFrom;
-        $loan->interest_rate_per_annum = 0;
-        $loan->with_interest = false;
-        $loan->installment_count = count($schedule);
-        $loan->status = 'pending';
-        $loan->schedule = $schedule;
-        if (Schema::hasColumn('loans', 'request_date')) {
-            $loan->request_date = now('Asia/Colombo')->toDateString();
-        }
-        if (Schema::hasColumn('loans', 'reason')) {
-            $loan->reason = $validated['reason'];
-        }
-        if (Schema::hasColumn('loans', 'submitted_via')) {
-            $loan->submitted_via = 'portal';
-        }
-        if (Schema::hasColumn('loans', 'deduct_from')) {
-            $loan->deduct_from = $deduct;
-        }
-        if (Schema::hasColumn('loans', 'installment_deduct_from')) {
-            $loan->installment_deduct_from = $deduct;
-        }
-        if (Schema::hasColumn('loans', 'interest_deduct_from')) {
-            $loan->interest_deduct_from = $deduct;
-        }
-        $loan->save();
-
-        $this->notifyHrLoanRequest($emp, $loan);
 
         return response()->json([
             'message' => 'Loan request submitted. HR will review and approve it.',
@@ -570,28 +590,84 @@ class LoanController extends Controller
         return $rows;
     }
 
+    private function ensureLoanPortalColumns(): void
+    {
+        if (!Schema::hasTable('loans')) {
+            return;
+        }
+        try {
+            $type = DB::selectOne("SHOW COLUMNS FROM loans LIKE 'status'");
+            $colType = strtolower((string) ($type->Type ?? ''));
+            if (str_contains($colType, 'enum') && !str_contains($colType, 'pending')) {
+                DB::statement("ALTER TABLE loans MODIFY status VARCHAR(30) NOT NULL DEFAULT 'active'");
+            }
+        } catch (\Throwable $e) {
+            // SQLite or no permission — save() will still try pending
+        }
+        foreach ([
+            'reason' => 'TEXT NULL',
+            'submitted_via' => "VARCHAR(20) NULL DEFAULT 'portal'",
+            'notes' => 'TEXT NULL',
+            'request_date' => 'DATE NULL',
+            'schedule' => 'JSON NULL',
+        ] as $col => $ddl) {
+            try {
+                if (!Schema::hasColumn('loans', $col)) {
+                    DB::statement("ALTER TABLE loans ADD COLUMN {$col} {$ddl}");
+                }
+            } catch (\Throwable $e) {
+                // ignore
+            }
+        }
+    }
+
+    private function friendlyLoanError(\Throwable $e): string
+    {
+        $msg = strtolower($e->getMessage());
+        if (str_contains($msg, 'enum') || str_contains($msg, 'data truncated') || str_contains($msg, 'incorrect')) {
+            return 'Could not save the loan request. Ask HR to update the loans status column so pending requests are allowed.';
+        }
+        if (str_contains($msg, 'unknown column')) {
+            return 'Could not save the loan request because the loans table is missing a required column.';
+        }
+
+        return 'Could not submit the loan request. Please try again or contact HR.';
+    }
+
     private function notifyHrLoanRequest(employee $employee, loans $loan): void
     {
         $name = $employee->full_name ?: $employee->name_with_initials ?: 'Employee';
         $title = 'Loan request';
         $body = "{$name} requested a loan of {$loan->loan_amount}. Review it in Loan approval.";
-        $hrIds = User::whereIn('role', ['hr', 'admin'])->pluck('id')->all();
+        try {
+            $hrIds = User::whereIn('role', ['hr', 'admin'])->pluck('id')->all();
+        } catch (\Throwable $e) {
+            $hrIds = [];
+        }
         foreach ($hrIds as $userId) {
-            if (Schema::hasTable('notifications')) {
-                Notification::create([
-                    'user_id' => $userId,
-                    'type' => 'loan',
-                    'title' => $title,
-                    'message' => $body,
-                    'data' => ['loan_id' => $loan->id],
-                    'is_read' => false,
-                ]);
+            try {
+                if (Schema::hasTable('notifications')) {
+                    Notification::create([
+                        'user_id' => $userId,
+                        'type' => 'loan',
+                        'title' => $title,
+                        'message' => $body,
+                        'data' => ['loan_id' => $loan->id],
+                        'is_read' => false,
+                    ]);
+                }
+            } catch (\Throwable $e) {
+                // skip this HR user
             }
         }
-        app(FcmPushService::class)->sendToUsers($hrIds, $title, $body, [
-            'type' => 'loan',
-            'loan_id' => (string) $loan->id,
-        ]);
+        try {
+            app(FcmPushService::class)->sendToUsers($hrIds, $title, $body, [
+                'type' => 'loan',
+                'loan_id' => (string) $loan->id,
+            ]);
+        } catch (\Throwable $e) {
+            // push is optional
+        }
     }
 }
 

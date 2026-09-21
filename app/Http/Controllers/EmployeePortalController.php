@@ -362,7 +362,7 @@ class EmployeePortalController extends Controller
             'status' => 'Pending',
             'is_half_day' => $dayType === 'HALF',
             'is_short_leave' => $dayType === 'SHORT',
-            'covering_employee_id' => $request->input('covering_employee_id'),
+            'covering_employee_id' => $request->input('covering_employee_id') ?: null,
             'evidence_path' => $evidencePath,
             'evidence_name' => $evidenceName,
         ]);
@@ -414,19 +414,37 @@ class EmployeePortalController extends Controller
     public function coveringColleagues(Request $request)
     {
         $emp = $this->requireEmployee($request);
+        $emp->loadMissing('organizationAssignment');
         $companyId = $emp->organizationAssignment->company_id ?? null;
         $query = employee::query()->where('id', '!=', $emp->id);
+        if ($request->filled('q')) {
+            $q = trim((string) $request->query('q'));
+            $query->where(function ($w) use ($q) {
+                $w->where('attendance_employee_no', 'like', "%{$q}%")
+                    ->orWhere('full_name', 'like', "%{$q}%")
+                    ->orWhere('name_with_initials', 'like', "%{$q}%");
+            });
+        }
+        $scoped = clone $query;
         if ($companyId) {
-            $query->whereHas('organizationAssignment', function ($q) use ($companyId) {
+            $scoped->whereHas('organizationAssignment', function ($q) use ($companyId) {
                 $q->where('company_id', $companyId);
             });
         }
-        $items = $query->orderBy('full_name')->limit(400)->get([
+        $items = $scoped->orderBy('full_name')->limit(400)->get([
             'id',
             'full_name',
             'name_with_initials',
             'attendance_employee_no',
         ]);
+        if ($items->isEmpty() && $companyId) {
+            $items = $query->orderBy('full_name')->limit(400)->get([
+                'id',
+                'full_name',
+                'name_with_initials',
+                'attendance_employee_no',
+            ]);
+        }
 
         return response()->json(['items' => $items]);
     }

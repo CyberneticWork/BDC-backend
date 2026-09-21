@@ -11,6 +11,8 @@ return [
         '#^https://([a-z0-9-]+\.)*cyberneticde\.site$#i',
         '#^https://bdchrnew\.cyberneticde\.site$#i',
         '#^https://apibdchrnew\.cyberneticde\.site$#i',
+        '#^https://jcfood\.cyberneticde\.site$#i',
+        '#^https://apijcfood\.cyberneticde\.site$#i',
         '#^http://localhost(:\d+)?$#',
         '#^http://127\.0\.0\.1(:\d+)?$#',
     ],

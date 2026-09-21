@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use App\Models\deduction; // Assuming you have a Deduction model
+use App\Services\SalaryAdvanceService;
 use Illuminate\Support\Facades\Validator;
 use Maatwebsite\Excel\Facades\Excel;
 use App\Exports\DeductionTemplateExport;
@@ -35,6 +36,10 @@ class DeductionController extends Controller
         // Fixed/variable is chosen at assignment time — clear legacy master date fields
         $data['startDate'] = null;
         $data['endDate'] = null;
+        $data['deduct_from'] = SalaryAdvanceService::isNamedAdvanceDeduction($data['deduction_name'] ?? '')
+            || SalaryAdvanceService::isNamedAdvanceDeduction($data['deduction_code'] ?? '')
+            ? SalaryAdvanceService::normalizeDeductFrom($data['deduct_from'] ?? null)
+            : null;
 
         $deduction = deduction::create($data);
         return response()->json($deduction, 201);
@@ -77,6 +82,10 @@ class DeductionController extends Controller
         $data = $validator->validated();
         $data['startDate'] = null;
         $data['endDate'] = null;
+        $data['deduct_from'] = SalaryAdvanceService::isNamedAdvanceDeduction($data['deduction_name'] ?? '')
+            || SalaryAdvanceService::isNamedAdvanceDeduction($deduction->deduction_code ?? '')
+            ? SalaryAdvanceService::normalizeDeductFrom($data['deduct_from'] ?? $deduction->deduct_from ?? null)
+            : null;
 
         $deduction->update($data);
         return response()->json($deduction);

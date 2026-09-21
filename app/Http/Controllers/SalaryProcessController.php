@@ -1127,9 +1127,17 @@ public function getEmployeesByMonthAndCompany(Request $request)
         $loanInterestDeductSql = Schema::hasColumn('loans', 'interest_deduct_from')
             ? 'MAX(lo.interest_deduct_from) AS loan_interest_deduct_from,'
             : 'NULL AS loan_interest_deduct_from,';
-        $edDeductFromSql = Schema::hasColumn('employee_deductions', 'deduct_from')
-            ? "REPLACE(IFNULL(ed.deduct_from, 'bonus'), '\"', '')"
-            : "'bonus'";
+        $hasEdDeduct = Schema::hasColumn('employee_deductions', 'deduct_from');
+        $hasDdDeduct = Schema::hasColumn('deductions', 'deduct_from');
+        if ($hasEdDeduct && $hasDdDeduct) {
+            $edDeductFromSql = "REPLACE(IFNULL(NULLIF(ed.deduct_from, ''), IFNULL(dd.deduct_from, 'bonus')), '\"', '')";
+        } elseif ($hasEdDeduct) {
+            $edDeductFromSql = "REPLACE(IFNULL(ed.deduct_from, 'bonus'), '\"', '')";
+        } elseif ($hasDdDeduct) {
+            $edDeductFromSql = "REPLACE(IFNULL(dd.deduct_from, 'bonus'), '\"', '')";
+        } else {
+            $edDeductFromSql = "'bonus'";
+        }
 
         $totalDaysInMonth = (int)$lastDay;
 
