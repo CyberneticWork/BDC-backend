@@ -3,10 +3,12 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
+use App\Services\AclService;
 use App\Services\SuperAdminAuth;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 
 class UserController extends Controller
 {
@@ -25,11 +27,12 @@ class UserController extends Controller
     public function store(Request $request)
     {
         // Custom validation for clarity
+        $allowedRoles = app(AclService::class)->allowedRoleKeys();
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
             'password' => 'required|string|min:8|confirmed',
-            'role' => 'required|string|in:admin,hr,user,supervisor,employee',
+            'role' => ['required', 'string', Rule::in($allowedRoles)],
         ]);
 
         if ($validator->fails()) {
@@ -86,11 +89,12 @@ class UserController extends Controller
         }
 
         // Validate request data
+        $allowedRoles = app(AclService::class)->allowedRoleKeys();
         $validator = Validator::make($request->all(), [
             'name' => 'sometimes|string|max:255',
             'email' => 'sometimes|string|email|max:255|unique:users,email,' . $id,
             'password' => 'sometimes|nullable|string|min:8',
-            'role' => 'sometimes|string|in:admin,hr,user,supervisor,employee',
+            'role' => ['sometimes', 'string', Rule::in($allowedRoles)],
         ]);
 
         if ($validator->fails()) {

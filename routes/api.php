@@ -100,6 +100,10 @@ Route::post('/register', [AuthController::class, 'register'])->middleware('throt
 // Protected routes
 Route::middleware('auth.token')->group(function () {
     Route::post('/change-password', [AuthController::class, 'changePassword']);
+    Route::get('/acl/roles', [\App\Http\Controllers\AclController::class, 'roles']);
+    Route::post('/acl/roles', [\App\Http\Controllers\AclController::class, 'storeRole']);
+    Route::delete('/acl/roles/{id}', [\App\Http\Controllers\AclController::class, 'destroyRole']);
+    Route::post('/acl/assign-role', [\App\Http\Controllers\AclController::class, 'assignRole']);
     Route::get('/acl/catalog', [\App\Http\Controllers\AclController::class, 'catalog']);
     Route::get('/acl/users/{id}', [\App\Http\Controllers\AclController::class, 'show']);
     Route::match(['put', 'post', 'patch'], '/acl/users/{id}', [\App\Http\Controllers\AclController::class, 'update']);

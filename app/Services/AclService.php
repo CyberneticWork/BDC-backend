@@ -3,11 +3,13 @@
 namespace App\Services;
 
 use App\Models\company;
+use App\Models\HrRole;
 use App\Models\User;
 use App\Models\UserAclPermission;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 
 class AclService
 {
@@ -91,9 +93,7 @@ class AclService
             return $this->fullMap($enabled, true);
         }
 
-        $portalOnly = $role === 'employee'
-            || ($user->employee_id && !in_array($role, ['admin', 'hr', 'supervisor'], true));
-        if ($portalOnly) {
+        if ($this->isPortalRole($role)) {
             return $this->intersectEnabled($this->roleTemplate('employee'), $enabled);
         }
 
@@ -132,8 +132,8 @@ class AclService
             $data['role'] = 'admin';
             $data['role_label'] = 'Super Admin';
         }
-        $data['portal_only'] = !$isSuper && ($role === 'employee'
-            || ($user->employee_id && !in_array($role, ['admin', 'hr', 'supervisor'], true)));
+        $data['role_label'] = $data['role_label'] ?? $this->roleLabel($role);
+        $data['portal_only'] = !$isSuper && $this->isPortalRole($role);
 
         return $data;
     }
@@ -176,8 +176,8 @@ class AclService
         }
 
         $targetRole = strtolower((string) $target->role);
-        if (in_array($targetRole, ['admin', 'employee'], true)) {
-            abort(422, 'ACL is allocated to HR / supervisor / user accounts only.');
+        if (!$this->isAclAssignableRole($targetRole)) {
+            abort(422, 'ACL is allocated to staff roles only (not Admin or Employee).');
         }
 
         $this->ensureSchema();
@@ -238,7 +238,7 @@ class AclService
         $customized = Schema::hasColumn('users', 'acl_customized') && (bool) $target->acl_customized;
         $current = $customized
             ? $this->storedMap($target)
-            : $this->roleTemplate(strtolower((string) $target->role));
+            : $this->roleTemplate($this->templateKeyFor((string) $target->role));
 
         $rows = [];
         foreach ($enabled as $module) {
@@ -361,7 +361,7 @@ class AclService
             ],
         ];
 
-        $keys = $byRole[$role] ?? $byRole['user'];
+        $keys = $byRole[$this->templateKeyFor($role)] ?? $byRole['user'];
         $map = [];
         foreach ($enabled as $module) {
             if (!in_array($module['key'], $keys, true)) {
@@ -375,5 +375,185 @@ class AclService
         }
 
         return $map;
+    }
+
+    public function ensureRoleSchema(): void
+    {
+        if (Schema::hasTable('users')) {
+            try {
+                $col = DB::selectOne("SHOW COLUMNS FROM `users` LIKE 'role'");
+                $type = strtolower((string) ($col->Type ?? $col->type ?? ''));
+                if ($type !== '' && str_contains($type, 'enum')) {
+                    DB::statement("ALTER TABLE `users` MODIFY `role` VARCHAR(40) NOT NULL DEFAULT 'user'");
+                }
+            } catch (\Throwable) {
+            }
+        }
+
+        if (!Schema::hasTable('hr_roles')) {
+            Schema::create('hr_roles', function (Blueprint $table) {
+                $table->id();
+                $table->string('role_key', 40)->unique();
+                $table->string('name', 80);
+                $table->string('based_on', 40)->default('user');
+                $table->boolean('is_system')->default(false);
+                $table->timestamps();
+            });
+        }
+
+        $now = now();
+        foreach (HrRole::SYSTEM as $row) {
+            if (!HrRole::query()->where('role_key', $row['role_key'])->exists()) {
+                HrRole::query()->create([
+                    'role_key' => $row['role_key'],
+                    'name' => $row['name'],
+                    'based_on' => $row['based_on'],
+                    'is_system' => true,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]);
+            }
+        }
+    }
+
+    public function listRoles(): array
+    {
+        $this->ensureRoleSchema();
+        $counts = User::query()
+            ->selectRaw('role, COUNT(*) as c')
+            ->groupBy('role')
+            ->pluck('c', 'role');
+
+        return HrRole::query()->orderByDesc('is_system')->orderBy('name')->get()->map(function (HrRole $role) use ($counts) {
+            return [
+                'id' => $role->id,
+                'key' => $role->role_key,
+                'name' => $role->name,
+                'based_on' => $role->based_on,
+                'is_system' => (bool) $role->is_system,
+                'users_count' => (int) ($counts[$role->role_key] ?? 0),
+                'acl_assignable' => $this->isAclAssignableRole($role->role_key),
+            ];
+        })->values()->all();
+    }
+
+    public function allowedRoleKeys(): array
+    {
+        $this->ensureRoleSchema();
+        $keys = HrRole::query()->pluck('role_key')->map(fn ($k) => strtolower((string) $k))->all();
+
+        return array_values(array_unique(array_merge(
+            ['admin', 'hr', 'supervisor', 'user', 'employee'],
+            $keys
+        )));
+    }
+
+    public function createCustomRole(string $name, string $basedOn): HrRole
+    {
+        $this->ensureRoleSchema();
+        $name = trim($name);
+        $basedOn = strtolower(trim($basedOn));
+        if ($name === '') {
+            abort(422, 'Role name is required.');
+        }
+        if (!in_array($basedOn, HrRole::STAFF_BASES, true)) {
+            abort(422, 'New roles must be based on HR, Supervisor, or User.');
+        }
+
+        $key = substr((string) Str::slug($name, '_'), 0, 40);
+        if ($key === '' || in_array($key, ['admin', 'employee', 'super_admin'], true)) {
+            abort(422, 'Choose a different role name.');
+        }
+        if (HrRole::query()->where('role_key', $key)->exists()) {
+            abort(422, 'That role already exists.');
+        }
+
+        return HrRole::query()->create([
+            'role_key' => $key,
+            'name' => $name,
+            'based_on' => $basedOn,
+            'is_system' => false,
+        ]);
+    }
+
+    public function deleteCustomRole(int $id): void
+    {
+        $this->ensureRoleSchema();
+        $role = HrRole::query()->findOrFail($id);
+        if ($role->is_system) {
+            abort(422, 'System roles cannot be deleted.');
+        }
+        $fallback = in_array($role->based_on, HrRole::STAFF_BASES, true) ? $role->based_on : 'user';
+        User::query()->where('role', $role->role_key)->update(['role' => $fallback]);
+        $role->delete();
+    }
+
+    public function assignUserRole(User $actor, User $target, string $roleKey): User
+    {
+        $this->ensureRoleSchema();
+        $roleKey = strtolower(trim($roleKey));
+        if (!in_array($roleKey, $this->allowedRoleKeys(), true)) {
+            abort(422, 'Unknown role.');
+        }
+        if (app(SuperAdminAuth::class)->isSuperAdmin($target) || (int) $target->id === 999999001) {
+            abort(422, 'Super Admin role cannot be changed.');
+        }
+        if ($roleKey === 'admin' && !$this->isHrAdmin($actor)) {
+            abort(403, 'Only Admin can assign the Administrator role.');
+        }
+
+        $payload = ['role' => $roleKey, 'updated_at' => now()];
+        if ($this->isPortalRole($roleKey) && Schema::hasColumn('users', 'acl_customized')) {
+            $payload['acl_customized'] = 0;
+        }
+        DB::table('users')->where('id', $target->id)->update($payload);
+
+        return $target->fresh();
+    }
+
+    public function isPortalRole(string $role): bool
+    {
+        return strtolower($role) === 'employee';
+    }
+
+    public function isAclAssignableRole(string $role): bool
+    {
+        $role = strtolower($role);
+
+        return $role !== '' && !in_array($role, ['admin', 'employee', 'super_admin'], true);
+    }
+
+    public function roleLabel(string $role): string
+    {
+        $role = strtolower($role);
+        if (Schema::hasTable('hr_roles')) {
+            $name = HrRole::query()->where('role_key', $role)->value('name');
+            if ($name) {
+                return (string) $name;
+            }
+        }
+        $fallback = [
+            'admin' => 'Administrator',
+            'hr' => 'HR',
+            'supervisor' => 'Supervisor',
+            'user' => 'User',
+            'employee' => 'Employee',
+        ];
+
+        return $fallback[$role] ?? ($role !== '' ? $role : 'User');
+    }
+
+    public function templateKeyFor(string $role): string
+    {
+        $role = strtolower($role);
+        if (in_array($role, ['admin', 'hr', 'supervisor', 'user', 'employee'], true)) {
+            return $role;
+        }
+        if (!Schema::hasTable('hr_roles')) {
+            return 'user';
+        }
+        $based = strtolower((string) (HrRole::query()->where('role_key', $role)->value('based_on') ?: 'user'));
+
+        return in_array($based, ['admin', 'hr', 'supervisor', 'user', 'employee'], true) ? $based : 'user';
     }
 }
