@@ -102,7 +102,7 @@ Route::middleware('auth.token')->group(function () {
     Route::post('/change-password', [AuthController::class, 'changePassword']);
     Route::get('/acl/catalog', [\App\Http\Controllers\AclController::class, 'catalog']);
     Route::get('/acl/users/{id}', [\App\Http\Controllers\AclController::class, 'show']);
-    Route::put('/acl/users/{id}', [\App\Http\Controllers\AclController::class, 'update']);
+    Route::match(['put', 'post', 'patch'], '/acl/users/{id}', [\App\Http\Controllers\AclController::class, 'update']);
 });
 Route::put('/leave-masters/{id}/status', [LeaveMasterController::class, 'updateStatus']);
 Route::get('/leave-types/{employeeId}', [LeaveMasterController::class, 'getLeaveTypes']);

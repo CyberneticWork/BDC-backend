@@ -25,6 +25,14 @@ The bridge uses **HTTP Digest** (same as Solar). Password must match the termina
 
 A global `HIKVISION_WEBHOOK_SECRET` is optional. The Punches URL token is enough. If you set a secret on the HR server, put the same value in the office `.env` as `HIKVISION_SECRET`.
 
+## `LOGIN FAILED` / HTTP 401 `userCheck`
+
+The PC reached the terminal; Digest login was rejected.
+
+1. Copy the latest `bridge.js` into `C:\hikvision-bridge\` and restart (`npm start`).
+2. Open `http://DEVICE_IP` in a browser and log in. Put **that** web password on `DEVICE_PASSWORD=` (not Hik-Connect / the phone app).
+3. Username is usually `admin`. `passwordChars=` in the log must match the length you typed in the browser.
+
 ## `connect ETIMEDOUT 192.168.x.x:80`
 
 The cloud URL is not the failing hop. This PC cannot open TCP to the terminal.

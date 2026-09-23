@@ -170,7 +170,17 @@ function punchesToken(urlStr) {
 }
 
 function usesIndexPhp(urlStr) {
-  return /\/index\.php(\/|$)/i.test(String(urlStr || ''));
+  return /\/index\.php(\/|\?|$)/i.test(String(urlStr || ''));
+}
+
+function isCyberneticHost(urlStr) {
+  try {
+    return new URL(String(urlStr).includes('://') ? urlStr : `https://${urlStr}`)
+      .hostname.toLowerCase()
+      .endsWith('cyberneticde.site');
+  } catch {
+    return /cyberneticde\.site/i.test(String(urlStr || ''));
+  }
 }
 
 function apiOrigin(urlStr) {
@@ -192,10 +202,32 @@ function canonicalPunchesUrl(base, punchesUrl) {
   const origin = apiOrigin(base);
   const token = punchesToken(punchesUrl);
   if (!origin || !token) return punchesUrl;
-  const indexPhp = usesIndexPhp(base) || usesIndexPhp(punchesUrl);
   const host = origin.replace(/\/index\.php$/i, '');
-  if (indexPhp) return `${host}/index.php/api/hikvision/punches/${token}`;
+  if (isCyberneticHost(host) || usesIndexPhp(base) || usesIndexPhp(punchesUrl)) {
+    return `${host}/index.php?__lr=/api/hikvision/punches/${token}`;
+  }
   return `${origin}/api/hikvision/punches/${token}`;
+}
+
+function punchesUrlCandidates(punchesUrl) {
+  const token = punchesToken(punchesUrl);
+  const origin = apiOrigin(punchesUrl || CLOUD_BASE_URL);
+  const host = String(origin || '').replace(/\/index\.php$/i, '');
+  const list = [];
+  if (token && host) {
+    if (isCyberneticHost(host) || usesIndexPhp(punchesUrl) || usesIndexPhp(CLOUD_BASE_URL)) {
+      list.push(`${host}/index.php?__lr=/api/hikvision/punches/${token}`);
+      list.push(`${host}/index.php/api/hikvision/punches/${token}`);
+    }
+    list.push(`${host}/api/hikvision/punches/${token}`);
+  }
+  if (punchesUrl) list.push(punchesUrl);
+  return [...new Set(list.filter(Boolean))];
+}
+
+function looksLikeHtml404(res) {
+  const t = String(res?.text || '');
+  return res.status === 404 && /<html/i.test(t);
 }
 
 async function refreshCloudPunchesUrl() {
@@ -242,19 +274,23 @@ function parseWwwAuthenticate(header) {
   const raw = Array.isArray(header) ? header.join(',') : String(header || '');
   const digestPart = raw.split(/,(?=\s*Basic\b)/i)[0] || raw;
   const p = {};
-  for (const m of digestPart.matchAll(/(\w+)=(?:"([^"]*)"|([^\s,]+))/g)) {
-    p[m[1]] = m[2] ?? m[3];
+  for (const m of digestPart.matchAll(/(\w+)=(?:"([^"]*)"|([^\s,]*))/g)) {
+    const val = (m[2] ?? m[3] ?? '').trim();
+    if (val !== '') p[m[1]] = val;
   }
   return p;
 }
 
-function buildDigestHeader(challenge, method, uri, user, pass, ncCounter, { includeAlgorithm = true } = {}) {
+/** DS-K1T320 wants unquoted qop=auth (Solar LAN client). Quoted qop="auth" returns userCheck 401. */
+function buildDigestHeader(challenge, method, uri, user, pass, ncCounter, opts = {}) {
+  const quoteQop = opts.quoteQop === true;
+  const algorithm = opts.algorithm || '';
   const nc = ncCounter.toString(16).padStart(8, '0');
   const cnonce = crypto.randomBytes(8).toString('hex');
   const qop = challenge.qop ? String(challenge.qop).split(',')[0].trim() : undefined;
-  const algo = String(challenge.algorithm || 'MD5').toUpperCase();
+  const algoName = String(algorithm || challenge.algorithm || 'MD5').toUpperCase();
   let ha1 = md5(`${user}:${challenge.realm}:${pass}`);
-  if (algo.includes('MD5-SESS')) {
+  if (algoName.includes('MD5-SESS')) {
     ha1 = md5(`${ha1}:${challenge.nonce}:${cnonce}`);
   }
   const ha2 = md5(`${method}:${uri}`);
@@ -265,9 +301,13 @@ function buildDigestHeader(challenge, method, uri, user, pass, ncCounter, { incl
   let auth =
     `Digest username="${user}", realm="${challenge.realm}", nonce="${challenge.nonce}", ` +
     `uri="${uri}", response="${resp}"`;
-  if (qop) auth += `, qop="${qop}", nc=${nc}, cnonce="${cnonce}"`;
+  if (qop) {
+    auth += quoteQop
+      ? `, qop="${qop}", nc=${nc}, cnonce="${cnonce}"`
+      : `, qop=${qop}, nc=${nc}, cnonce="${cnonce}"`;
+  }
   if (challenge.opaque) auth += `, opaque="${challenge.opaque}"`;
-  if (includeAlgorithm && challenge.algorithm) auth += `, algorithm=${challenge.algorithm}`;
+  if (algorithm) auth += `, algorithm=${algorithm}`;
   return auth;
 }
 
@@ -316,6 +356,41 @@ function rawRequest(urlStr, options = {}, body) {
 }
 
 let digestNc = 0;
+let lockUntilMs = 0;
+
+function parseUserCheck(xml) {
+  const grab = (tag) => {
+    const m = String(xml || '').match(new RegExp(`<${tag}>([^<]*)</${tag}>`, 'i'));
+    return m ? m[1].trim() : '';
+  };
+  return {
+    statusString: grab('statusString'),
+    isActivated: grab('isActivated'),
+    lockStatus: grab('lockStatus').toLowerCase(),
+    unlockTime: Number(grab('unlockTime') || 0),
+    retryLoginTime: Number(grab('retryLoginTime') || 0),
+  };
+}
+
+function noteLock(res) {
+  if (!res) return res;
+  res.userCheck = parseUserCheck(res.text);
+  if (res.userCheck.lockStatus === 'lock' && res.userCheck.unlockTime > 0) {
+    lockUntilMs = Math.max(lockUntilMs, Date.now() + (res.userCheck.unlockTime + 15) * 1000);
+  }
+  return res;
+}
+
+function challengeFrom(res) {
+  const www = res?.headers?.['www-authenticate'] || res?.headers?.['WWW-Authenticate'];
+  const wwwStr = Array.isArray(www) ? www.join(' | ') : String(www || '');
+  return { challenge: parseWwwAuthenticate(www), wwwStr };
+}
+
+function lockWaitMessage() {
+  const sec = Math.max(0, Math.ceil((lockUntilMs - Date.now()) / 1000));
+  return `[bridge] Device admin is locked (${sec}s left). Do not restart the bridge — extra failed logins extend the lock.`;
+}
 
 async function digestRequest(urlStr, options = {}, body) {
   const method = options.method || 'GET';
@@ -326,50 +401,29 @@ async function digestRequest(urlStr, options = {}, body) {
     baseHeaders['Content-Length'] = Buffer.byteLength(body);
   }
 
-  const first = await rawRequest(urlStr, { ...options, method, headers: baseHeaders }, body);
-  if (first.status !== 401) return first;
+  let last = noteLock(await rawRequest(urlStr, { ...options, method, headers: baseHeaders }, body));
+  if (last.status !== 401) return last;
+  if (last.userCheck?.lockStatus === 'lock') {
+    last._authDebug = `LOCKED unlockTime=${last.userCheck.unlockTime}s`;
+    return last;
+  }
 
-  const www = first.headers['www-authenticate'] || first.headers['WWW-Authenticate'];
-  const wwwStr = Array.isArray(www) ? www.join(' | ') : String(www || '');
-  const challenge = parseWwwAuthenticate(www);
+  const { challenge, wwwStr } = challengeFrom(last);
   if (!challenge.realm || !challenge.nonce) {
-    const basic = Buffer.from(`${DEVICE_USER}:${DEVICE_PASSWORD}`).toString('base64');
-    const viaBasic = await rawRequest(
-      urlStr,
-      { ...options, method, headers: { ...baseHeaders, Authorization: `Basic ${basic}` } },
-      body,
-    );
-    if (viaBasic.status !== 401) return viaBasic;
-    throw new Error(`Digest challenge missing. WWW-Authenticate=${wwwStr.slice(0, 240)}`);
+    last._authDebug = `Digest challenge missing www=${wwwStr.slice(0, 180)}`;
+    return last;
   }
 
   digestNc += 1;
-  const uris = [uri];
-  if (u.search) uris.push(u.pathname);
-
-  let last = first;
-  for (const digestUri of uris) {
-    for (const includeAlgorithm of [false, true]) {
-      const auth = buildDigestHeader(challenge, method, digestUri, DEVICE_USER, DEVICE_PASSWORD, digestNc, {
-        includeAlgorithm,
-      });
-      last = await rawRequest(
-        urlStr,
-        { ...options, method, headers: { ...baseHeaders, Authorization: auth } },
-        body,
-      );
-      if (last.status !== 401) return last;
-    }
-  }
-
-  const basic = Buffer.from(`${DEVICE_USER}:${DEVICE_PASSWORD}`).toString('base64');
-  const viaBasic = await rawRequest(
-    urlStr,
-    { ...options, method, headers: { ...baseHeaders, Authorization: `Basic ${basic}` } },
-    body,
+  const auth = buildDigestHeader(challenge, method, uri, DEVICE_USER, DEVICE_PASSWORD, digestNc, {
+    quoteQop: false,
+    algorithm: '',
+  });
+  last = noteLock(
+    await rawRequest(urlStr, { ...options, method, headers: { ...baseHeaders, Authorization: auth } }, body),
   );
-  if (viaBasic.status !== 401) return viaBasic;
-  last._authDebug = `realm=${challenge.realm || ''} qop=${challenge.qop || ''} algo=${challenge.algorithm || ''}`;
+  if (last.status !== 401) return last;
+  last._authDebug = `realm=${challenge.realm} qop=${challenge.qop || ''} ${last.userCheck?.lockStatus || last.userCheck?.statusString || ''}`;
   return last;
 }
 
@@ -382,29 +436,40 @@ function isoLocal(d) {
 }
 
 async function probeDeviceLogin() {
-  const paths = [
-    `http://${DEVICE_IP}:${DEVICE_PORT}/ISAPI/System/deviceInfo`,
-    `https://${DEVICE_IP}/ISAPI/System/deviceInfo`,
-    `https://${DEVICE_IP}:443/ISAPI/System/deviceInfo`,
-  ];
-  for (const url of paths) {
-    try {
-      const res = await digestRequest(url, { method: 'GET' });
-      if (res.status === 200) {
-        const model = (res.text.match(/<model>([^<]+)<\/model>/i) || [])[1];
-        console.log(`[bridge] Device login OK via ${url}${model ? ` · ${model}` : ''}`);
-        process.env.HIKVISION_DEVICE_BASE = url.replace(/\/ISAPI\/System\/deviceInfo$/i, '');
-        return true;
-      }
-      console.error(`[bridge] ${url} → HTTP ${res.status} ${res._authDebug || ''} ${String(res.text).slice(0, 80)}`);
-    } catch (e) {
-      console.error(`[bridge] ${url} → ${e.message || e}`);
+  if (Date.now() < lockUntilMs) {
+    console.error(lockWaitMessage());
+    return false;
+  }
+
+  const url = `http://${DEVICE_IP}:${DEVICE_PORT}/ISAPI/System/deviceInfo`;
+  try {
+    const res = await digestRequest(url, { method: 'GET' });
+    if (res.status === 200) {
+      const model = (res.text.match(/<model>([^<]+)<\/model>/i) || [])[1];
+      console.log(`[bridge] Device login OK via ${url}${model ? ` · ${model}` : ''}`);
+      process.env.HIKVISION_DEVICE_BASE = url.replace(/\/ISAPI\/System\/deviceInfo$/i, '');
+      return true;
     }
+    const check = res.userCheck || parseUserCheck(res.text);
+    if (check.lockStatus === 'lock') {
+      console.error(
+        `[bridge] ${url} → admin LOCKED for ${check.unlockTime || '?'}s (retryLoginTime=${check.retryLoginTime}).`,
+      );
+      console.error(lockWaitMessage());
+      return false;
+    }
+    console.error(
+      `[bridge] ${url} → HTTP ${res.status} ${res._authDebug || ''} ${check.statusString || ''}`.trim(),
+    );
+  } catch (e) {
+    console.error(`[bridge] ${url} → ${e.message || e}`);
   }
   console.error(
     `[bridge] LOGIN FAILED for ${DEVICE_USER}@${DEVICE_IP}:${DEVICE_PORT} (passwordChars=${DEVICE_PASSWORD.length}).`,
   );
-  console.error('[bridge] Use the device WEB password from http://' + DEVICE_IP + ' — not the Hik-Connect app password.');
+  console.error(
+    '[bridge] In C:\\hikvision-bridge\\.env quote the web password, e.g. DEVICE_PASSWORD="your-web-password" because @ and # break unquoted .env values.',
+  );
   return false;
 }
 
@@ -495,11 +560,23 @@ async function postToCloud(punches) {
   const body = JSON.stringify({ punches });
   const headers = { 'Content-Type': 'application/json' };
   if (SECRET) headers['X-Hikvision-Secret'] = SECRET;
-  const res = await rawRequest(CLOUD_PUNCHES_URL, { method: 'POST', headers }, body);
-  if (res.status < 200 || res.status >= 300) {
-    throw new Error(`Cloud ${res.status}: ${res.text.slice(0, 300)}`);
+
+  const urls = punchesUrlCandidates(CLOUD_PUNCHES_URL);
+  let lastErr = '';
+  for (const url of urls) {
+    const res = await rawRequest(url, { method: 'POST', headers }, body);
+    if (res.status >= 200 && res.status < 300) {
+      CLOUD_PUNCHES_URL = url;
+      return res.json?.data || res.json;
+    }
+    lastErr = `Cloud ${res.status}: ${String(res.text).slice(0, 180)}`;
+    if (looksLikeHtml404(res)) {
+      console.warn(`[bridge] nginx 404 at ${url.split('?')[0]} — trying index.php front controller`);
+      continue;
+    }
+    throw new Error(lastErr);
   }
-  return res.json?.data || res.json;
+  throw new Error(lastErr || 'CLOUD_PUNCHES_URL missing');
 }
 
 function explainUnreachable(err) {

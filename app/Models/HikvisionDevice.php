@@ -90,21 +90,34 @@ class HikvisionDevice extends Model
 
     public static function publicApiBase(): string
     {
-        return rtrim((string) config('app.url'), '/');
+        $base = rtrim((string) config('app.url'), '/');
+        $origin = preg_replace('#/index\.php$#i', '', $base) ?: $base;
+        $host = strtolower((string) (parse_url($origin, PHP_URL_HOST) ?: ''));
+        if ($host !== '' && str_contains($host, 'cyberneticde.site')) {
+            return $origin.'/index.php';
+        }
+
+        return $base;
     }
 
     public function webhookUrl(): string
     {
-        return self::publicApiBase() . '/api/hikvision/webhook/' . $this->webhook_token;
+        return self::frontControllerUrl('/api/hikvision/webhook/'.$this->webhook_token);
     }
 
     public function punchesUrl(): string
     {
+        return self::frontControllerUrl('/api/hikvision/punches/'.$this->webhook_token);
+    }
+
+    public static function frontControllerUrl(string $apiPath): string
+    {
+        $apiPath = '/'.ltrim($apiPath, '/');
         $base = self::publicApiBase();
         if (preg_match('#/index\.php$#i', $base)) {
-            return $base . '/api/hikvision/punches/' . $this->webhook_token;
+            return preg_replace('#/index\.php$#i', '', $base).'/index.php?__lr='.$apiPath;
         }
 
-        return $base . '/api/hikvision/punches/' . $this->webhook_token;
+        return $base.$apiPath;
     }
 }

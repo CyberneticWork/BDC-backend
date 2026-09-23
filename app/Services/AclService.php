@@ -5,6 +5,8 @@ namespace App\Services;
 use App\Models\company;
 use App\Models\User;
 use App\Models\UserAclPermission;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 class AclService
@@ -136,6 +138,33 @@ class AclService
         return $data;
     }
 
+    public function ensureSchema(): void
+    {
+        if (Schema::hasTable('users') && !Schema::hasColumn('users', 'acl_customized')) {
+            Schema::table('users', function (Blueprint $table) {
+                $table->boolean('acl_customized')->default(false);
+            });
+        }
+
+        if (Schema::hasTable('user_acl_permissions')) {
+            return;
+        }
+
+        Schema::create('user_acl_permissions', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('user_id');
+            $table->string('module_key', 80);
+            $table->boolean('can_view')->default(false);
+            $table->boolean('can_add')->default(false);
+            $table->boolean('can_edit')->default(false);
+            $table->boolean('can_delete')->default(false);
+            $table->boolean('can_approve')->default(false);
+            $table->timestamps();
+            $table->unique(['user_id', 'module_key'], 'user_acl_user_module_unique');
+            $table->index('module_key');
+        });
+    }
+
     public function saveUserAcl(User $actor, User $target, array $modules): array
     {
         if (!$this->isHrAdmin($actor)) {
@@ -151,36 +180,53 @@ class AclService
             abort(422, 'ACL is allocated to HR / supervisor / user accounts only.');
         }
 
+        $this->ensureSchema();
+
         $company = $this->companyForUser($target);
         $allowedKeys = collect($this->enabledCatalog($company))->pluck('key')->all();
         $adminOnly = config('hr_acl.admin_only', []);
         $actionKeys = config('hr_acl.actions', ['view', 'add', 'edit', 'delete', 'approve']);
+        $now = now();
 
-        UserAclPermission::query()->where('user_id', $target->id)->delete();
+        DB::transaction(function () use ($target, $modules, $allowedKeys, $adminOnly, $actionKeys, $now) {
+            UserAclPermission::query()->where('user_id', $target->id)->delete();
 
-        foreach ($modules as $row) {
-            $key = (string) ($row['module_key'] ?? $row['key'] ?? '');
-            if ($key === '' || in_array($key, $adminOnly, true) || !in_array($key, $allowedKeys, true)) {
-                continue;
+            $rows = [];
+            foreach ($modules as $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                $key = (string) ($row['module_key'] ?? $row['key'] ?? '');
+                if ($key === '' || in_array($key, $adminOnly, true) || !in_array($key, $allowedKeys, true)) {
+                    continue;
+                }
+                $meta = collect($this->catalog())->firstWhere('key', $key);
+                $allowedActions = $meta['actions'] ?? $actionKeys;
+                $rows[] = [
+                    'user_id' => $target->id,
+                    'module_key' => $key,
+                    'can_view' => in_array('view', $allowedActions, true) && !empty($row['view'] ?? $row['can_view'] ?? false) ? 1 : 0,
+                    'can_add' => in_array('add', $allowedActions, true) && !empty($row['add'] ?? $row['can_add'] ?? false) ? 1 : 0,
+                    'can_edit' => in_array('edit', $allowedActions, true) && !empty($row['edit'] ?? $row['can_edit'] ?? false) ? 1 : 0,
+                    'can_delete' => in_array('delete', $allowedActions, true) && !empty($row['delete'] ?? $row['can_delete'] ?? false) ? 1 : 0,
+                    'can_approve' => in_array('approve', $allowedActions, true) && !empty($row['approve'] ?? $row['can_approve'] ?? false) ? 1 : 0,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
             }
-            $meta = collect($this->catalog())->firstWhere('key', $key);
-            $allowedActions = $meta['actions'] ?? $actionKeys;
 
-            UserAclPermission::create([
-                'user_id' => $target->id,
-                'module_key' => $key,
-                'can_view' => in_array('view', $allowedActions, true) && !empty($row['view'] ?? $row['can_view'] ?? false),
-                'can_add' => in_array('add', $allowedActions, true) && !empty($row['add'] ?? $row['can_add'] ?? false),
-                'can_edit' => in_array('edit', $allowedActions, true) && !empty($row['edit'] ?? $row['can_edit'] ?? false),
-                'can_delete' => in_array('delete', $allowedActions, true) && !empty($row['delete'] ?? $row['can_delete'] ?? false),
-                'can_approve' => in_array('approve', $allowedActions, true) && !empty($row['approve'] ?? $row['can_approve'] ?? false),
-            ]);
-        }
+            if ($rows) {
+                UserAclPermission::query()->insert($rows);
+            }
 
-        if (Schema::hasColumn('users', 'acl_customized')) {
-            $target->acl_customized = true;
-            $target->save();
-        }
+            if (Schema::hasColumn('users', 'acl_customized')) {
+                DB::table('users')->where('id', $target->id)->update([
+                    'acl_customized' => 1,
+                    'updated_at' => $now,
+                ]);
+                $target->acl_customized = true;
+            }
+        });
 
         return $this->effectivePermissions($target->fresh());
     }
