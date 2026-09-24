@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use Carbon\Carbon;
-use App\Models\User;
 use App\Models\spouse;
 use App\Models\children;
 use App\Models\employee;
@@ -18,6 +17,7 @@ use Illuminate\Support\Facades\Mail;
 use App\Mail\EmployeePasswordSendEmail;
 use App\Models\organization_assignment;
 use App\Services\EmployeeReportService;
+use App\Services\EmployeeUserLinker;
 use App\Services\FirebaseStorageService;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
@@ -228,6 +228,43 @@ class EmployeeController extends Controller
 
 
         return response()->json($employee, 200);
+    }
+
+    public function downloadTemplate(\App\Services\EmployeeExcelTemplateService $template)
+    {
+        return $template->downloadResponse();
+    }
+
+    public function importExcel(Request $request, \App\Services\EmployeeExcelImportService $import)
+    {
+        $request->validate([
+            'file' => 'required|file|mimes:xlsx,xls|max:10240',
+        ]);
+
+        try {
+            $summary = $import->import($request->file('file')->getRealPath(), false);
+
+            return response()->json([
+                'message' => sprintf(
+                    'Imported %d, skipped %d, failed %d of %d row(s).',
+                    $summary['created'],
+                    $summary['skipped'],
+                    $summary['failed'],
+                    $summary['total']
+                ),
+                'created' => $summary['created'],
+                'skipped' => $summary['skipped'],
+                'failed' => $summary['failed'],
+                'total' => $summary['total'],
+                'details' => $summary['details'],
+            ], $summary['failed'] > 0 && $summary['created'] === 0 ? 422 : 200);
+        } catch (\Throwable $e) {
+            Log::error('Employee Excel import failed', ['error' => $e->getMessage()]);
+
+            return response()->json([
+                'message' => $e->getMessage() ?: 'Could not import employee Excel.',
+            ], 422);
+        }
     }
 
 
@@ -562,25 +599,25 @@ class EmployeeController extends Controller
                 'email' => $address['email'],
             ]);
 
-            // Use NIC as password
-            $plainPassword = $personal['nicNumber'];
-            $hashedPassword = Hash::make($plainPassword);
+            $linked = app(EmployeeUserLinker::class)->ensureLogin(
+                $employee,
+                (string) ($address['email'] ?? ''),
+                (string) ($personal['nicNumber'] ?? ''),
+                (string) ($personal['fullName'] ?? ''),
+            );
 
-            $user = User::create([
-                'name' => $personal['fullName'],
-                'email' => $address['email'],
-                'nic' => $personal['nicNumber'],
-                'employee_id' => $employee->id,
-                'password' => $hashedPassword,
-                'role' => 'employee',
-            ]);
-
-            // Send password via email
-            try {
-                Mail::to($address['email'])->send(new EmployeePasswordSendEmail($personal['fullName'], $address['email'], $plainPassword));
-            } catch (\Exception $e) {
-                // Log email error but don't fail the employee creation
-                Log::error('Failed to send password email: ' . $e->getMessage());
+            // New portal-only logins use NIC as the first password.
+            // Existing HR/manager accounts keep their current password.
+            if (!empty($linked['created'])) {
+                try {
+                    Mail::to($address['email'])->send(new EmployeePasswordSendEmail(
+                        $personal['fullName'],
+                        $address['email'],
+                        $personal['nicNumber']
+                    ));
+                } catch (\Exception $e) {
+                    Log::error('Failed to send password email: ' . $e->getMessage());
+                }
             }
 
             // Create children records if any valid children exist
@@ -1211,6 +1248,13 @@ class EmployeeController extends Controller
                 'employment_type_id' => $personal['employmentStatus'],
                 'profile_photo_path' => $profilePicturePath,
             ]);
+
+            app(EmployeeUserLinker::class)->ensureLogin(
+                $employee,
+                (string) ($address['email'] ?? $employee->email ?? ''),
+                (string) ($personal['nicNumber'] ?? $employee->nic ?? ''),
+                (string) ($personal['fullName'] ?? $employee->full_name ?? ''),
+            );
 
             // Handle children records
             if (isset($personal['children']) && is_array($personal['children'])) {

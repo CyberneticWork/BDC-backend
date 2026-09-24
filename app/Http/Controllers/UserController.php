@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\User;
 use App\Services\AclService;
+use App\Services\EmployeeUserLinker;
 use App\Services\SuperAdminAuth;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -17,7 +18,10 @@ class UserController extends Controller
      */
     public function index()
     {
-        $users = User::all();
+        $users = User::query()
+            ->with(['employee:id,attendance_employee_no,full_name,nic'])
+            ->get();
+
         return response()->json($users, 200);
     }
 
@@ -33,6 +37,7 @@ class UserController extends Controller
             'email' => 'required|string|email|max:255|unique:users',
             'password' => 'required|string|min:8|confirmed',
             'role' => ['required', 'string', Rule::in($allowedRoles)],
+            'employee_link' => 'nullable|string|max:80',
         ]);
 
         if ($validator->fails()) {
@@ -52,6 +57,16 @@ class UserController extends Controller
             return response()->json(['message' => 'That email is reserved for Super Admin.'], 422);
         }
 
+        $linker = app(EmployeeUserLinker::class);
+        if (trim((string) $request->input('employee_link')) !== '') {
+            if (! $linker->findEmployeeByLink((string) $request->input('employee_link'))) {
+                return response()->json([
+                    'message' => 'No employee found for that attendance number, EPF or NIC.',
+                    'errors' => ['employee_link' => ['No employee found for that attendance number, EPF or NIC.']],
+                ], 422);
+            }
+        }
+
         $user = User::create([
             'name' => $request->name,
             'email' => $request->email,
@@ -59,9 +74,11 @@ class UserController extends Controller
             'role' => $request->role,
         ]);
 
+        $this->applyEmployeeLink($user, $request->input('employee_link'));
+
         return response()->json([
             'message' => 'User created successfully',
-            'user' => $user
+            'user' => $user->fresh('employee'),
         ], 201);
     }
 
@@ -70,7 +87,7 @@ class UserController extends Controller
      */
     public function show(string $id)
     {
-        $user = User::find($id);
+        $user = User::with(['employee:id,attendance_employee_no,full_name,nic'])->find($id);
         if (!$user) {
             return response()->json(['message' => 'User not found'], 404);
         }
@@ -95,6 +112,7 @@ class UserController extends Controller
             'email' => 'sometimes|string|email|max:255|unique:users,email,' . $id,
             'password' => 'sometimes|nullable|string|min:8',
             'role' => ['sometimes', 'string', Rule::in($allowedRoles)],
+            'employee_link' => 'nullable|string|max:80',
         ]);
 
         if ($validator->fails()) {
@@ -128,13 +146,37 @@ class UserController extends Controller
             $user->role = $request->role;
         }
 
-        // Save the updated user
         $user->save();
+
+        $linkError = $this->applyEmployeeLink($user, $request->input('employee_link'));
+        if ($linkError) {
+            return response()->json([
+                'message' => $linkError,
+                'errors' => ['employee_link' => [$linkError]],
+                'user' => $user->fresh('employee'),
+            ], 422);
+        }
 
         return response()->json([
             'message' => 'User updated successfully',
-            'user' => $user
+            'user' => $user->fresh('employee'),
         ], 200);
+    }
+
+    private function applyEmployeeLink(User $user, mixed $link): ?string
+    {
+        $value = trim((string) $link);
+        if ($value === '') {
+            return null;
+        }
+
+        try {
+            app(EmployeeUserLinker::class)->linkUserToEmployee($user, $value);
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
+            return $e->getMessage();
+        }
+
+        return null;
     }
 
     /**

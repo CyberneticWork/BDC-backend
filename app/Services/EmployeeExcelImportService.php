@@ -13,10 +13,9 @@ use App\Models\employment_type;
 use App\Models\organization_assignment;
 use App\Models\spouse;
 use App\Models\sub_departments;
-use App\Models\User;
+use App\Services\EmployeeUserLinker;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class EmployeeExcelImportService
@@ -81,6 +80,7 @@ class EmployeeExcelImportService
 
     private array $rows = [];
     private array $employeeColumns = [];
+    private ?array $rowFields = null;
 
     public function parse(string $filePath): array
     {
@@ -93,6 +93,11 @@ class EmployeeExcelImportService
             ?? $workbook->getSheet(0);
 
         $this->rows = $sheet->toArray(null, true, true, true);
+
+        if ($this->isRowFormat()) {
+            return $this->parseRowEmployees();
+        }
+
         $this->employeeColumns = $this->detectEmployeeColumns();
 
         $employees = [];
@@ -292,11 +297,11 @@ class EmployeeExcelImportService
                 'accountHolderName' => $this->cell($column, 'account_holder_name') ?: null,
                 'secondaryEmp' => false,
                 'primaryEmploymentBasic' => false,
-                'enableEpfEtf' => true,
-                'otActive' => false,
+                'enableEpfEtf' => $this->parseYesNo($this->cell($column, 'enable_epf_etf'), true),
+                'otActive' => $this->parseYesNo($this->cell($column, 'ot_active'), false),
                 'earlyDeduction' => false,
                 'incrementActive' => false,
-                'nopayActive' => true,
+                'nopayActive' => $this->parseYesNo($this->cell($column, 'nopay_active'), true),
                 'morningOt' => false,
                 'eveningOt' => false,
                 'ot_morning_rate' => 0,
@@ -315,7 +320,7 @@ class EmployeeExcelImportService
                 'dateOfJoined' => $this->parseDate($this->cell($column, 'date_joined')) ?: now()->toDateString(),
                 'employeeCategory' => $this->normalizeEmployeeCategory($this->cell($column, 'employee_category')),
                 'employmentStatusLabel' => $employmentStatus,
-                'dayOff' => 'Sunday',
+                'dayOff' => $this->cell($column, 'day_off') ?: 'Sunday',
             ],
         ];
     }
@@ -375,14 +380,12 @@ class EmployeeExcelImportService
             'email' => $address['email'],
         ]);
 
-        User::create([
-            'name' => $personal['fullName'],
-            'email' => $address['email'],
-            'nic' => $personal['nicNumber'],
-            'employee_id' => $employee->id,
-            'password' => Hash::make($personal['nicNumber']),
-            'role' => 'employee',
-        ]);
+        app(EmployeeUserLinker::class)->ensureLogin(
+            $employee,
+            (string) ($address['email'] ?? ''),
+            (string) ($personal['nicNumber'] ?? ''),
+            (string) ($personal['fullName'] ?? ''),
+        );
 
         foreach ($personal['children'] as $child) {
             if (empty($child['name']) || empty($child['dob']) || $child['age'] === null) {
@@ -448,23 +451,32 @@ class EmployeeExcelImportService
         $nic = $payload['personal']['nicNumber'];
         $attendanceNo = $payload['personal']['attendanceEmpNo'];
 
-        return employee::where('nic', $nic)
-            ->orWhere('attendance_employee_no', $attendanceNo)
+        return employee::query()
+            ->where(function ($q) use ($nic, $attendanceNo) {
+                $q->where('nic', $nic)->orWhere('attendance_employee_no', $attendanceNo);
+            })
             ->exists();
     }
 
     private function resolveCompany(string $companyCode, string $companyName): company
     {
-        $existing = company::where('company_code', $companyCode)->first();
+        $code = strtoupper(trim($companyCode));
+        $name = trim($companyName);
+        $existing = null;
+        if ($code !== '' && $code !== 'YOURCODE') {
+            $existing = company::query()->where('company_code', $code)->first();
+        }
+        if (!$existing && $name !== '' && $name !== 'YOUR COMPANY NAME') {
+            $existing = company::query()->where('name', $name)->first();
+        }
+
         if ($existing) {
             return $existing;
         }
 
-        return company::create([
-            'company_code' => $companyCode,
-            'name' => $companyName,
-            'location' => 'Sri Lanka',
-        ]);
+        throw new \RuntimeException(
+            "Unknown company '{$companyName}' / '{$companyCode}'. Create the company in Cybernetic Admin first, then use that exact name or code."
+        );
     }
 
     private function resolveDepartment(int $companyId, ?string $name): ?departments
@@ -521,8 +533,104 @@ class EmployeeExcelImportService
         return (int) $type->id;
     }
 
+    private function isRowFormat(): bool
+    {
+        $header = $this->rows[1] ?? [];
+        $joined = strtolower(implode(' ', array_map(fn ($v) => (string) $v, $header)));
+
+        return str_contains($joined, 'attendance_no')
+            || str_contains($joined, 'attendance no')
+            || (str_contains($joined, 'nic') && str_contains($joined, 'full_name'));
+    }
+
+    private function parseRowEmployees(): array
+    {
+        $headerRow = $this->rows[1] ?? [];
+        $indexToKey = [];
+        foreach ($headerRow as $col => $label) {
+            $key = $this->normalizeHeader((string) $label);
+            if ($key !== '') {
+                $indexToKey[$col] = $key;
+            }
+        }
+        if ($indexToKey === []) {
+            throw new \RuntimeException('Employee Master sheet has no recognised header row.');
+        }
+
+        $employees = [];
+        foreach ($this->rows as $rowNum => $row) {
+            if ((int) $rowNum <= 2) {
+                continue;
+            }
+            $this->rowFields = [];
+            foreach ($indexToKey as $col => $key) {
+                $this->rowFields[$key] = trim((string) ($row[$col] ?? ''));
+            }
+            $attendance = $this->rowFields['attendance_no'] ?? '';
+            $nic = $this->rowFields['nic'] ?? '';
+            $name = $this->rowFields['full_name'] ?? $this->rowFields['display_name'] ?? '';
+            $companyCode = strtoupper($this->rowFields['company_code'] ?? '');
+            if ($attendance === '' && $nic === '' && $name === '') {
+                continue;
+            }
+            if ($companyCode === 'YOURCODE' || ($this->rowFields['company_name'] ?? '') === 'YOUR COMPANY NAME') {
+                continue;
+            }
+            $employees[] = $this->buildEmployeePayload('ROW', $name ?: $attendance);
+        }
+        $this->rowFields = null;
+
+        if ($employees === []) {
+            throw new \RuntimeException('No employee rows found. Fill data from row 3 downward.');
+        }
+
+        return $employees;
+    }
+
+    private function normalizeHeader(string $label): string
+    {
+        $label = strtolower(trim($label));
+        $label = preg_replace('/\s*\*.*$/', '', $label);
+        $label = preg_replace('/\([^)]*\)/', '', $label);
+        $label = trim((string) preg_replace('/[^a-z0-9]+/', '_', $label), '_');
+        $aliases = [
+            'attendance_employee_no' => 'attendance_no',
+            'emp_no' => 'attendance_no',
+            'employee_no' => 'attendance_no',
+            'epf_no' => 'epf',
+            'nic_no' => 'nic',
+            'date_of_birth' => 'dob',
+            'name_with_initial' => 'name_with_initials',
+            'mobile_no' => 'mobile',
+            'mobile_line' => 'mobile',
+            'landline' => 'land_line',
+            'company' => 'company_name',
+            'joined_date' => 'date_joined',
+            'date_of_joined' => 'date_joined',
+            'enable_epf_etf_yes_no' => 'enable_epf_etf',
+            'ot_active_yes_no' => 'ot_active',
+            'nopay_active_yes_no' => 'nopay_active',
+        ];
+
+        return $aliases[$label] ?? $label;
+    }
+
+    private function parseYesNo(string $value, bool $default): bool
+    {
+        $value = strtolower(trim($value));
+        if ($value === '') {
+            return $default;
+        }
+
+        return in_array($value, ['1', 'yes', 'y', 'true', 'on'], true);
+    }
+
     private function cell(string $column, string $field): string
     {
+        if ($this->rowFields !== null) {
+            return trim((string) ($this->rowFields[$field] ?? ''));
+        }
+
         $row = self::FIELD_ROWS[$field] ?? null;
         if (!$row) {
             return '';
@@ -536,6 +644,13 @@ class EmployeeExcelImportService
         $value = trim((string) $value);
         if ($value === '') {
             return null;
+        }
+
+        if (is_numeric($value) && (float) $value > 20000) {
+            try {
+                return \PhpOffice\PhpSpreadsheet\Shared\Date::excelToDateTimeObject((float) $value)->format('Y-m-d');
+            } catch (\Throwable) {
+            }
         }
 
         $value = str_replace('\\', '', $value);

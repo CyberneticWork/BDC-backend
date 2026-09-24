@@ -89,7 +89,11 @@ class AclService
         $role = strtolower((string) $user->role);
         $enabled = $this->enabledCatalog($company);
 
-        if ($role === 'admin' || app(SuperAdminAuth::class)->isSuperAdmin($user)) {
+        if (app(SuperAdminAuth::class)->isSuperAdmin($user) || $role === 'super_admin') {
+            return $this->fullMap($this->catalog(), true);
+        }
+
+        if ($role === 'admin') {
             return $this->fullMap($enabled, true);
         }
 
@@ -103,12 +107,31 @@ class AclService
             : $this->roleTemplate($role);
 
         $map = $this->intersectEnabled($source, $enabled);
+        $this->mirrorEmployeeEdit($map);
 
         foreach (config('hr_acl.admin_only', []) as $key) {
             unset($map[$key]);
         }
 
         return $map;
+    }
+
+    private function mirrorEmployeeEdit(array &$map): void
+    {
+        $show = $map['show'] ?? [];
+        $master = $map['employeeMaster'] ?? [];
+        if (empty($show['edit']) && empty($master['edit'])) {
+            return;
+        }
+
+        $map['show'] = array_merge($show, [
+            'view' => true,
+            'edit' => true,
+        ]);
+        $map['employeeMaster'] = array_merge($master, [
+            'view' => true,
+            'edit' => true,
+        ]);
     }
 
     public function can(User $user, string $module, string $action): bool
@@ -133,7 +156,11 @@ class AclService
             $data['role_label'] = 'Super Admin';
         }
         $data['role_label'] = $data['role_label'] ?? $this->roleLabel($role);
-        $data['portal_only'] = !$isSuper && $this->isPortalRole($role);
+        $canHrDesk = $isSuper || !$this->isPortalRole($role);
+        $canPortal = !$isSuper && ($this->isPortalRole($role) || (int) ($user->employee_id ?? 0) > 0);
+        $data['can_use_hr_desk'] = $canHrDesk;
+        $data['can_use_employee_portal'] = $canPortal;
+        $data['portal_only'] = $canPortal && !$canHrDesk;
 
         return $data;
     }

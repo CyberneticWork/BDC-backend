@@ -115,6 +115,8 @@ Route::get('/dashboard/stats/today', [TimeCardController::class, 'getTodayStats'
 Route::get('/dashboard/stats/weekly', [TimeCardController::class, 'getWeeklyAttendanceStats']);
 Route::apiResource('users', UserController::class);
 Route::apiResource('shifts', ShiftController::class);
+Route::get('/employees/template', [EmployeeController::class, 'downloadTemplate']);
+Route::post('/employees/import-excel', [EmployeeController::class, 'importExcel']);
 Route::apiResource('employees', EmployeeController::class);
 Route::post('/employees/change-password', [EmployeeController::class, 'changePassword'])->middleware('auth.token');
 Route::post('employes/post/update', [EmployeeController::class, 'update']);
