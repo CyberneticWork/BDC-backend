@@ -21,6 +21,7 @@ use App\Services\EmployeeUserLinker;
 use App\Services\FirebaseStorageService;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class EmployeeController extends Controller
 {
@@ -555,18 +556,28 @@ class EmployeeController extends Controller
             }
 
             // Create organization assignment
+            $companyId = is_numeric($organization['company'] ?? null) ? (int) $organization['company'] : null;
+            $designationId = is_numeric($organization['designation'] ?? null) ? (int) $organization['designation'] : null;
+            if (!$companyId || !$designationId) {
+                throw new HttpException(422, 'Company and designation must be selected from the list.');
+            }
+            $deptId = !empty($organization['department']) && is_numeric($organization['department'])
+                ? (int) $organization['department'] : null;
+            $subDeptId = !empty($organization['subDepartment']) && is_numeric($organization['subDepartment'])
+                ? (int) $organization['subDepartment'] : null;
+
             $orgAssignment = organization_assignment::create([
-                'company_id' => $organization['company'],
-                'department_id' => !empty($organization['department']) ? $organization['department'] : null,
-                'sub_department_id' => !empty($organization['subDepartment']) ? $organization['subDepartment'] : null,
-                'designation_id' => $organization['designation'],
+                'company_id' => $companyId,
+                'department_id' => $deptId,
+                'sub_department_id' => $subDeptId,
+                'designation_id' => $designationId,
                 'current_supervisor' => $organization['currentSupervisor'] ?? null,
                 'date_of_joining' => $organization['dateOfJoined'],
-                'day_off' => $organization['dayOff'],
+                'day_off' => empty($organization['dayOff'] ?? null) ? null : $organization['dayOff'],
                 'confirmation_date' => empty($organization['confirmationDate']) ? null : $organization['confirmationDate'],
-                'probationary_period' => $organization['probationPeriod'],
-                'training_period' => $organization['trainingPeriod'],
-                'contract_period' => $organization['contractPeriod'],
+                'probationary_period' => (bool) ($organization['probationPeriod'] ?? false),
+                'training_period' => (bool) ($organization['trainingPeriod'] ?? false),
+                'contract_period' => (bool) ($organization['contractPeriod'] ?? false),
                 'probationary_period_from' => empty($organization['probationFrom']) ? null : $organization['probationFrom'],
                 'probationary_period_to' => empty($organization['probationTo']) ? null : $organization['probationTo'],
                 'training_period_from' => empty($organization['trainingFrom']) ? null : $organization['trainingFrom'],
@@ -574,7 +585,7 @@ class EmployeeController extends Controller
                 'contract_period_from' => empty($organization['contractFrom']) ? null : $organization['contractFrom'],
                 'contract_period_to' => empty($organization['contractTo']) ? null : $organization['contractTo'],
                 'date_of_resigning' => empty($organization['confirmationDate']) ? null : $organization['confirmationDate'],
-                'is_active' => $organization['currentStatus'],
+                'is_active' => (bool) ($organization['currentStatus'] ?? true),
             ]);
 
             // Create employee record
@@ -608,7 +619,7 @@ class EmployeeController extends Controller
 
             // New portal-only logins use NIC as the first password.
             // Existing HR/manager accounts keep their current password.
-            if (!empty($linked['created'])) {
+            if (!empty($linked['created']) && !empty($address['email'])) {
                 try {
                     Mail::to($address['email'])->send(new EmployeePasswordSendEmail(
                         $personal['fullName'],
@@ -670,6 +681,7 @@ class EmployeeController extends Controller
             $this->storeRemoteDocuments($employee->id, $request);
 
             // Create contact details
+            $emergency = is_array($address['emergencyContact'] ?? null) ? $address['emergencyContact'] : [];
             contact_detail::create([
                 'employee_id' => $employee->id,
                 'permanent_address' => $address['permanentAddress'],
@@ -682,10 +694,10 @@ class EmployeeController extends Controller
                 'district' => $address['district'],
                 'province' => $address['province'],
                 'electoral_division' => $address['electoralDivision'] ?? null,
-                'emg_relationship' => $address['emergencyContact']['relationship'],
-                'emg_name' => $address['emergencyContact']['contactName'],
-                'emg_address' => $address['emergencyContact']['contactAddress'],
-                'emg_tel' => $address['emergencyContact']['contactTel'],
+                'emg_relationship' => $emergency['relationship'] ?? null,
+                'emg_name' => $emergency['contactName'] ?? null,
+                'emg_address' => $emergency['contactAddress'] ?? null,
+                'emg_tel' => $emergency['contactTel'] ?? null,
             ]);
 
             // Create compensation record
@@ -701,21 +713,21 @@ class EmployeeController extends Controller
                 'bank_account_no' => $compensation['bankAccountNo'] ?? null,
                 'account_holder_name' => $compensation['accountHolderName'] ?? null,
                 'comments' => $compensation['comments'] ?? null,
-                'secondary_emp' => $compensation['secondaryEmp'],
-                'primary_emp_basic' => $compensation['primaryEmploymentBasic'],
-                'enable_epf_etf' => $compensation['enableEpfEtf'],
-                'ot_active' => $compensation['otActive'],
-                'early_deduction' => $compensation['earlyDeduction'],
-                'increment_active' => $compensation['incrementActive'],
-                'active_nopay' => $compensation['nopayActive'],
-                'ot_morning' => $compensation['morningOt'],
-                'ot_evening' => $compensation['eveningOt'],
-                'ot_morning_rate' => $compensation['ot_morning_rate'],
-                'ot_night_rate' => $compensation['ot_night_rate'],
-                'br1' => $compensation['budgetaryReliefAllowance2015'],
-                'br2' => $compensation['budgetaryReliefAllowance2016'],
-                'stamp' => $compensation['stamp'],
-                'employee_category' => $organization['employeeCategory'],
+                'secondary_emp' => (bool) ($compensation['secondaryEmp'] ?? false),
+                'primary_emp_basic' => (bool) ($compensation['primaryEmploymentBasic'] ?? false),
+                'enable_epf_etf' => (bool) ($compensation['enableEpfEtf'] ?? false),
+                'ot_active' => (bool) ($compensation['otActive'] ?? false),
+                'early_deduction' => (bool) ($compensation['earlyDeduction'] ?? false),
+                'increment_active' => (bool) ($compensation['incrementActive'] ?? false),
+                'active_nopay' => (bool) ($compensation['nopayActive'] ?? false),
+                'ot_morning' => (bool) ($compensation['morningOt'] ?? false),
+                'ot_evening' => (bool) ($compensation['eveningOt'] ?? false),
+                'ot_morning_rate' => $compensation['ot_morning_rate'] ?? 0,
+                'ot_night_rate' => $compensation['ot_night_rate'] ?? 0,
+                'br1' => (bool) ($compensation['budgetaryReliefAllowance2015'] ?? false),
+                'br2' => (bool) ($compensation['budgetaryReliefAllowance2016'] ?? false),
+                'stamp' => (bool) ($compensation['stamp'] ?? false),
+                'employee_category' => $organization['employeeCategory'] ?? 'Non-Executive',
                 'monthly_bonus' => $compensation['monthlyBonus'] ?? 0,
                 'sports_fund_percentage' => $compensation['sportsFundPercentage'] ?? null,
                 'staff_fund_amount' => $compensation['staffFundAmount'] ?? 0,
@@ -738,6 +750,17 @@ class EmployeeController extends Controller
                 'message' => 'Employee created successfully',
                 'employee_id' => $employee->id
             ], 201);
+        } catch (HttpException $e) {
+            DB::rollBack();
+
+            if ($profilePicturePath && Storage::disk('public')->exists($profilePicturePath)) {
+                Storage::disk('public')->delete($profilePicturePath);
+            }
+
+            return response()->json([
+                'message' => $e->getMessage(),
+                'error' => $e->getMessage(),
+            ], $e->getStatusCode() ?: 422);
         } catch (\Exception $e) {
             DB::rollBack();
 
@@ -1216,9 +1239,9 @@ class EmployeeController extends Controller
                     'date_of_joining' => $organization['dateOfJoined'],
                     'day_off' => empty($organization['dayOff']) ? null : $organization['dayOff'],
                     'confirmation_date' => empty($organization['confirmationDate']) ? null : $organization['confirmationDate'],
-                    'probationary_period' => $organization['probationPeriod'],
-                    'training_period' => $organization['trainingPeriod'],
-                    'contract_period' => $organization['contractPeriod'],
+                    'probationary_period' => (bool) ($organization['probationPeriod'] ?? false),
+                    'training_period' => (bool) ($organization['trainingPeriod'] ?? false),
+                    'contract_period' => (bool) ($organization['contractPeriod'] ?? false),
                     'probationary_period_from' => empty($organization['probationFrom']) ? null : $organization['probationFrom'],
                     'probationary_period_to' => empty($organization['probationTo']) ? null : $organization['probationTo'],
                     'training_period_from' => empty($organization['trainingFrom']) ? null : $organization['trainingFrom'],
@@ -1226,7 +1249,7 @@ class EmployeeController extends Controller
                     'contract_period_from' => empty($organization['contractFrom']) ? null : $organization['contractFrom'],
                     'contract_period_to' => empty($organization['contractTo']) ? null : $organization['contractTo'],
                     'date_of_resigning' => empty($organization['confirmationDate']) ? null : $organization['confirmationDate'],
-                    'is_active' => $organization['currentStatus'],
+                    'is_active' => (bool) ($organization['currentStatus'] ?? true),
                 ]);
             }
 
@@ -1303,6 +1326,7 @@ class EmployeeController extends Controller
 
             // Update contact details
             if ($employee->contactDetail) {
+                $emergency = is_array($address['emergencyContact'] ?? null) ? $address['emergencyContact'] : [];
                 $employee->contactDetail()->update([
                     'permanent_address' => $address['permanentAddress'],
                     'temporary_address' => $address['temporaryAddress'] ?? null,
@@ -1314,10 +1338,10 @@ class EmployeeController extends Controller
                     'district' => $address['district'] ?? '',
                     'province' => $address['province'] ?? '',
                     'electoral_division' => $address['electoralDivision'] ?? null,
-                    'emg_relationship' => $address['emergencyContact']['relationship'],
-                    'emg_name' => $address['emergencyContact']['contactName'],
-                    'emg_address' => $address['emergencyContact']['contactAddress'],
-                    'emg_tel' => $address['emergencyContact']['contactTel'],
+                    'emg_relationship' => $emergency['relationship'] ?? null,
+                    'emg_name' => $emergency['contactName'] ?? null,
+                    'emg_address' => $emergency['contactAddress'] ?? null,
+                    'emg_tel' => $emergency['contactTel'] ?? null,
                 ]);
             }
 
@@ -1334,21 +1358,21 @@ class EmployeeController extends Controller
                     'bank_account_no' => $compensation['bankAccountNo'] ?? null,
                     'account_holder_name' => $compensation['accountHolderName'] ?? null,
                     'comments' => $compensation['comments'] ?? null,
-                    'secondary_emp' => $compensation['secondaryEmp'],
-                    'primary_emp_basic' => $compensation['primaryEmploymentBasic'],
-                    'enable_epf_etf' => $compensation['enableEpfEtf'],
-                    'ot_active' => $compensation['otActive'],
-                    'early_deduction' => $compensation['earlyDeduction'],
-                    'increment_active' => $compensation['incrementActive'],
-                    'active_nopay' => $compensation['nopayActive'],
-                    'ot_morning' => $compensation['morningOt'],
-                    'ot_evening' => $compensation['eveningOt'],
-                    'ot_morning_rate' => $compensation['ot_morning_rate'] ?? null,
-                    'ot_night_rate' => $compensation['ot_night_rate'] ?? null,
-                    'br1' => $compensation['budgetaryReliefAllowance2015'],
-                    'br2' => $compensation['budgetaryReliefAllowance2016'],
-                    'stamp' => $compensation['stamp'],
-                    'employee_category' => $organization['employeeCategory'],
+                    'secondary_emp' => (bool) ($compensation['secondaryEmp'] ?? false),
+                    'primary_emp_basic' => (bool) ($compensation['primaryEmploymentBasic'] ?? false),
+                    'enable_epf_etf' => (bool) ($compensation['enableEpfEtf'] ?? false),
+                    'ot_active' => (bool) ($compensation['otActive'] ?? false),
+                    'early_deduction' => (bool) ($compensation['earlyDeduction'] ?? false),
+                    'increment_active' => (bool) ($compensation['incrementActive'] ?? false),
+                    'active_nopay' => (bool) ($compensation['nopayActive'] ?? false),
+                    'ot_morning' => (bool) ($compensation['morningOt'] ?? false),
+                    'ot_evening' => (bool) ($compensation['eveningOt'] ?? false),
+                    'ot_morning_rate' => $compensation['ot_morning_rate'] ?? 0,
+                    'ot_night_rate' => $compensation['ot_night_rate'] ?? 0,
+                    'br1' => (bool) ($compensation['budgetaryReliefAllowance2015'] ?? false),
+                    'br2' => (bool) ($compensation['budgetaryReliefAllowance2016'] ?? false),
+                    'stamp' => (bool) ($compensation['stamp'] ?? false),
+                    'employee_category' => $organization['employeeCategory'] ?? 'Non-Executive',
                     'monthly_bonus' => $compensation['monthlyBonus'] ?? 0,
                     'sports_fund_percentage' => $compensation['sportsFundPercentage'] ?? null,
                     'staff_fund_amount' => $compensation['staffFundAmount'] ?? 0,
@@ -1361,6 +1385,17 @@ class EmployeeController extends Controller
                 'message' => 'Employee updated successfully',
                 'employee_id' => $employee->id
             ], 200);
+        } catch (HttpException $e) {
+            DB::rollBack();
+
+            if ($request->hasFile('profile_picture') && $profilePicturePath && Storage::disk('public')->exists($profilePicturePath)) {
+                Storage::disk('public')->delete($profilePicturePath);
+            }
+
+            return response()->json([
+                'message' => $e->getMessage(),
+                'error' => $e->getMessage(),
+            ], $e->getStatusCode() ?: 422);
         } catch (\Exception $e) {
             DB::rollBack();
 
