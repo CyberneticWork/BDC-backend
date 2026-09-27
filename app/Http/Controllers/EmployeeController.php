@@ -704,7 +704,7 @@ class EmployeeController extends Controller
             compensation::create([
                 'employee_id' => $employee->id,
                 'basic_salary' => $compensation['basicSalary'],
-                'increment_value' => $compensation['incrementValue'] ?? null,
+                'increment_value' => $this->numberOrNull($compensation['incrementValue'] ?? null),
                 'increment_effected_date' => empty($organization['incrementEffectiveFrom']) ? null : $organization['incrementEffectiveFrom'],
                 'bank_name' => $compensation['bankName'] ?? null,
                 'branch_name' => $compensation['branchName'] ?? null,
@@ -722,15 +722,15 @@ class EmployeeController extends Controller
                 'active_nopay' => (bool) ($compensation['nopayActive'] ?? false),
                 'ot_morning' => (bool) ($compensation['morningOt'] ?? false),
                 'ot_evening' => (bool) ($compensation['eveningOt'] ?? false),
-                'ot_morning_rate' => $compensation['ot_morning_rate'] ?? 0,
-                'ot_night_rate' => $compensation['ot_night_rate'] ?? 0,
+                'ot_morning_rate' => $this->numberOrZero($compensation['ot_morning_rate'] ?? null),
+                'ot_night_rate' => $this->numberOrZero($compensation['ot_night_rate'] ?? null),
                 'br1' => (bool) ($compensation['budgetaryReliefAllowance2015'] ?? false),
                 'br2' => (bool) ($compensation['budgetaryReliefAllowance2016'] ?? false),
                 'stamp' => (bool) ($compensation['stamp'] ?? false),
                 'employee_category' => $organization['employeeCategory'] ?? 'Non-Executive',
-                'monthly_bonus' => $compensation['monthlyBonus'] ?? 0,
-                'sports_fund_percentage' => $compensation['sportsFundPercentage'] ?? null,
-                'staff_fund_amount' => $compensation['staffFundAmount'] ?? 0,
+                'monthly_bonus' => $this->numberOrZero($compensation['monthlyBonus'] ?? null),
+                'sports_fund_percentage' => $this->numberOrNull($compensation['sportsFundPercentage'] ?? null),
+                'staff_fund_amount' => $this->numberOrZero($compensation['staffFundAmount'] ?? null),
             ]);
 
             // Add default roster
@@ -782,6 +782,21 @@ class EmployeeController extends Controller
                 'file' => $e->getFile()
             ], 500);
         }
+    }
+
+    // Strict MySQL rejects '' for decimal columns; blank form inputs arrive as ''.
+    private function numberOrNull($value)
+    {
+        if ($value === null || (is_string($value) && trim($value) === '')) {
+            return null;
+        }
+
+        return is_numeric($value) ? $value : null;
+    }
+
+    private function numberOrZero($value)
+    {
+        return $this->numberOrNull($value) ?? 0;
     }
 
     private function generateStrongPassword($length = 12)
@@ -1349,7 +1364,7 @@ class EmployeeController extends Controller
             if ($employee->compensation) {
                 $employee->compensation()->update([
                     'basic_salary' => $compensation['basicSalary'],
-                    'increment_value' => $compensation['incrementValue'] ?? null,
+                    'increment_value' => $this->numberOrNull($compensation['incrementValue'] ?? null),
                     'increment_effected_date' => empty($compensation['incrementEffectiveFrom']) ? null : $compensation['incrementEffectiveFrom'],
                     'bank_name' => $compensation['bankName'] ?? null,
                     'branch_name' => $compensation['branchName'] ?? null,
@@ -1367,15 +1382,15 @@ class EmployeeController extends Controller
                     'active_nopay' => (bool) ($compensation['nopayActive'] ?? false),
                     'ot_morning' => (bool) ($compensation['morningOt'] ?? false),
                     'ot_evening' => (bool) ($compensation['eveningOt'] ?? false),
-                    'ot_morning_rate' => $compensation['ot_morning_rate'] ?? 0,
-                    'ot_night_rate' => $compensation['ot_night_rate'] ?? 0,
+                    'ot_morning_rate' => $this->numberOrZero($compensation['ot_morning_rate'] ?? null),
+                    'ot_night_rate' => $this->numberOrZero($compensation['ot_night_rate'] ?? null),
                     'br1' => (bool) ($compensation['budgetaryReliefAllowance2015'] ?? false),
                     'br2' => (bool) ($compensation['budgetaryReliefAllowance2016'] ?? false),
                     'stamp' => (bool) ($compensation['stamp'] ?? false),
                     'employee_category' => $organization['employeeCategory'] ?? 'Non-Executive',
-                    'monthly_bonus' => $compensation['monthlyBonus'] ?? 0,
-                    'sports_fund_percentage' => $compensation['sportsFundPercentage'] ?? null,
-                    'staff_fund_amount' => $compensation['staffFundAmount'] ?? 0,
+                    'monthly_bonus' => $this->numberOrZero($compensation['monthlyBonus'] ?? null),
+                    'sports_fund_percentage' => $this->numberOrNull($compensation['sportsFundPercentage'] ?? null),
+                    'staff_fund_amount' => $this->numberOrZero($compensation['staffFundAmount'] ?? null),
                 ]);
             }
 
