@@ -18,6 +18,8 @@ use App\Mail\EmployeePasswordSendEmail;
 use App\Models\organization_assignment;
 use App\Services\EmployeeReportService;
 use App\Services\CompanyProcessSettings;
+use App\Services\EmployeeFollowingQualificationService;
+use App\Services\EmployeePreviousEmploymentService;
 use App\Services\EmployeeQualificationService;
 use App\Services\EmployeeSchoolResultService;
 use App\Services\EmployeeUserLinker;
@@ -531,8 +533,7 @@ class EmployeeController extends Controller
             ], 422);
         }
 
-        $this->prepareQualificationsSchema($request, $organization['company'] ?? null);
-        $this->prepareSchoolResultsSchema($request, $organization['company'] ?? null);
+        $this->prepareAddonSchemas($request, $organization['company'] ?? null);
 
         DB::beginTransaction();
 
@@ -686,8 +687,7 @@ class EmployeeController extends Controller
 
             $this->storeRemoteDocuments($employee->id, $request);
 
-            $this->syncQualifications($employee, $request, $companyId);
-            $this->syncSchoolResults($employee, $request, $companyId);
+            $this->syncAddons($employee, $request, $companyId);
 
             // Create contact details
             $emergency = is_array($address['emergencyContact'] ?? null) ? $address['emergencyContact'] : [];
@@ -793,61 +793,68 @@ class EmployeeController extends Controller
         }
     }
 
-    // Older frontends never send `qualifications`; leave stored rows untouched for them
-    // and for companies where the add-on is switched off.
-    /** Must run before DB::beginTransaction(): CREATE TABLE implicitly commits in MySQL. */
-    private function prepareQualificationsSchema(Request $request, $companyId): void
+    /** Request field => [company add-on key, service with ensureSchema()/sync()]. */
+    private const LIST_ADDONS = [
+        'qualifications' => ['qualifications', EmployeeQualificationService::class],
+        'following_qualifications' => ['following_qualifications', EmployeeFollowingQualificationService::class],
+        'previous_employments' => ['previous_employment', EmployeePreviousEmploymentService::class],
+    ];
+
+    private function decodeAddonInput(Request $request, string $field): array
     {
-        if (!$request->has('qualifications') || !is_numeric($companyId)) {
-            return;
-        }
-        if (CompanyProcessSettings::usesQualifications((int) $companyId)) {
-            app(EmployeeQualificationService::class)->ensureSchema();
-        }
+        $raw = $request->input($field);
+        $data = is_string($raw) ? json_decode($raw, true) : $raw;
+        return is_array($data) ? $data : [];
     }
 
-    /** Must run before DB::beginTransaction(): CREATE TABLE implicitly commits in MySQL. */
-    private function prepareSchoolResultsSchema(Request $request, $companyId): void
+    private function schoolPacks(int $companyId): array
     {
-        if (!$request->has('school_results') || !is_numeric($companyId)) {
+        return [CompanyProcessSettings::usesOlResults($companyId), CompanyProcessSettings::usesAlResults($companyId)];
+    }
+
+    // Older frontends never send add-on fields; leave stored rows untouched for them
+    // and for companies where the add-on is switched off.
+    /** Must run before DB::beginTransaction(): CREATE TABLE implicitly commits in MySQL. */
+    private function prepareAddonSchemas(Request $request, $companyId): void
+    {
+        if (!is_numeric($companyId)) {
             return;
         }
         $companyId = (int) $companyId;
-        if (CompanyProcessSettings::usesOlResults($companyId) || CompanyProcessSettings::usesAlResults($companyId)) {
+
+        foreach (self::LIST_ADDONS as $field => [$pack, $service]) {
+            if ($request->has($field) && CompanyProcessSettings::packEnabled($companyId, $pack)) {
+                app($service)->ensureSchema();
+            }
+        }
+
+        if ($request->has('school_results') && in_array(true, $this->schoolPacks($companyId), true)) {
             app(EmployeeSchoolResultService::class)->ensureSchema();
         }
     }
 
-    private function syncSchoolResults(employee $employee, Request $request, $companyId): void
+    private function syncAddons(employee $employee, Request $request, $companyId): void
     {
-        if (!$request->has('school_results') || !is_numeric($companyId)) {
+        if (!is_numeric($companyId)) {
             return;
         }
         $companyId = (int) $companyId;
-        $raw = $request->input('school_results');
-        $input = is_string($raw) ? json_decode($raw, true) : $raw;
 
-        app(EmployeeSchoolResultService::class)->save(
-            $employee,
-            is_array($input) ? $input : [],
-            CompanyProcessSettings::usesOlResults($companyId),
-            CompanyProcessSettings::usesAlResults($companyId)
-        );
-    }
-
-    private function syncQualifications(employee $employee, Request $request, $companyId): void
-    {
-        if (!$request->has('qualifications') || !$companyId) {
-            return;
-        }
-        if (!CompanyProcessSettings::usesQualifications((int) $companyId)) {
-            return;
+        foreach (self::LIST_ADDONS as $field => [$pack, $service]) {
+            if ($request->has($field) && CompanyProcessSettings::packEnabled($companyId, $pack)) {
+                app($service)->sync($employee, $this->decodeAddonInput($request, $field));
+            }
         }
 
-        $raw = $request->input('qualifications');
-        $rows = is_string($raw) ? json_decode($raw, true) : $raw;
-
-        app(EmployeeQualificationService::class)->sync($employee, is_array($rows) ? $rows : []);
+        if ($request->has('school_results')) {
+            [$ol, $al] = $this->schoolPacks($companyId);
+            app(EmployeeSchoolResultService::class)->save(
+                $employee,
+                $this->decodeAddonInput($request, 'school_results'),
+                $ol,
+                $al
+            );
+        }
     }
 
     // Strict MySQL rejects '' for decimal columns; blank form inputs arrive as ''.
@@ -900,6 +907,12 @@ class EmployeeController extends Controller
         }
         if (app(EmployeeSchoolResultService::class)->tableExists()) {
             $relations[] = 'schoolResult';
+        }
+        if (app(EmployeeFollowingQualificationService::class)->tableExists()) {
+            $relations[] = 'followingQualifications';
+        }
+        if (app(EmployeePreviousEmploymentService::class)->tableExists()) {
+            $relations[] = 'previousEmployments';
         }
 
         $employee = employee::with($relations)->findOrFail($id);
@@ -1286,8 +1299,7 @@ class EmployeeController extends Controller
         $educationCompanyId = is_numeric($organization['company'] ?? null)
             ? (int) $organization['company']
             : $employee->organizationAssignment?->company_id;
-        $this->prepareQualificationsSchema($request, $educationCompanyId);
-        $this->prepareSchoolResultsSchema($request, $educationCompanyId);
+        $this->prepareAddonSchemas($request, $educationCompanyId);
 
         DB::beginTransaction();
 
@@ -1419,8 +1431,7 @@ class EmployeeController extends Controller
 
             $this->storeRemoteDocuments($employee->id, $request);
 
-            $this->syncQualifications($employee, $request, $educationCompanyId);
-            $this->syncSchoolResults($employee, $request, $educationCompanyId);
+            $this->syncAddons($employee, $request, $educationCompanyId);
 
             // Update contact details
             if ($employee->contactDetail) {

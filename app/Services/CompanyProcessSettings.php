@@ -81,7 +81,23 @@ class CompanyProcessSettings
                 'key' => 'qualifications',
                 'label' => 'Employee qualifications',
                 'group' => 'Employee Master',
-                'summary' => 'Off = no qualifications section. On = the Education step in Employee Master records any number of completed qualifications (type, course, institute, completion year) and qualifications the employee is currently following.',
+                'summary' => 'Off = no qualifications section. On = the Education step in Employee Master records any number of completed qualifications (type, course, institute, completion year).',
+                'affects' => ['employee_master'],
+                'available' => true,
+            ],
+            [
+                'key' => 'following_qualifications',
+                'label' => 'Following qualifications',
+                'group' => 'Employee Master',
+                'summary' => 'Off = no following section. On = the Education step records qualifications the employee is studying for: name, institute, starting and ending year/month, and Weekday or Weekend lectures.',
+                'affects' => ['employee_master'],
+                'available' => true,
+            ],
+            [
+                'key' => 'previous_employment',
+                'label' => 'Previous employment information',
+                'group' => 'Employee Master',
+                'summary' => 'Off = no previous employment step. On = Employee Master records past employers: organization name, last designation, join date, last date and comments (50 words max).',
                 'affects' => ['employee_master'],
                 'available' => true,
             ],
@@ -360,6 +376,16 @@ class CompanyProcessSettings
     public static function usesQualifications($source): bool
     {
         return self::packEnabled($source, 'qualifications');
+    }
+
+    public static function usesFollowingQualifications($source): bool
+    {
+        return self::packEnabled($source, 'following_qualifications');
+    }
+
+    public static function usesPreviousEmployment($source): bool
+    {
+        return self::packEnabled($source, 'previous_employment');
     }
 
     public static function usesOlResults($source): bool

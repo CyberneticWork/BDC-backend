@@ -35,8 +35,9 @@ class EmployeeQualificationService
     }
 
     /**
-     * Replace the employee's qualifications. Rows with no type and no institute
-     * are treated as empty form lines and skipped.
+     * Replace the employee's completed qualifications. Rows with no type and no institute
+     * are treated as empty form lines and skipped. Qualifications still being followed
+     * live in employee_following_qualifications.
      *
      * Call ensureSchema() before opening a DB transaction: CREATE TABLE commits implicitly in MySQL.
      */
@@ -44,7 +45,7 @@ class EmployeeQualificationService
     {
         $clean = [];
         foreach (array_values($rows) as $index => $row) {
-            if (!is_array($row)) {
+            if (!is_array($row) || strtolower(trim((string) ($row['status'] ?? ''))) === EmployeeQualification::STATUS_FOLLOWING) {
                 continue;
             }
 
@@ -62,11 +63,6 @@ class EmployeeQualificationService
                 throw new HttpException(422, "Qualification line {$line}: name of institute is required.");
             }
 
-            $status = strtolower(trim((string) ($row['status'] ?? '')));
-            if ($status !== EmployeeQualification::STATUS_FOLLOWING) {
-                $status = EmployeeQualification::STATUS_COMPLETED;
-            }
-
             $yearRaw = trim((string) ($row['completionYear'] ?? $row['completion_year'] ?? ''));
             $year = null;
             if ($yearRaw !== '') {
@@ -75,7 +71,7 @@ class EmployeeQualificationService
                 }
                 $year = (int) $yearRaw;
             }
-            if ($status === EmployeeQualification::STATUS_COMPLETED && $year === null) {
+            if ($year === null) {
                 throw new HttpException(422, "Qualification line {$line}: completion year is required.");
             }
 
@@ -83,7 +79,7 @@ class EmployeeQualificationService
 
             $clean[] = [
                 'employee_id' => $employee->id,
-                'status' => $status,
+                'status' => EmployeeQualification::STATUS_COMPLETED,
                 'qualification_type' => $type,
                 'course_name' => $course !== '' ? $course : null,
                 'institute_name' => $institute,
@@ -92,7 +88,9 @@ class EmployeeQualificationService
             ];
         }
 
-        EmployeeQualification::where('employee_id', $employee->id)->delete();
+        EmployeeQualification::where('employee_id', $employee->id)
+            ->where('status', EmployeeQualification::STATUS_COMPLETED)
+            ->delete();
         foreach ($clean as $data) {
             EmployeeQualification::create($data);
         }

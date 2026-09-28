@@ -75,7 +75,19 @@ class employee extends Model
 
     public function qualifications()
     {
-        return $this->hasMany(EmployeeQualification::class)->orderBy('status')->orderBy('sort_order');
+        return $this->hasMany(EmployeeQualification::class)
+            ->where('status', EmployeeQualification::STATUS_COMPLETED)
+            ->orderBy('sort_order');
+    }
+
+    public function followingQualifications()
+    {
+        return $this->hasMany(EmployeeFollowingQualification::class)->orderBy('sort_order');
+    }
+
+    public function previousEmployments()
+    {
+        return $this->hasMany(EmployeePreviousEmployment::class)->orderBy('sort_order');
     }
 
     // Optional: allowances, deductions
