@@ -78,6 +78,14 @@ class CompanyProcessSettings
                 'available' => true,
             ],
             [
+                'key' => 'late_grace_nopay',
+                'label' => 'Variable allowance attendance (late grace NoPay)',
+                'group' => 'Attendance & payroll',
+                'summary' => 'Off = keep the current late NoPay rules. On = each day, minutes late after start time + grace (e.g. 07:15 + 15 min) are added up for the month; every 30 minutes reached = 1 NoPay day, deducted from monthly bonus (variable allowance) or basic. Replaces the other late NoPay deductions in salary.',
+                'affects' => ['late', 'nopay', 'salary'],
+                'available' => true,
+            ],
+            [
                 'key' => 'qualifications',
                 'label' => 'Employee qualifications',
                 'group' => 'Employee Master',
@@ -396,6 +404,11 @@ class CompanyProcessSettings
     public static function usesAlResults($source): bool
     {
         return self::packEnabled($source, 'al_results');
+    }
+
+    public static function usesLateGraceNoPay($source): bool
+    {
+        return self::packEnabled($source, 'late_grace_nopay');
     }
 
     public static function packConfig($source, string $key): array

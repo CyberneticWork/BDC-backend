@@ -25,8 +25,10 @@ use App\Models\EmployeeBonus;
 use App\Models\SalaryProcessAudit;
 use App\Models\MonthlyLateDeductionItem;
 use App\Services\CompanyLocationService;
+use App\Services\CompanyProcessSettings;
 use App\Services\ContractEmployeeScope;
 use App\Services\ExcessLateService;
+use App\Services\LateGraceNoPayService;
 use App\Services\SalaryAdvanceService;
 
 class SalaryProcessController extends Controller
@@ -1361,6 +1363,7 @@ public function getEmployeesByMonthAndCompany(Request $request)
         $results = DB::select($query, $params);
         $data = [];
         $currentMonthInt = (int) $month;
+        $lateGraceConfigs = [];
 
         foreach ($results as $result) {
             $employeeData = (array)$result;
@@ -1566,21 +1569,62 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 $policyOn = false;
             }
 
-            $lateBonusNoPay = $this->resolveLateComingBonusNoPay(
-                (int) $employeeData['id'],
-                (int) $year,
-                (int) $month,
-                $monthlyLateNoPays,
-                $policyOn ? 0.0 : $majorLateNoPaysSql,
-                $monthlyBonusTotal,
-                $nopayWorkingDays,
-                $basicSalary
-            );
+            $lateCompanyId = (int) ($employeeData['company_id'] ?? 0);
+            if ($lateCompanyId > 0 && !array_key_exists($lateCompanyId, $lateGraceConfigs)) {
+                $lateGraceConfigs[$lateCompanyId] = CompanyProcessSettings::usesLateGraceNoPay($lateCompanyId)
+                    ? LateGraceNoPayService::config($lateCompanyId)
+                    : null;
+            }
+            $lateGraceConfig = $lateGraceConfigs[$lateCompanyId] ?? null;
+            $lateGrace = null;
+            if ($lateGraceConfig) {
+                try {
+                    $lateGrace = app(LateGraceNoPayService::class)->monthForEmployee(
+                        (int) $employeeData['id'],
+                        (int) $year,
+                        (int) $month,
+                        $lateGraceConfig,
+                        (float) $basicSalary,
+                        (float) $monthlyBonusTotal,
+                        $nopayWorkingDays
+                    );
+                } catch (\Throwable $e) {
+                    $lateGrace = null;
+                }
+            }
+            $lateGraceBasic = ($lateGrace && $lateGrace['deduct_from'] === 'basic') ? (float) $lateGrace['amount'] : 0.0;
+            $lateGraceBonus = ($lateGrace && $lateGrace['deduct_from'] === 'bonus') ? (float) $lateGrace['amount'] : 0.0;
+
+            if ($lateGrace) {
+                // Late grace rule replaces the other late NoPay sources for this company
+                $lateBonusNoPay = [
+                    'days' => 0.0,
+                    'amount' => 0.0,
+                    'source' => 'late_grace_rule',
+                    'per_day_from_bonus' => $lateGrace['per_day'],
+                    'per_day_from_basic' => $lateGrace['per_day'],
+                    'per_day_from_total' => $lateGrace['per_day'],
+                    'rate_base' => 'basic_plus_bonus',
+                    'working_days' => $nopayWorkingDays,
+                    'deduct_from' => $lateGrace['deduct_from'],
+                ];
+            } else {
+                $lateBonusNoPay = $this->resolveLateComingBonusNoPay(
+                    (int) $employeeData['id'],
+                    (int) $year,
+                    (int) $month,
+                    $monthlyLateNoPays,
+                    $policyOn ? 0.0 : $majorLateNoPaysSql,
+                    $monthlyBonusTotal,
+                    $nopayWorkingDays,
+                    $basicSalary
+                );
+            }
             $majorLateDeduction = $lateBonusNoPay['amount'];
             $majorLateNoPays = $lateBonusNoPay['days'];
 
             $excessLate = ['basic_amount' => 0.0, 'bonus_amount' => 0.0, 'days' => 0.0, 'minutes' => 0];
-            if ($policyOn) {
+            if ($policyOn && !$lateGrace) {
                 try {
                     $excessLate = app(ExcessLateService::class)->monthTotalsForSalary(
                         (int) $employeeData['id'],
@@ -1593,7 +1637,7 @@ public function getEmployeesByMonthAndCompany(Request $request)
             }
 
             // Combined NoPay taken from monthly bonus (leave shortfall bonus portion + late NoPay)
-            $bonusNopayTotal = round($leaveShortfallBonusDeduction + $majorLateDeduction, 2);
+            $bonusNopayTotal = round($leaveShortfallBonusDeduction + $majorLateDeduction + $lateGraceBonus, 2);
 
             $employeeData['allowances'] = $allowancesArr;
             $employeeData['deductions'] = $deductionsArr;
@@ -1633,7 +1677,8 @@ public function getEmployeesByMonthAndCompany(Request $request)
             // EPF 8% + employer EPF 12% + ETF 3% all use (basic − basic NoPay)
             $basicNoPayForEpf = (float) $fullDayNoPayDeduction
                 + (float) $leaveShortfallBasicDeduction
-                + (float) ($excessLate['basic_amount'] ?? 0);
+                + (float) ($excessLate['basic_amount'] ?? 0)
+                + $lateGraceBasic;
             $epfEtfBase = max(0, (float) $basicSalary - $basicNoPayForEpf);
             $epfEnabled = !empty($employeeData['enable_epf_etf']);
             $epfEmployeeDeduction = $epfEnabled ? round($epfEtfBase * 0.08, 2) : 0;
@@ -1667,7 +1712,8 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 + $fullDayNoPayDeduction
                 + $leaveShortfallBasicDeduction
                 + $probationDeduction
-                + (float) ($excessLate['basic_amount'] ?? 0);
+                + (float) ($excessLate['basic_amount'] ?? 0)
+                + $lateGraceBasic;
             $bonusDeductionsTotal = $saturdayNoPayBonusDeduction
                 + $earlyOutNoPayDeduction
                 + $shortLeaveDeduction
@@ -1675,6 +1721,7 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 + $majorLateDeduction // late NoPay — valued from monthly bonus, taken from bonus
                 + $leaveShortfallBonusDeduction
                 + (float) ($excessLate['bonus_amount'] ?? 0)
+                + $lateGraceBonus
                 + $bonusFixedDeductions
                 + $sportsFundDeduction
                 + $staffFundDeduction;
@@ -1734,10 +1781,24 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 'excess_late_nopay_bonus' => round((float) ($excessLate['bonus_amount'] ?? 0), 2),
                 'excess_late_nopay_days' => $excessLate['days'] ?? 0,
                 'excess_late_minutes' => $excessLate['minutes'] ?? 0,
+                // Late grace rule (add-on): month excess over start + grace, 1 NoPay day per block
+                'late_grace_enabled' => (bool) $lateGrace,
+                'late_grace_nopay_days' => $lateGrace['days'] ?? 0,
+                'late_grace_excess_minutes' => $lateGrace['excess_minutes'] ?? 0,
+                'late_grace_late_days' => $lateGrace['late_days'] ?? 0,
+                'late_grace_nopay_amount' => round((float) ($lateGrace['amount'] ?? 0), 2),
+                'late_grace_nopay_basic' => round($lateGraceBasic, 2),
+                'late_grace_nopay_bonus' => round($lateGraceBonus, 2),
+                'late_grace_deduct_from' => $lateGrace['deduct_from'] ?? null,
+                'late_grace_start_time' => $lateGrace['config']['start_time'] ?? null,
+                'late_grace_grace_minutes' => $lateGrace['config']['grace_minutes'] ?? null,
+                'late_grace_block_minutes' => $lateGrace['config']['block_minutes'] ?? null,
+                'late_grace_days_per_block' => $lateGrace['config']['days_per_block'] ?? null,
+                'late_grace_detail' => $lateGrace['days_detail'] ?? [],
                 // Total NoPay amount deducted from monthly bonus
                 'bonus_nopay_total' => $bonusNopayTotal,
                 'bonus_nopay_from_leave_shortfall' => $leaveShortfallBonusDeduction,
-                'bonus_nopay_from_late' => round($majorLateDeduction, 2),
+                'bonus_nopay_from_late' => round($majorLateDeduction + $lateGraceBonus, 2),
                 'epf_employee_deduction' => round($epfEmployeeDeduction, 2),
                 'epf_employer_contribution' => round($epfEmployerContribution, 2),
                 'etf_employer_contribution' => round($etfEmployerContribution, 2),
