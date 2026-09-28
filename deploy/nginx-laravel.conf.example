@@ -1,25 +1,25 @@
 # =============================================================================
-# apibdchrnew.cyberneticde.site  — Laravel API only (BDC HR)
+# apihilburn.cyberneticde.site  — Laravel API only (Hilburn HR)
 # =============================================================================
 # CORS allows https://*.cyberneticde.site (see config/cors.php).
 # This vhost must be Laravel public/, not the SPA and not another tenant.
 #
 # Cloudflare DNS (zone cyberneticde.site)
-#   Name:  apibdchrnew
+#   Name:  apihilburn
 #   Type:  A
-#   IPv4:  THE SERVER WHERE BDC-backend IS CLONED
+#   IPv4:  THE SERVER WHERE Hilburn-backend IS CLONED
 #   Proxy: DNS only (grey cloud) until the vhost below works, then orange.
 #
 # After nginx -t && reload, this must return JSON:
-#   https://apibdchrnew.cyberneticde.site/index.php/api/public/branding
+#   https://apihilburn.cyberneticde.site/index.php/api/public/branding
 # =============================================================================
 
 server {
     listen 80;
     listen 443 ssl http2;
-    server_name apibdchrnew.cyberneticde.site;
+    server_name apihilburn.cyberneticde.site;
 
-    root /var/www/bdc-backend/public;
+    root /var/www/hilburn-backend/public;
     index index.php;
 
     charset utf-8;
