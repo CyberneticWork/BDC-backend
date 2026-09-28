@@ -12,6 +12,7 @@ use App\Http\Controllers\EnrollmentController;
 use App\Http\Controllers\SalaryController;
 use App\Http\Controllers\ApiDataController;
 use App\Http\Controllers\CompanyController;
+use App\Http\Controllers\CompanyLocationController;
 use App\Http\Controllers\MediaUploadController;
 use App\Http\Controllers\CyberneticAdminController;
 use App\Http\Controllers\EmployeeController;
@@ -160,6 +161,7 @@ Route::post('/companies/{id}/logo', [CompanyController::class, 'uploadLogo'])->m
 Route::post('/companies', [CompanyController::class, 'store'])->middleware('cybernetic');
 Route::apiResource('companies', CompanyController::class)->except(['store']);
 Route::apiResource('departments', DepartmentsController::class)->only(['store', 'update', 'destroy']);
+Route::apiResource('company-locations', CompanyLocationController::class)->only(['index', 'store', 'update', 'destroy']);
 Route::apiResource('subdepartments', SubDepartmentsController::class);
 
 

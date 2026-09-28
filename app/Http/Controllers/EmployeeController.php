@@ -17,6 +17,7 @@ use Illuminate\Support\Facades\Mail;
 use App\Mail\EmployeePasswordSendEmail;
 use App\Models\organization_assignment;
 use App\Services\EmployeeReportService;
+use App\Services\CompanyLocationService;
 use App\Services\CompanyProcessSettings;
 use App\Services\EmployeeFollowingQualificationService;
 use App\Services\EmployeePreviousEmploymentService;
@@ -534,6 +535,7 @@ class EmployeeController extends Controller
         }
 
         $this->prepareAddonSchemas($request, $organization['company'] ?? null);
+        $this->prepareLocationSchema($organization);
 
         DB::beginTransaction();
 
@@ -593,7 +595,7 @@ class EmployeeController extends Controller
                 'contract_period_to' => empty($organization['contractTo']) ? null : $organization['contractTo'],
                 'date_of_resigning' => empty($organization['confirmationDate']) ? null : $organization['confirmationDate'],
                 'is_active' => (bool) ($organization['currentStatus'] ?? true),
-            ]);
+            ] + $this->locationAttributes($organization, $companyId));
 
             // Create employee record
             $employee = employee::create([
@@ -793,6 +795,25 @@ class EmployeeController extends Controller
         }
     }
 
+    /** Must run before DB::beginTransaction(): DDL implicitly commits in MySQL. */
+    private function prepareLocationSchema($organization): void
+    {
+        if (is_array($organization) && !empty($organization['location'])) {
+            app(CompanyLocationService::class)->ensureSchema();
+        }
+    }
+
+    // Older frontends never send `location`; leave the stored location untouched for them.
+    private function locationAttributes(array $organization, $companyId): array
+    {
+        $locations = app(CompanyLocationService::class);
+        if (!array_key_exists('location', $organization) || !$locations->ready()) {
+            return [];
+        }
+
+        return ['location_id' => $locations->resolveForCompany($organization['location'], $companyId)];
+    }
+
     /** Request field => [company add-on key, service with ensureSchema()/sync()]. */
     private const LIST_ADDONS = [
         'qualifications' => ['qualifications', EmployeeQualificationService::class],
@@ -913,6 +934,9 @@ class EmployeeController extends Controller
         }
         if (app(EmployeePreviousEmploymentService::class)->tableExists()) {
             $relations[] = 'previousEmployments';
+        }
+        if (app(CompanyLocationService::class)->ready()) {
+            $relations[] = 'organizationAssignment.location';
         }
 
         $employee = employee::with($relations)->findOrFail($id);
@@ -1300,6 +1324,7 @@ class EmployeeController extends Controller
             ? (int) $organization['company']
             : $employee->organizationAssignment?->company_id;
         $this->prepareAddonSchemas($request, $educationCompanyId);
+        $this->prepareLocationSchema($organization);
 
         DB::beginTransaction();
 
@@ -1357,7 +1382,7 @@ class EmployeeController extends Controller
                     'contract_period_to' => empty($organization['contractTo']) ? null : $organization['contractTo'],
                     'date_of_resigning' => empty($organization['confirmationDate']) ? null : $organization['confirmationDate'],
                     'is_active' => (bool) ($organization['currentStatus'] ?? true),
-                ]);
+                ] + $this->locationAttributes($organization, $companyId));
             }
 
             // Update employee record

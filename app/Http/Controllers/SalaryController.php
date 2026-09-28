@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\SalaryProcessAudit;
 use App\Models\salary_process;
+use App\Services\CompanyLocationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
@@ -39,6 +40,16 @@ class SalaryController extends Controller
             $query->where('department_name', 'like', '%' . $request->department_name . '%');
         }
 
+        // Saved salary rows keep no location; filter by the employee's current location.
+        $hasLocations = app(CompanyLocationService::class)->ready();
+        if ($hasLocations && $request->filled('location_id')) {
+            $locationId = (int) $request->location_id;
+            $query->whereHas('employee.organizationAssignment', fn ($q) => $q->where('location_id', $locationId));
+        }
+        if ($hasLocations) {
+            $query->with('employee.organizationAssignment.location:id,name');
+        }
+
         if ($request->has('search') && $request->search) {
             $query->where(function($q) use ($request) {
                 $q->where('employee_no', 'like', '%' . $request->search . '%')
@@ -54,6 +65,10 @@ class SalaryController extends Controller
             $r->allowances  = is_string($r->allowances)  ? json_decode($r->allowances, true)  : $r->allowances;
             $r->deductions  = is_string($r->deductions)  ? json_decode($r->deductions, true)  : $r->deductions;
             $r->bonuses     = is_string($r->bonuses)     ? json_decode($r->bonuses, true)     : $r->bonuses;
+            if ($r->relationLoaded('employee')) {
+                $r->location_name = $r->employee?->organizationAssignment?->location?->name;
+                $r->unsetRelation('employee');
+            }
             return $r;
         });
 

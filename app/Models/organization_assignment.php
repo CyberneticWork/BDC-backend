@@ -13,6 +13,7 @@ class organization_assignment extends Model
         'company_id',
         'department_id',
         'sub_department_id',
+        'location_id',
         'designation_id',
         'current_supervisor',
         'date_of_joining',
@@ -51,6 +52,11 @@ class organization_assignment extends Model
     public function subDepartment()
     {
         return $this->belongsTo(sub_departments::class, 'sub_department_id');
+    }
+
+    public function location()
+    {
+        return $this->belongsTo(CompanyLocation::class, 'location_id');
     }
 
     public function designation()

@@ -24,6 +24,7 @@ use Carbon\Carbon;
 use App\Models\EmployeeBonus;
 use App\Models\SalaryProcessAudit;
 use App\Models\MonthlyLateDeductionItem;
+use App\Services\CompanyLocationService;
 use App\Services\ContractEmployeeScope;
 use App\Services\ExcessLateService;
 use App\Services\SalaryAdvanceService;
@@ -1141,6 +1142,14 @@ public function getEmployeesByMonthAndCompany(Request $request)
 
         $totalDaysInMonth = (int)$lastDay;
 
+        $location_id = $request->query('location_id');
+        $hasLocations = app(CompanyLocationService::class)->ready();
+        $locationSelectSql = $hasLocations
+            ? 'oa.location_id, cl.name AS location_name,'
+            : 'NULL AS location_id, NULL AS location_name,';
+        $locationJoinSql = $hasLocations ? 'LEFT JOIN company_locations cl ON oa.location_id = cl.id' : '';
+        $locationGroupSql = $hasLocations ? ', oa.location_id, cl.name' : '';
+
         $query = "
             SELECT
                 e.id,
@@ -1151,6 +1160,7 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 c.id AS company_id,
                 d.name AS department_name,
                 sd.name AS sub_department_name,
+                {$locationSelectSql}
                 comp.basic_salary,
                 comp.monthly_bonus,
                 comp.sports_fund_percentage,
@@ -1299,6 +1309,7 @@ public function getEmployeesByMonthAndCompany(Request $request)
             JOIN companies c ON oa.company_id = c.id
             LEFT JOIN departments d ON oa.department_id = d.id
             LEFT JOIN sub_departments sd ON oa.sub_department_id = sd.id
+            {$locationJoinSql}
             LEFT JOIN compensation comp ON e.id = comp.employee_id
             LEFT JOIN contact_details cd ON e.id = cd.employee_id
             LEFT JOIN loans lo ON e.id = lo.employee_id AND lo.status = 'active'
@@ -1335,13 +1346,17 @@ public function getEmployeesByMonthAndCompany(Request $request)
             $query .= " AND oa.department_id = ? ";
             $params[] = $department_id;
         }
+        if ($location_id && $hasLocations) {
+            $query .= " AND oa.location_id = ? ";
+            $params[] = $location_id;
+        }
         if ($search) {
             $query .= " AND (e.attendance_employee_no LIKE ? OR e.full_name LIKE ?) ";
             $params[] = "%{$search}%";
             $params[] = "%{$search}%";
         }
 
-        $query .= " GROUP BY e.id, e.attendance_employee_no, e.full_name, e.nic, c.name, d.name, sd.name, comp.basic_salary, comp.monthly_bonus, comp.sports_fund_percentage, comp.staff_fund_amount, c.default_sports_fund_percentage, c.nopay_working_days, comp.br1, comp.br2, comp.increment_active, comp.increment_value, comp.increment_effected_date, comp.ot_morning, comp.ot_evening, comp.enable_epf_etf, comp.stamp, comp.bank_name, comp.branch_name, comp.bank_account_no, c.id, oa.department_id, oa.probationary_period, oa.date_of_joining, e.epf, cd.permanent_address, cd.mobile_line, cd.emg_name, cd.emg_relationship, cd.emg_tel";
+        $query .= " GROUP BY e.id, e.attendance_employee_no, e.full_name, e.nic, c.name, d.name, sd.name, comp.basic_salary, comp.monthly_bonus, comp.sports_fund_percentage, comp.staff_fund_amount, c.default_sports_fund_percentage, c.nopay_working_days, comp.br1, comp.br2, comp.increment_active, comp.increment_value, comp.increment_effected_date, comp.ot_morning, comp.ot_evening, comp.enable_epf_etf, comp.stamp, comp.bank_name, comp.branch_name, comp.bank_account_no, c.id, oa.department_id, oa.probationary_period, oa.date_of_joining, e.epf, cd.permanent_address, cd.mobile_line, cd.emg_name, cd.emg_relationship, cd.emg_tel{$locationGroupSql}";
 
         $results = DB::select($query, $params);
         $data = [];
