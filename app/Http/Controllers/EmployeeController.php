@@ -19,6 +19,7 @@ use App\Models\organization_assignment;
 use App\Services\EmployeeReportService;
 use App\Services\CompanyProcessSettings;
 use App\Services\EmployeeQualificationService;
+use App\Services\EmployeeSchoolResultService;
 use App\Services\EmployeeUserLinker;
 use App\Services\FirebaseStorageService;
 use Illuminate\Support\Facades\Storage;
@@ -531,6 +532,7 @@ class EmployeeController extends Controller
         }
 
         $this->prepareQualificationsSchema($request, $organization['company'] ?? null);
+        $this->prepareSchoolResultsSchema($request, $organization['company'] ?? null);
 
         DB::beginTransaction();
 
@@ -685,6 +687,7 @@ class EmployeeController extends Controller
             $this->storeRemoteDocuments($employee->id, $request);
 
             $this->syncQualifications($employee, $request, $companyId);
+            $this->syncSchoolResults($employee, $request, $companyId);
 
             // Create contact details
             $emergency = is_array($address['emergencyContact'] ?? null) ? $address['emergencyContact'] : [];
@@ -803,6 +806,35 @@ class EmployeeController extends Controller
         }
     }
 
+    /** Must run before DB::beginTransaction(): CREATE TABLE implicitly commits in MySQL. */
+    private function prepareSchoolResultsSchema(Request $request, $companyId): void
+    {
+        if (!$request->has('school_results') || !is_numeric($companyId)) {
+            return;
+        }
+        $companyId = (int) $companyId;
+        if (CompanyProcessSettings::usesOlResults($companyId) || CompanyProcessSettings::usesAlResults($companyId)) {
+            app(EmployeeSchoolResultService::class)->ensureSchema();
+        }
+    }
+
+    private function syncSchoolResults(employee $employee, Request $request, $companyId): void
+    {
+        if (!$request->has('school_results') || !is_numeric($companyId)) {
+            return;
+        }
+        $companyId = (int) $companyId;
+        $raw = $request->input('school_results');
+        $input = is_string($raw) ? json_decode($raw, true) : $raw;
+
+        app(EmployeeSchoolResultService::class)->save(
+            $employee,
+            is_array($input) ? $input : [],
+            CompanyProcessSettings::usesOlResults($companyId),
+            CompanyProcessSettings::usesAlResults($companyId)
+        );
+    }
+
     private function syncQualifications(employee $employee, Request $request, $companyId): void
     {
         if (!$request->has('qualifications') || !$companyId) {
@@ -865,6 +897,9 @@ class EmployeeController extends Controller
         ];
         if (app(EmployeeQualificationService::class)->tableExists()) {
             $relations[] = 'qualifications';
+        }
+        if (app(EmployeeSchoolResultService::class)->tableExists()) {
+            $relations[] = 'schoolResult';
         }
 
         $employee = employee::with($relations)->findOrFail($id);
@@ -1248,12 +1283,11 @@ class EmployeeController extends Controller
             ], 422);
         }
 
-        $this->prepareQualificationsSchema(
-            $request,
-            is_numeric($organization['company'] ?? null)
-                ? $organization['company']
-                : $employee->organizationAssignment?->company_id
-        );
+        $educationCompanyId = is_numeric($organization['company'] ?? null)
+            ? (int) $organization['company']
+            : $employee->organizationAssignment?->company_id;
+        $this->prepareQualificationsSchema($request, $educationCompanyId);
+        $this->prepareSchoolResultsSchema($request, $educationCompanyId);
 
         DB::beginTransaction();
 
@@ -1385,13 +1419,8 @@ class EmployeeController extends Controller
 
             $this->storeRemoteDocuments($employee->id, $request);
 
-            $this->syncQualifications(
-                $employee,
-                $request,
-                is_numeric($organization['company'] ?? null)
-                    ? (int) $organization['company']
-                    : $employee->organizationAssignment?->company_id
-            );
+            $this->syncQualifications($employee, $request, $educationCompanyId);
+            $this->syncSchoolResults($employee, $request, $educationCompanyId);
 
             // Update contact details
             if ($employee->contactDetail) {

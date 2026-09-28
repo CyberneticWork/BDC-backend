@@ -68,6 +68,11 @@ class employee extends Model
         return $this->hasMany(children::class);
     }
 
+    public function schoolResult()
+    {
+        return $this->hasOne(EmployeeSchoolResult::class);
+    }
+
     public function qualifications()
     {
         return $this->hasMany(EmployeeQualification::class)->orderBy('status')->orderBy('sort_order');

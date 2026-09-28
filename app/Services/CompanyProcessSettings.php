@@ -81,7 +81,23 @@ class CompanyProcessSettings
                 'key' => 'qualifications',
                 'label' => 'Employee qualifications',
                 'group' => 'Employee Master',
-                'summary' => 'Off = no qualifications step. On = Employee Master gets a Qualifications step to record any number of completed qualifications (type, course, institute, completion year) and qualifications the employee is currently following.',
+                'summary' => 'Off = no qualifications section. On = the Education step in Employee Master records any number of completed qualifications (type, course, institute, completion year) and qualifications the employee is currently following.',
+                'affects' => ['employee_master'],
+                'available' => true,
+            ],
+            [
+                'key' => 'ol_results',
+                'label' => 'O/L results',
+                'group' => 'Employee Master',
+                'summary' => 'Off = no O/L fields. On = the Education step records the O/L English grade, Mathematics grade and year sat.',
+                'affects' => ['employee_master'],
+                'available' => true,
+            ],
+            [
+                'key' => 'al_results',
+                'label' => 'A/L details',
+                'group' => 'Employee Master',
+                'summary' => 'Off = no A/L fields. On = the Education step records the A/L syllabus (National, Cambridge, AQA), subject stream and year sat.',
                 'affects' => ['employee_master'],
                 'available' => true,
             ],
@@ -344,6 +360,16 @@ class CompanyProcessSettings
     public static function usesQualifications($source): bool
     {
         return self::packEnabled($source, 'qualifications');
+    }
+
+    public static function usesOlResults($source): bool
+    {
+        return self::packEnabled($source, 'ol_results');
+    }
+
+    public static function usesAlResults($source): bool
+    {
+        return self::packEnabled($source, 'al_results');
     }
 
     public static function packConfig($source, string $key): array
