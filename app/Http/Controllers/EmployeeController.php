@@ -17,6 +17,8 @@ use Illuminate\Support\Facades\Mail;
 use App\Mail\EmployeePasswordSendEmail;
 use App\Models\organization_assignment;
 use App\Services\EmployeeReportService;
+use App\Services\CompanyProcessSettings;
+use App\Services\EmployeeQualificationService;
 use App\Services\EmployeeUserLinker;
 use App\Services\FirebaseStorageService;
 use Illuminate\Support\Facades\Storage;
@@ -528,6 +530,8 @@ class EmployeeController extends Controller
             ], 422);
         }
 
+        $this->prepareQualificationsSchema($request, $organization['company'] ?? null);
+
         DB::beginTransaction();
 
         $profilePicturePath = null;
@@ -680,6 +684,8 @@ class EmployeeController extends Controller
 
             $this->storeRemoteDocuments($employee->id, $request);
 
+            $this->syncQualifications($employee, $request, $companyId);
+
             // Create contact details
             $emergency = is_array($address['emergencyContact'] ?? null) ? $address['emergencyContact'] : [];
             contact_detail::create([
@@ -784,6 +790,34 @@ class EmployeeController extends Controller
         }
     }
 
+    // Older frontends never send `qualifications`; leave stored rows untouched for them
+    // and for companies where the add-on is switched off.
+    /** Must run before DB::beginTransaction(): CREATE TABLE implicitly commits in MySQL. */
+    private function prepareQualificationsSchema(Request $request, $companyId): void
+    {
+        if (!$request->has('qualifications') || !is_numeric($companyId)) {
+            return;
+        }
+        if (CompanyProcessSettings::usesQualifications((int) $companyId)) {
+            app(EmployeeQualificationService::class)->ensureSchema();
+        }
+    }
+
+    private function syncQualifications(employee $employee, Request $request, $companyId): void
+    {
+        if (!$request->has('qualifications') || !$companyId) {
+            return;
+        }
+        if (!CompanyProcessSettings::usesQualifications((int) $companyId)) {
+            return;
+        }
+
+        $raw = $request->input('qualifications');
+        $rows = is_string($raw) ? json_decode($raw, true) : $raw;
+
+        app(EmployeeQualificationService::class)->sync($employee, is_array($rows) ? $rows : []);
+    }
+
     // Strict MySQL rejects '' for decimal columns; blank form inputs arrive as ''.
     private function numberOrNull($value)
     {
@@ -816,7 +850,7 @@ class EmployeeController extends Controller
      */
     public function show(string $id)
     {
-        $employee = employee::with([
+        $relations = [
             'employmentType',
             'spouse',
             'children',
@@ -828,7 +862,12 @@ class EmployeeController extends Controller
             'organizationAssignment.subDepartment',
             'organizationAssignment.designation',
             'overtimes',
-        ])->findOrFail($id);
+        ];
+        if (app(EmployeeQualificationService::class)->tableExists()) {
+            $relations[] = 'qualifications';
+        }
+
+        $employee = employee::with($relations)->findOrFail($id);
 
         return response()->json([
             'message' => 'Employee details fetched successfully',
@@ -1209,6 +1248,13 @@ class EmployeeController extends Controller
             ], 422);
         }
 
+        $this->prepareQualificationsSchema(
+            $request,
+            is_numeric($organization['company'] ?? null)
+                ? $organization['company']
+                : $employee->organizationAssignment?->company_id
+        );
+
         DB::beginTransaction();
 
         try {
@@ -1338,6 +1384,14 @@ class EmployeeController extends Controller
             }
 
             $this->storeRemoteDocuments($employee->id, $request);
+
+            $this->syncQualifications(
+                $employee,
+                $request,
+                is_numeric($organization['company'] ?? null)
+                    ? (int) $organization['company']
+                    : $employee->organizationAssignment?->company_id
+            );
 
             // Update contact details
             if ($employee->contactDetail) {

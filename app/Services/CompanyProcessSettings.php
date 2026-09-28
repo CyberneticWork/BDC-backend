@@ -78,6 +78,14 @@ class CompanyProcessSettings
                 'available' => true,
             ],
             [
+                'key' => 'qualifications',
+                'label' => 'Employee qualifications',
+                'group' => 'Employee Master',
+                'summary' => 'Off = no qualifications step. On = Employee Master gets a Qualifications step to record any number of completed qualifications (type, course, institute, completion year) and qualifications the employee is currently following.',
+                'affects' => ['employee_master'],
+                'available' => true,
+            ],
+            [
                 'key' => 'holiday_calendar',
                 'label' => 'Holiday calendar pack',
                 'group' => 'Coming soon',
@@ -331,6 +339,11 @@ class CompanyProcessSettings
     public static function usesRelandExcelImport($source): bool
     {
         return self::packEnabled($source, 'reland_excel_import');
+    }
+
+    public static function usesQualifications($source): bool
+    {
+        return self::packEnabled($source, 'qualifications');
     }
 
     public static function packConfig($source, string $key): array
