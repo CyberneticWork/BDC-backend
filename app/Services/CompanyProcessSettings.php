@@ -78,6 +78,14 @@ class CompanyProcessSettings
                 'available' => true,
             ],
             [
+                'key' => 'hr_company_create',
+                'label' => 'HR can create companies',
+                'group' => 'Organization',
+                'summary' => 'Off = only Cybernetic Admin creates companies. On = HR users of this company with Department Master "add" permission can add companies (code, name, location, established, NoPay days) from Department Master. New companies join the same organization group; branding, portal URL and add-ons stay Cybernetic Admin only.',
+                'affects' => ['department_master'],
+                'available' => true,
+            ],
+            [
                 'key' => 'late_grace_nopay',
                 'label' => 'Variable allowance attendance (late grace NoPay)',
                 'group' => 'Attendance & payroll',
@@ -404,6 +412,11 @@ class CompanyProcessSettings
     public static function usesAlResults($source): bool
     {
         return self::packEnabled($source, 'al_results');
+    }
+
+    public static function usesHrCompanyCreate($source): bool
+    {
+        return self::packEnabled($source, 'hr_company_create');
     }
 
     public static function usesLateGraceNoPay($source): bool

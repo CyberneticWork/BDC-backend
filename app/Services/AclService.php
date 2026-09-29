@@ -44,6 +44,7 @@ class AclService
             'medical_claims' => CompanyProcessSettings::usesMedicalClaims($company),
             'medical_leave' => CompanyProcessSettings::usesMedicalLeave($company),
             'salary_advance' => CompanyProcessSettings::usesSalaryAdvancePack($company),
+            'hr_company_create' => CompanyProcessSettings::usesHrCompanyCreate($company),
         ];
     }
 

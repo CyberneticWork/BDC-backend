@@ -106,6 +106,7 @@ Route::post('/register', [AuthController::class, 'register'])->middleware('throt
 
 // Protected routes
 Route::middleware('auth.token')->group(function () {
+    Route::post('/hr/companies', [\App\Http\Controllers\HrCompanyController::class, 'store']);
     Route::post('/change-password', [AuthController::class, 'changePassword']);
     Route::get('/acl/roles', [\App\Http\Controllers\AclController::class, 'roles']);
     Route::post('/acl/roles', [\App\Http\Controllers\AclController::class, 'storeRole']);
