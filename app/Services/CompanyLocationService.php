@@ -43,6 +43,14 @@ class CompanyLocationService
             && Schema::hasColumn('organization_assignments', 'location_id');
     }
 
+    /** Location is mandatory in Employee Master only for companies that have locations set up. */
+    public function companyHasLocations($companyId): bool
+    {
+        return $this->ready()
+            && is_numeric($companyId)
+            && CompanyLocation::where('company_id', (int) $companyId)->exists();
+    }
+
     /**
      * Resolves the location id sent from Employee Master. Blank clears the location;
      * a location from another company is rejected.

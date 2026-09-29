@@ -5,27 +5,33 @@ namespace App\Services;
 use App\Models\EmployeeFollowingQualification;
 use App\Models\employee;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class EmployeeFollowingQualificationService
 {
+    private const OPTIONAL_COLUMNS = ['qualification_name', 'institute_name', 'start_year', 'start_month', 'lecture_type'];
+
+    private static bool $relaxed = false;
+
     public function ensureSchema(): void
     {
         if (Schema::hasTable('employee_following_qualifications')) {
+            $this->relaxRequiredColumns();
             return;
         }
 
         Schema::create('employee_following_qualifications', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('employee_id')->index();
-            $table->string('qualification_name', 191);
-            $table->string('institute_name', 191);
-            $table->unsignedSmallInteger('start_year');
-            $table->unsignedTinyInteger('start_month');
+            $table->string('qualification_name', 191)->nullable();
+            $table->string('institute_name', 191)->nullable();
+            $table->unsignedSmallInteger('start_year')->nullable();
+            $table->unsignedTinyInteger('start_month')->nullable();
             $table->unsignedSmallInteger('end_year')->nullable();
             $table->unsignedTinyInteger('end_month')->nullable();
-            $table->string('lecture_type', 10);
+            $table->string('lecture_type', 10)->nullable();
             $table->unsignedSmallInteger('sort_order')->default(0);
             $table->timestamps();
         });
@@ -36,9 +42,45 @@ class EmployeeFollowingQualificationService
         return Schema::hasTable('employee_following_qualifications');
     }
 
+    /** Tables created before education fields became optional had NOT NULL columns. */
+    private function relaxRequiredColumns(): void
+    {
+        if (self::$relaxed) {
+            return;
+        }
+        self::$relaxed = true;
+        try {
+            $strict = collect(Schema::getColumns('employee_following_qualifications'))
+                ->filter(fn ($c) => in_array($c['name'], self::OPTIONAL_COLUMNS, true) && !$c['nullable'])
+                ->pluck('name');
+            if ($strict->isEmpty()) {
+                return;
+            }
+            Schema::table('employee_following_qualifications', function (Blueprint $table) use ($strict) {
+                if ($strict->contains('qualification_name')) {
+                    $table->string('qualification_name', 191)->nullable()->change();
+                }
+                if ($strict->contains('institute_name')) {
+                    $table->string('institute_name', 191)->nullable()->change();
+                }
+                if ($strict->contains('start_year')) {
+                    $table->unsignedSmallInteger('start_year')->nullable()->change();
+                }
+                if ($strict->contains('start_month')) {
+                    $table->unsignedTinyInteger('start_month')->nullable()->change();
+                }
+                if ($strict->contains('lecture_type')) {
+                    $table->string('lecture_type', 10)->nullable()->change();
+                }
+            });
+        } catch (\Throwable $e) {
+            Log::warning('Could not make employee_following_qualifications columns nullable: '.$e->getMessage());
+        }
+    }
+
     /**
-     * Replace the employee's following qualifications. Rows with no name and no
-     * institute are treated as empty form lines and skipped.
+     * Replace the employee's following qualifications. Every field is optional; rows with
+     * nothing filled in are skipped.
      *
      * Call ensureSchema() before opening a DB transaction: CREATE TABLE commits implicitly in MySQL.
      */
@@ -52,41 +94,33 @@ class EmployeeFollowingQualificationService
 
             $name = trim((string) ($row['qualificationName'] ?? $row['qualification_name'] ?? ''));
             $institute = trim((string) ($row['instituteName'] ?? $row['institute_name'] ?? ''));
-            if ($name === '' && $institute === '') {
+            $startRaw = trim((string) ($row['startMonth'] ?? ''));
+            $endRaw = trim((string) ($row['endMonth'] ?? ''));
+            $lecture = trim((string) ($row['lectureType'] ?? $row['lecture_type'] ?? ''));
+            if ($name === '' && $institute === '' && $startRaw === '' && $endRaw === '' && $lecture === '') {
                 continue;
             }
 
             $line = $index + 1;
-            if ($name === '') {
-                throw new HttpException(422, "Following qualification line {$line}: name of the qualification is required.");
-            }
-            if ($institute === '') {
-                throw new HttpException(422, "Following qualification line {$line}: institute is required.");
-            }
-
-            $start = $this->month($row['startMonth'] ?? null, "Following qualification line {$line}: starting year and month");
-            if ($start === null) {
-                throw new HttpException(422, "Following qualification line {$line}: starting year and month are required.");
-            }
-            $end = $this->month($row['endMonth'] ?? null, "Following qualification line {$line}: ending year and month");
-            if ($end !== null && ($end[0] * 12 + $end[1]) < ($start[0] * 12 + $start[1])) {
+            $start = $this->month($startRaw, "Following qualification line {$line}: starting year and month");
+            $end = $this->month($endRaw, "Following qualification line {$line}: ending year and month");
+            if ($start !== null && $end !== null && ($end[0] * 12 + $end[1]) < ($start[0] * 12 + $start[1])) {
                 throw new HttpException(422, "Following qualification line {$line}: ending month cannot be before the starting month.");
             }
 
-            $lecture = trim((string) ($row['lectureType'] ?? $row['lecture_type'] ?? ''));
-            if (!in_array($lecture, EmployeeFollowingQualification::LECTURE_TYPES, true)) {
+            if ($lecture !== '' && !in_array($lecture, EmployeeFollowingQualification::LECTURE_TYPES, true)) {
                 throw new HttpException(422, "Following qualification line {$line}: choose Weekday or Weekend lectures.");
             }
 
             $clean[] = [
                 'employee_id' => $employee->id,
-                'qualification_name' => mb_substr($name, 0, 191),
-                'institute_name' => mb_substr($institute, 0, 191),
-                'start_year' => $start[0],
-                'start_month' => $start[1],
+                'qualification_name' => $name !== '' ? mb_substr($name, 0, 191) : null,
+                'institute_name' => $institute !== '' ? mb_substr($institute, 0, 191) : null,
+                'start_year' => $start[0] ?? null,
+                'start_month' => $start[1] ?? null,
                 'end_year' => $end[0] ?? null,
                 'end_month' => $end[1] ?? null,
-                'lecture_type' => $lecture,
+                'lecture_type' => $lecture !== '' ? $lecture : null,
                 'sort_order' => count($clean),
             ];
         }

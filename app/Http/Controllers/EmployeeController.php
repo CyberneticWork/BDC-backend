@@ -407,7 +407,7 @@ class EmployeeController extends Controller
 
             $organizationValidator = Validator::make($organization, [
                 'company' => 'required|integer|exists:companies,id',
-                'department' => 'nullable|integer|exists:departments,id',
+                'department' => 'required|integer|exists:departments,id',
                 'subDepartment' => 'nullable|integer|exists:sub_departments,id',
                 'currentSupervisor' => 'nullable|string|max:100',
                 'dateOfJoined' => 'required|date',
@@ -811,7 +811,12 @@ class EmployeeController extends Controller
             return [];
         }
 
-        return ['location_id' => $locations->resolveForCompany($organization['location'], $companyId)];
+        $locationId = $locations->resolveForCompany($organization['location'], $companyId);
+        if ($locationId === null && $locations->companyHasLocations($companyId)) {
+            throw new HttpException(422, 'Location is required. Choose a location for the selected company.');
+        }
+
+        return ['location_id' => $locationId];
     }
 
     /** Request field => [company add-on key, service with ensureSchema()/sync()]. */
@@ -1197,7 +1202,7 @@ class EmployeeController extends Controller
 
             $organizationValidator = Validator::make($organization, [
                 'company' => 'required|integer|exists:companies,id',
-                'department' => 'nullable|integer|exists:departments,id',
+                'department' => 'required|integer|exists:departments,id',
                 'subDepartment' => 'nullable|integer|exists:sub_departments,id',
                 'currentSupervisor' => 'nullable|string|max:100',
                 'dateOfJoined' => 'required|date',
