@@ -807,13 +807,17 @@ class EmployeeController extends Controller
     private function locationAttributes(array $organization, $companyId): array
     {
         $locations = app(CompanyLocationService::class);
-        if (!array_key_exists('location', $organization) || !$locations->ready()) {
+        if (!array_key_exists('location', $organization)) {
             return [];
         }
 
-        $locationId = $locations->resolveForCompany($organization['location'], $companyId);
-        if ($locationId === null && $locations->companyHasLocations($companyId)) {
-            throw new HttpException(422, 'Location is required. Choose a location for the selected company.');
+        $locationId = $locations->ready()
+            ? $locations->resolveForCompany($organization['location'], $companyId)
+            : null;
+        if ($locationId === null) {
+            throw new HttpException(422, $locations->companyHasLocations($companyId)
+                ? 'Location is required. Choose a location for the selected company.'
+                : 'Location is required. This company has no locations yet — add one in Department Master → Locations, then choose it.');
         }
 
         return ['location_id' => $locationId];
