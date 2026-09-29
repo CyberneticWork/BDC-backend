@@ -79,22 +79,32 @@ class CompanyController extends Controller
         $active = $hasActiveCol
             ? (clone $query)->where('portal_active', true)->orderByDesc('updated_at')->first()
             : null;
+        $host = CompanyHostScope::normalizeHost($host);
         $hostCompany = null;
         if ($host !== '' && !in_array($host, $localHosts, true) && $hasHostCol) {
-            $hostCompany = (clone $query)->whereRaw('LOWER(frontend_host) = ?', [$host])->first();
+            // Stored hosts may include https:// or a trailing slash (e.g. "https://bdchrnew.cyberneticde.site/").
+            $hostCompany = (clone $query)
+                ->whereNotNull('frontend_host')
+                ->orderByDesc('updated_at')
+                ->get()
+                ->first(fn ($row) => CompanyHostScope::normalizeHost((string) $row->frontend_host) === $host);
         }
 
-        $company = null;
-        $activeHost = strtolower(preg_replace('/^www\./', '', trim((string) ($active?->frontend_host ?? ''))));
-        if ($active && (in_array($host, $localHosts, true) || $activeHost === '' || $activeHost === $host)) {
-            $company = $active;
-        } elseif ($hostCompany) {
-            $company = $hostCompany;
-        } elseif ($active) {
-            $company = $active;
-        }
+        $company = $hostCompany ?: $active;
         if (!$company && $slug !== '' && Schema::hasColumn('companies', 'slug')) {
             $company = (clone $query)->whereRaw('LOWER(slug) = ?', [$slug])->first();
+        }
+        if (!$company) {
+            // No active portal and no host match: use the company Cybernetic Admin last branded.
+            $company = (clone $query)
+                ->where(function ($q) {
+                    $q->whereNotNull('logo_url')->where('logo_url', '!=', '');
+                    if (Schema::hasColumn('companies', 'theme_primary')) {
+                        $q->orWhere(fn ($t) => $t->whereNotNull('theme_primary')->where('theme_primary', '!=', ''));
+                    }
+                })
+                ->orderByDesc('updated_at')
+                ->first();
         }
 
         return $company ? $this->brandingPayload($company) : null;
@@ -401,8 +411,9 @@ class CompanyController extends Controller
         $code = $validated['company_code'] ?? $existing?->company_code ?? 'company';
         $slug = $this->themeService->slugFromCode((string) ($validated['slug'] ?? $existing?->slug ?? $code));
         $validated['slug'] = $slug;
-        $validated['frontend_host'] = strtolower(trim((string) ($validated['frontend_host'] ?? $existing?->frontend_host ?? $this->themeService->hostFromSlug($slug))));
-        $validated['frontend_host'] = preg_replace('/^www\./', '', $validated['frontend_host']);
+        $validated['frontend_host'] = CompanyHostScope::normalizeHost(
+            (string) ($validated['frontend_host'] ?? $existing?->frontend_host ?? $this->themeService->hostFromSlug($slug))
+        );
         if (array_key_exists('org_group', $validated) || $existing === null) {
             $group = strtolower(trim((string) ($validated['org_group'] ?? $existing?->org_group ?? '')));
             $group = preg_replace('/[^a-z0-9_-]/', '', $group) ?: '';
@@ -433,14 +444,14 @@ class CompanyController extends Controller
         $hosts = ['local', 'localhost', '127.0.0.1', '::1'];
         if (Schema::hasColumn('companies', 'frontend_host')) {
             foreach (company::query()->pluck('frontend_host') as $h) {
-                $h = strtolower(preg_replace('/^www\./', '', trim((string) $h)));
+                $h = CompanyHostScope::normalizeHost((string) $h);
                 if ($h !== '') {
                     $hosts[] = $h;
                 }
             }
         }
         if ($company?->frontend_host) {
-            $hosts[] = strtolower(preg_replace('/^www\./', '', trim((string) $company->frontend_host)));
+            $hosts[] = CompanyHostScope::normalizeHost((string) $company->frontend_host);
         }
         $slugs = ['-'];
         if (Schema::hasColumn('companies', 'slug')) {
@@ -474,7 +485,9 @@ class CompanyController extends Controller
             'frontend_host' => $company->frontend_host,
             'org_group' => $company->org_group,
             'logo_url' => $this->publicLogoUrl($company),
-            'hr_url' => $company->frontend_host ? ('https://' . $company->frontend_host) : null,
+            'hr_url' => CompanyHostScope::normalizeHost((string) $company->frontend_host) !== ''
+                ? 'https://'.CompanyHostScope::normalizeHost((string) $company->frontend_host)
+                : null,
             'theme' => [
                 'primary' => $company->theme_primary ?: ($theme['primary'] ?? '#0B4F5C'),
                 'secondary' => $company->theme_secondary ?: ($theme['secondary'] ?? '#0D9488'),
