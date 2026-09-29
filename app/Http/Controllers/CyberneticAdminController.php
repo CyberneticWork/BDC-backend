@@ -51,6 +51,13 @@ class CyberneticAdminController extends Controller
         ]);
     }
 
+    public function logout(Request $request)
+    {
+        $this->auth->revokeRequestToken($request);
+
+        return response()->noContent();
+    }
+
     public function me()
     {
         return response()->json([

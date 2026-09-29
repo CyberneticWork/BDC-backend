@@ -82,8 +82,14 @@ Route::get('/cybernetic-admin/me', [CyberneticAdminController::class, 'me'])
     ->middleware('cybernetic');
 Route::get('/cybernetic-admin/process-catalog', [CyberneticAdminController::class, 'processCatalog'])
     ->middleware('cybernetic');
-Route::middleware('auth.token')->get('/logout', function (Request $request) {
-    app(\App\Services\JwtTokenService::class)->revokeBearer($request->bearerToken());
+Route::post('/cybernetic-admin/logout', [CyberneticAdminController::class, 'logout'])
+    ->middleware('cybernetic');
+Route::middleware('auth.token')->match(['get', 'post'], '/logout', function (Request $request) {
+    try {
+        app(\App\Services\JwtTokenService::class)->revokeBearer($request->bearerToken());
+    } catch (\Throwable $e) {
+        \Illuminate\Support\Facades\Log::warning('JWT revoke failed on logout.');
+    }
     try {
         $request->user()?->currentAccessToken()?->delete();
     } catch (\Throwable $e) {

@@ -41,6 +41,9 @@ class AuthenticateJwtOrSanctum
             $user = $this->jwt->userFromBearer($bearer);
         } else {
             $accessToken = PersonalAccessToken::findToken($bearer);
+            if ($accessToken && $this->sanctumTokenExpired($accessToken)) {
+                return;
+            }
             $tokenable = $accessToken?->tokenable;
             $user = $tokenable instanceof User ? $tokenable : null;
         }
@@ -51,5 +54,15 @@ class AuthenticateJwtOrSanctum
 
         Auth::setUser($user);
         $request->setUserResolver(static fn () => $user);
+    }
+
+    private function sanctumTokenExpired(PersonalAccessToken $token): bool
+    {
+        if ($token->expires_at && $token->expires_at->isPast()) {
+            return true;
+        }
+        $minutes = (int) config('sanctum.expiration');
+
+        return $minutes > 0 && $token->created_at && $token->created_at->lte(now()->subMinutes($minutes));
     }
 }

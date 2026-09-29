@@ -3,15 +3,12 @@
 namespace App\Services;
 
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\RateLimiter;
 
 class CyberneticAdminAuth
 {
-    /** Temporary live bootstrap. Stops matching after EMERGENCY_UNTIL; delete these two constants on the next deploy. */
-    private const EMERGENCY_PASSWORD = 'Cybernetic@Admin2026';
-    private const EMERGENCY_UNTIL = '2026-09-15 01:29:00';
-
     public function passwordConfigured(): bool
     {
         foreach ($this->passwordCandidates() as $expected) {
@@ -20,7 +17,7 @@ class CyberneticAdminAuth
             }
         }
 
-        return $this->emergencyActive();
+        return false;
     }
 
     public function passwordMatches(string $plain): bool
@@ -46,7 +43,7 @@ class CyberneticAdminAuth
             }
         }
 
-        return $this->emergencyActive() && hash_equals(self::EMERGENCY_PASSWORD, $plain);
+        return false;
     }
 
     /** @return list<string> */
@@ -113,17 +110,6 @@ class CyberneticAdminAuth
         return str_replace(["\r", "\n"], '', trim($value));
     }
 
-    private function emergencyActive(): bool
-    {
-        try {
-            $until = new \DateTimeImmutable(self::EMERGENCY_UNTIL, new \DateTimeZone('Asia/Colombo'));
-
-            return time() < $until->getTimestamp();
-        } catch (\Throwable) {
-            return false;
-        }
-    }
-
     public function loginAllowed(string $ip): bool
     {
         return !RateLimiter::tooManyAttempts($this->loginKey($ip), max(3, (int) config('cybernetic.login_max_attempts', 6)));
@@ -167,7 +153,8 @@ class CyberneticAdminAuth
 
             return is_array($payload)
                 && ($payload['sub'] ?? '') === 'cybernetic_admin'
-                && ($payload['role'] ?? '') === 'cybernetic_admin';
+                && ($payload['role'] ?? '') === 'cybernetic_admin'
+                && !$this->revoked((string) ($payload['jti'] ?? ''));
         }
 
         if (substr_count($token, '.') !== 2) {
@@ -195,6 +182,45 @@ class CyberneticAdminAuth
         $bearer = $request->bearerToken();
 
         return $this->tokenValid(is_string($bearer) ? $bearer : null);
+    }
+
+    public function revokeRequestToken(Request $request): void
+    {
+        foreach ([trim((string) $request->header('X-Cybernetic-Token', '')), (string) $request->bearerToken()] as $token) {
+            if (!HrJwtToken::isJwt($token)) {
+                continue;
+            }
+            $payload = HrJwtToken::decode($token);
+            if (!is_array($payload) || ($payload['sub'] ?? '') !== 'cybernetic_admin') {
+                continue;
+            }
+            $jti = (string) ($payload['jti'] ?? '');
+            if ($jti === '') {
+                continue;
+            }
+            try {
+                Cache::put($this->denyKey($jti), 1, max(1, (int) ($payload['exp'] ?? 0) - time()));
+            } catch (\Throwable $e) {
+                // Cache outage: token still expires at its exp time.
+            }
+        }
+    }
+
+    private function revoked(string $jti): bool
+    {
+        if ($jti === '') {
+            return false;
+        }
+        try {
+            return (bool) Cache::get($this->denyKey($jti));
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
+    private function denyKey(string $jti): string
+    {
+        return 'cybernetic:deny:'.$jti;
     }
 
     private function loginKey(string $ip): string
