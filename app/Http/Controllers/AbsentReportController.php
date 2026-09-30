@@ -96,7 +96,8 @@ class AbsentReportController extends Controller
 
     private function getDailyRows(string $date, string $session, ?string $search, $companyId, $departmentId, $employeeCategory = null) 
     {
-        $statuses = ['IN', 'OUT', 'Early OUT'];
+        // Late fingerprint INs are stored as "Late Coming" — they are present, not absent.
+        $statuses = ['IN', 'Late Coming', 'OUT', 'Early OUT'];
 
         $rosteredQuery = roster::query()
             ->whereNotNull('employee_id')

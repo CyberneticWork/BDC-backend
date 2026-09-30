@@ -9,7 +9,7 @@ class SingleEntryReportController extends Controller
 {
     /**
      * GET /reports/time-cards/single-entry?date=YYYY-MM-DD&search=&page=&per_page=
-     * Returns time_card rows where an employee has exactly one IN/OUT/Early OUT entry for the given date.
+     * Returns time_card rows where an employee has exactly one IN/Late Coming/OUT/Early OUT entry for the given date.
      */
     public function index(Request $request)
     {
@@ -23,7 +23,7 @@ class SingleEntryReportController extends Controller
         $perPage = (int)($validated['per_page'] ?? 15);
         $search = $validated['search'] ?? null;
 
-        $statuses = ['IN', 'OUT', 'Early OUT'];
+        $statuses = ['IN', 'Late Coming', 'OUT', 'Early OUT'];
 
         // Find employee_ids that have exactly one relevant entry on that date
         $singleEmployeeIds = time_card::select('employee_id')
