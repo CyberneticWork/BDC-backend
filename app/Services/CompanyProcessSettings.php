@@ -86,6 +86,14 @@ class CompanyProcessSettings
                 'available' => true,
             ],
             [
+                'key' => 'contract_as_permanent',
+                'label' => 'Contract employees follow the permanent process',
+                'group' => 'Attendance & payroll',
+                'summary' => 'Off = contract employees are kept out of the normal process and appear only in Contract Time Attendance. On = contract employees of this company appear everywhere permanent employees do: employee lists, time cards, attendance and absent reports, overtime, leave, dashboard counts and salary processing.',
+                'affects' => ['employees', 'attendance', 'time_card', 'leave', 'overtime', 'salary'],
+                'available' => true,
+            ],
+            [
                 'key' => 'late_grace_nopay',
                 'label' => 'Variable allowance attendance (late grace NoPay)',
                 'group' => 'Attendance & payroll',
@@ -422,6 +430,11 @@ class CompanyProcessSettings
     public static function usesLateGraceNoPay($source): bool
     {
         return self::packEnabled($source, 'late_grace_nopay');
+    }
+
+    public static function usesContractAsPermanent($source): bool
+    {
+        return self::packEnabled($source, 'contract_as_permanent');
     }
 
     public static function packConfig($source, string $key): array
