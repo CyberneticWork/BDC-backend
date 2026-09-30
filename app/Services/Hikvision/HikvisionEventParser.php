@@ -91,7 +91,7 @@ class HikvisionEventParser
 
         $raw = $request->getContent();
         if ($raw) {
-            $decoded = json_decode($raw, true);
+            $decoded = empty($jsonBody) ? json_decode($raw, true) : null;
             if (is_array($decoded)) {
                 $events = array_merge($events, $this->extractEventsFromArray($decoded));
             }
