@@ -117,6 +117,13 @@ const POLL_SECONDS = Math.max(15, Number(process.env.POLL_SECONDS || 60));
 const LOOKBACK_MINUTES = Math.max(5, Number(process.env.LOOKBACK_MINUTES || 180));
 const STATE_FILE = path.join(__dirname, '.bridge-state.json');
 const once = process.argv.includes('--once');
+// Re-read the last N days day-by-day so punches missed while the PC/device/network was down still arrive.
+const CATCHUP_DAYS = Math.max(0, Number(process.env.CATCHUP_DAYS ?? 7));
+const CATCHUP_EVERY_HOURS = Math.max(1, Number(process.env.CATCHUP_EVERY_HOURS || 6));
+// node bridge.js --backfill=2026-09-16  or  --backfill=2026-09-16:2026-09-18
+const backfillArg = (process.argv.find((a) => a.startsWith('--backfill=')) || '').slice('--backfill='.length);
+const LOCK_FILE = path.join(__dirname, '.bridge.lock');
+const EXIT_ALREADY_RUNNING = 3;
 
 const HR_APIS = {
   'spmhr.cyberneticde.site': 'https://apispmhr.cyberneticde.site',
@@ -477,7 +484,7 @@ function deviceBase() {
   return String(process.env.HIKVISION_DEVICE_BASE || `http://${DEVICE_IP}:${DEVICE_PORT}`).replace(/\/$/, '');
 }
 
-async function fetchDeviceEvents(from, to) {
+async function fetchDeviceEvents(from, to, maxPages = 20) {
   const url = `${deviceBase()}/ISAPI/AccessControl/AcsEvent?format=json`;
   const queries = [
     { major: 5, minor: 38 },
@@ -490,7 +497,7 @@ async function fetchDeviceEvents(from, to) {
   const bySerial = new Map();
   for (const q of queries) {
     let position = 0;
-    for (let page = 0; page < 20; page += 1) {
+    for (let page = 0; page < maxPages; page += 1) {
       const searchBody = JSON.stringify({
         AcsEventCond: {
           searchID: `${Date.now()}-${q.major}-${q.minor}-${page}`,
@@ -593,7 +600,7 @@ function explainUnreachable(err) {
   console.error(`[bridge] On that office PC, open http://${DEVICE_IP}:${DEVICE_PORT} in a browser.`);
 }
 
-async function tick() {
+function assertConfigured() {
   if (!DEVICE_IP || !DEVICE_PASSWORD || !CLOUD_PUNCHES_URL) {
     const missing = [
       !DEVICE_IP && 'DEVICE_IP',
@@ -602,13 +609,46 @@ async function tick() {
     ].filter(Boolean);
     throw new Error(`Missing ${missing.join(', ')} in ${envPath || path.join(__dirname, '.env')}`);
   }
+}
 
+async function deviceReady() {
   const probe = await tcpReachable(DEVICE_IP, DEVICE_PORT, 5000);
   if (!probe.ok) {
     explainUnreachable(probe.err);
-    return;
+    return false;
+  }
+  return probeDeviceLogin();
+}
+
+/** Posts events not in postedKeys (all events when force) in chunks; the HR server also skips duplicates. */
+async function postEvents(rawEvents, postedKeys, force = false) {
+  const punches = [];
+  for (const ev of rawEvents) {
+    const mapped = mapEvent(ev);
+    if (!mapped) continue;
+    const key = `${mapped.serialNo ?? 'x'}|${mapped.date} ${mapped.time}|${mapped.employeeNo}`;
+    if (!force && postedKeys.has(key)) continue;
+    punches.push({ ...mapped, _key: key });
   }
 
+  const summary = { raw: rawEvents.length, sent: punches.length, imported: 0, skipped: 0, errors: [], sample: '' };
+  summary.sample = punches
+    .slice(0, 3)
+    .map((p) => `${p.employeeNo} ${p.date} ${p.time}`)
+    .join(' | ');
+  for (let i = 0; i < punches.length; i += 200) {
+    const chunk = punches.slice(i, i + 200);
+    const result = await postToCloud(chunk.map(({ _key, ...p }) => p));
+    for (const p of chunk) postedKeys.add(p._key);
+    summary.imported += Number(result?.imported || 0);
+    summary.skipped += Number(result?.skipped || 0);
+    summary.errors.push(...(Array.isArray(result?.errors) ? result.errors : []));
+  }
+  return summary;
+}
+
+async function tick() {
+  assertConfigured();
   const state = loadState();
   const postedKeys = new Set(state.postedKeys || []);
   const to = new Date(Date.now() + 15 * 60 * 1000);
@@ -617,37 +657,82 @@ async function tick() {
     : new Date(Date.now() - LOOKBACK_MINUTES * 60 * 1000);
 
   console.log(`[bridge] Polling device ${DEVICE_IP}:${DEVICE_PORT} (Digest) from ${from.toISOString()} …`);
-  const loggedIn = await probeDeviceLogin();
-  if (!loggedIn) return;
+  if (!(await deviceReady())) return;
 
   const rawEvents = await fetchDeviceEvents(from, to);
-  const punches = [];
-  for (const ev of rawEvents) {
-    const mapped = mapEvent(ev);
-    if (!mapped) continue;
-    const key = `${mapped.serialNo ?? 'x'}|${mapped.date} ${mapped.time}|${mapped.employeeNo}`;
-    if (postedKeys.has(key)) continue;
-    punches.push({ ...mapped, _key: key });
-  }
-
-  if (!punches.length) {
-    console.log(`[bridge] No new punches (raw events: ${rawEvents.length})`);
-    saveState({ lastSyncAt: new Date().toISOString(), postedKeys: Array.from(postedKeys).slice(-5000) });
+  const r = await postEvents(rawEvents, postedKeys);
+  saveState({ lastSyncAt: new Date().toISOString(), postedKeys: Array.from(postedKeys).slice(-5000) });
+  if (!r.sent) {
+    console.log(`[bridge] No new punches (raw events: ${r.raw})`);
     return;
   }
+  console.log(`[bridge] Posted ${r.sent} punch(es) to ${CLOUD_PUNCHES_URL}. Sample: ${r.sample}`);
+  console.log(`[bridge] Cloud result: imported ${r.imported}, skipped ${r.skipped}${r.errors.length ? `, errors: ${r.errors.slice(0, 3).join('; ')}` : ''}`);
+}
 
-  console.log(`[bridge] Posting ${punches.length} punch(es) to ${CLOUD_PUNCHES_URL}`);
-  console.log(
-    '[bridge] Sample:',
-    punches
-      .slice(0, 3)
-      .map((p) => `${p.employeeNo} ${p.date} ${p.time}`)
-      .join(' | '),
-  );
-  const result = await postToCloud(punches.map(({ _key, ...p }) => p));
-  for (const p of punches) postedKeys.add(p._key);
-  saveState({ lastSyncAt: new Date().toISOString(), postedKeys: Array.from(postedKeys).slice(-5000) });
-  console.log('[bridge] Cloud result:', JSON.stringify(result));
+function ymd(d) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** Day-by-day sync of [fromDay, toDay] (local dates). force = resend even if already posted. */
+async function syncDays(fromDay, toDay, label, force) {
+  assertConfigured();
+  if (!(await deviceReady())) return false;
+
+  const postedKeys = new Set(loadState().postedKeys || []);
+  const totals = { raw: 0, sent: 0, imported: 0, skipped: 0 };
+  const errors = new Set();
+  let day = new Date(fromDay.getFullYear(), fromDay.getMonth(), fromDay.getDate());
+  const last = new Date(toDay.getFullYear(), toDay.getMonth(), toDay.getDate());
+  while (day <= last) {
+    const next = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1);
+    const r = await postEvents(await fetchDeviceEvents(day, next, 200), postedKeys, force);
+    if (r.raw || force) {
+      console.log(`[bridge] ${label} ${ymd(day)}: device punches ${r.raw}, sent ${r.sent}, imported ${r.imported}, already in HR/skipped ${r.skipped}`);
+    }
+    r.errors.forEach((e) => errors.add(e));
+    for (const k of Object.keys(totals)) totals[k] += r[k];
+    if (!force) {
+      saveState({ lastSyncAt: loadState().lastSyncAt, postedKeys: Array.from(postedKeys).slice(-5000) });
+    }
+    day = next;
+  }
+  console.log(`[bridge] ${label} ${ymd(fromDay)} → ${ymd(toDay)} done: device punches ${totals.raw}, sent ${totals.sent}, imported ${totals.imported}, already in HR/skipped ${totals.skipped}`);
+  if (errors.size) {
+    console.log(`[bridge] ${label} server messages: ${Array.from(errors).slice(0, 10).join('; ')}`);
+  }
+  return true;
+}
+
+function parseDay(s) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s).trim());
+  if (!m) throw new Error(`Bad date "${s}" — use YYYY-MM-DD`);
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+}
+
+/** One long-running bridge per folder; a second copy exits so they don't fight over the state file. */
+function acquireLock() {
+  try {
+    const pid = Number(fs.readFileSync(LOCK_FILE, 'utf8'));
+    if (pid && pid !== process.pid) {
+      process.kill(pid, 0);
+      return pid;
+    }
+  } catch {
+    // no lock, unreadable, or that process is gone
+  }
+  fs.writeFileSync(LOCK_FILE, String(process.pid));
+  const release = () => {
+    try {
+      if (Number(fs.readFileSync(LOCK_FILE, 'utf8')) === process.pid) fs.unlinkSync(LOCK_FILE);
+    } catch {
+      // already gone
+    }
+  };
+  process.on('exit', release);
+  ['SIGINT', 'SIGTERM', 'SIGBREAK'].forEach((sig) => process.on(sig, () => process.exit(0)));
+  return null;
 }
 
 async function main() {
@@ -663,10 +748,44 @@ async function main() {
     console.log(`[bridge] CLOUD_BASE_URL=${CLOUD_BASE_URL} (refreshes live host from Admin)`);
   }
 
-  const run = () => tick().catch((e) => console.error('[bridge] ERROR:', e.message || e));
+  if (backfillArg) {
+    const [a, b] = backfillArg.split(':');
+    const fromDay = parseDay(a);
+    const toDay = b ? parseDay(b) : fromDay;
+    console.log(`[bridge] Backfill ${ymd(fromDay)} → ${ymd(toDay)} (sends every device punch; HR skips ones it already has)`);
+    const ok = await syncDays(fromDay, toDay, 'Backfill', true);
+    process.exit(ok ? 0 : 1);
+  }
+
+  if (!once) {
+    const other = acquireLock();
+    if (other) {
+      console.error(`[bridge] Another bridge is already running from this folder (pid ${other}). Exiting.`);
+      process.exit(EXIT_ALREADY_RUNNING);
+    }
+  }
+
+  let queue = Promise.resolve();
+  const serial = (fn) => {
+    queue = queue.then(fn, fn);
+    return queue;
+  };
+  const run = () => serial(() => tick().catch((e) => console.error('[bridge] ERROR:', e.message || e)));
+  const catchUp = () =>
+    serial(() =>
+      syncDays(new Date(Date.now() - CATCHUP_DAYS * 86400000), new Date(), 'Catch-up', false).catch((e) =>
+        console.error('[bridge] Catch-up ERROR:', e.message || e),
+      ),
+    );
+
   await run();
   if (once) return;
   setInterval(run, POLL_SECONDS * 1000);
+  if (CATCHUP_DAYS > 0) {
+    console.log(`[bridge] Catch-up: re-checking the last ${CATCHUP_DAYS} day(s) now and every ${CATCHUP_EVERY_HOURS}h`);
+    catchUp();
+    setInterval(catchUp, CATCHUP_EVERY_HOURS * 3600000);
+  }
 }
 
 main().catch((e) => {

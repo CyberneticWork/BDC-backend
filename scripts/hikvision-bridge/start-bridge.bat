@@ -7,6 +7,10 @@ if not defined NODE set "NODE=node"
 echo ===== %DATE% %TIME% starting Hikvision bridge =====>> "%~dp0bridge.log"
 :run
 "%NODE%" "%~dp0bridge.js" >> "%~dp0bridge.log" 2>&1
+if "%ERRORLEVEL%"=="3" (
+  echo ===== %DATE% %TIME% another bridge is already running, this copy stopped =====>> "%~dp0bridge.log"
+  exit /b 0
+)
 echo ===== %DATE% %TIME% bridge stopped, restarting in 20s =====>> "%~dp0bridge.log"
 timeout /t 20 /nobreak >nul
 goto run

@@ -149,11 +149,12 @@ class HikvisionAttendanceService
             } else {
                 $skipped++;
                 if ($outcome['status'] === 'error' && !empty($outcome['message'])) {
-                    $errors[] = $outcome['message'];
+                    $errors[] = $outcome['message'].' (device ID '.($parsed['employee_no'] ?? '?').')';
                 }
             }
         }
 
+        $errors = array_values(array_unique($errors));
         $device->update([
             'last_event_at' => $imported > 0 ? now() : $device->last_event_at,
             'last_error' => empty($errors) ? null : implode('; ', array_slice($errors, 0, 3)),
@@ -162,7 +163,7 @@ class HikvisionAttendanceService
         return [
             'imported' => $imported,
             'skipped' => $skipped,
-            'errors' => array_slice($errors, 0, 10),
+            'errors' => array_slice($errors, 0, 50),
         ];
     }
 
@@ -172,11 +173,13 @@ class HikvisionAttendanceService
             ? $parsed['event_at']
             : Carbon::parse($parsed['event_at']);
 
-        // Serial numbers recycle — unique by device + serial + event time
+        // Serial numbers recycle — unique by device + serial + event time.
+        // Rejected punches (e.g. employee not in HR yet) are retried when the bridge sends them again.
         if (!empty($parsed['serial_no'])) {
             $dup = HikvisionEventLog::where('device_id', $device->id)
                 ->where('serial_no', $parsed['serial_no'])
                 ->where('event_time', $eventAt)
+                ->where('status', '!=', 'error')
                 ->exists();
 
             if ($dup) {
