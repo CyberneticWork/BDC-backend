@@ -224,6 +224,14 @@ class TimeCardController extends Controller
 
         $employee = employee::where('attendance_employee_no', $rawEmpNo)->first();
 
+        // Devices pad IDs ("0006") while HR may store "6" (or the other way round).
+        if (!$employee && ctype_digit($rawEmpNo)) {
+            $unpadded = ltrim($rawEmpNo, '0');
+            if ($unpadded !== '') {
+                $employee = employee::whereRaw("TRIM(LEADING '0' FROM TRIM(attendance_employee_no)) = ?", [$unpadded])->first();
+            }
+        }
+
         if (!$employee && ctype_digit($rawEmpNo)) {
             $employee = employee::find((int) $rawEmpNo);
         }

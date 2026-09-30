@@ -122,6 +122,7 @@ const CATCHUP_DAYS = Math.max(0, Number(process.env.CATCHUP_DAYS ?? 7));
 const CATCHUP_EVERY_HOURS = Math.max(1, Number(process.env.CATCHUP_EVERY_HOURS || 6));
 // node bridge.js --backfill=2026-09-16  or  --backfill=2026-09-16:2026-09-18
 const backfillArg = (process.argv.find((a) => a.startsWith('--backfill=')) || '').slice('--backfill='.length);
+const reportArg = (process.argv.find((a) => a.startsWith('--report=')) || '').slice('--report='.length);
 const LOCK_FILE = path.join(__dirname, '.bridge.lock');
 const EXIT_ALREADY_RUNNING = 3;
 
@@ -705,6 +706,37 @@ async function syncDays(fromDay, toDay, label, force) {
   return true;
 }
 
+/** Lists every device user ID that punched in [fromDay, toDay] with name, punch count and days (nothing is sent to HR). */
+async function reportUsers(fromDay, toDay) {
+  assertConfigured();
+  if (!(await deviceReady())) return false;
+
+  const users = new Map();
+  let day = new Date(fromDay.getFullYear(), fromDay.getMonth(), fromDay.getDate());
+  const last = new Date(toDay.getFullYear(), toDay.getMonth(), toDay.getDate());
+  while (day <= last) {
+    const next = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1);
+    for (const ev of await fetchDeviceEvents(day, next, 200)) {
+      const mapped = mapEvent(ev);
+      if (!mapped) continue;
+      const u = users.get(mapped.employeeNo) || { name: '', punches: 0, days: new Set() };
+      u.name = u.name || String(ev.name || '').trim();
+      u.punches += 1;
+      u.days.add(mapped.date);
+      users.set(mapped.employeeNo, u);
+    }
+    day = next;
+  }
+
+  const rows = Array.from(users.entries()).sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }));
+  console.log(`[bridge] Device users who punched ${ymd(fromDay)} → ${ymd(toDay)}: ${rows.length}`);
+  console.log('DEVICE_ID\tNAME\tPUNCHES\tDAYS');
+  for (const [id, u] of rows) {
+    console.log(`${id}\t${u.name || '-'}\t${u.punches}\t${u.days.size}`);
+  }
+  return true;
+}
+
 function parseDay(s) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s).trim());
   if (!m) throw new Error(`Bad date "${s}" — use YYYY-MM-DD`);
@@ -754,6 +786,13 @@ async function main() {
     const toDay = b ? parseDay(b) : fromDay;
     console.log(`[bridge] Backfill ${ymd(fromDay)} → ${ymd(toDay)} (sends every device punch; HR skips ones it already has)`);
     const ok = await syncDays(fromDay, toDay, 'Backfill', true);
+    process.exit(ok ? 0 : 1);
+  }
+
+  if (reportArg) {
+    const [a, b] = reportArg.split(':');
+    const fromDay = parseDay(a);
+    const ok = await reportUsers(fromDay, b ? parseDay(b) : fromDay);
     process.exit(ok ? 0 : 1);
   }
 
