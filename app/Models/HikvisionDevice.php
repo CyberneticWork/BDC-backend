@@ -26,6 +26,7 @@ class HikvisionDevice extends Model
         'last_serial_no',
         'last_sync_at',
         'last_event_at',
+        'agent_last_seen_at',
         'last_error',
     ];
 
@@ -36,6 +37,7 @@ class HikvisionDevice extends Model
         'last_serial_no' => 'integer',
         'last_sync_at' => 'datetime',
         'last_event_at' => 'datetime',
+        'agent_last_seen_at' => 'datetime',
     ];
 
     protected $hidden = [
@@ -59,6 +61,17 @@ class HikvisionDevice extends Model
     public function eventLogs(): HasMany
     {
         return $this->hasMany(HikvisionEventLog::class, 'device_id');
+    }
+
+    public function syncRequests(): HasMany
+    {
+        return $this->hasMany(HikvisionSyncRequest::class, 'device_id');
+    }
+
+    /** The office bridge checks for queued syncs every poll (default 60s). */
+    public function agentOnline(): bool
+    {
+        return $this->agent_last_seen_at !== null && $this->agent_last_seen_at->gt(now()->subMinutes(5));
     }
 
     public function setPasswordAttribute(?string $password): void

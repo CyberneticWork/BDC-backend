@@ -4,13 +4,18 @@ namespace App\Http\Controllers;
 
 use App\Models\HikvisionDevice;
 use App\Models\HikvisionEventLog;
+use App\Models\HikvisionSyncRequest;
 use App\Services\Hikvision\HikvisionAttendanceService;
 use App\Services\Hikvision\HikvisionExcelImportService;
 use App\Services\Hikvision\HikvisionIsapiClient;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 
 class HikvisionController extends Controller
 {
+    private const MAX_BRIDGE_SYNC_DAYS = 62;
+
     public function __construct(
         private HikvisionIsapiClient $isapiClient,
         private HikvisionAttendanceService $attendanceService,
@@ -119,6 +124,10 @@ class HikvisionController extends Controller
             'lookback_minutes' => 'nullable|integer|min:30|max:43200',
         ]);
 
+        if ($this->isapiClient->shouldUseCloudBridge($device)) {
+            return $this->queueBridgeSync($device, $validated, $request);
+        }
+
         $from = isset($validated['from_date'])
             ? \Carbon\Carbon::parse($validated['from_date'])->startOfDay()
             : now()->subMinutes((int) ($validated['lookback_minutes'] ?? (60 * 24 * 7)));
@@ -132,6 +141,138 @@ class HikvisionController extends Controller
             'message' => $result['message'] ?? 'Sync completed',
             'data' => $result,
         ]);
+    }
+
+    /** Cloud HR cannot reach the device, so the office bridge picks this range up on its next poll. */
+    private function queueBridgeSync(HikvisionDevice $device, array $validated, Request $request)
+    {
+        if (!Schema::hasTable('hikvision_sync_requests')) {
+            return response()->json(['message' => 'Server update pending: run "php artisan migrate" on the HR API, then try again.'], 503);
+        }
+
+        $to = isset($validated['to_date']) ? Carbon::parse($validated['to_date'])->startOfDay() : today();
+        $from = isset($validated['from_date']) ? Carbon::parse($validated['from_date'])->startOfDay() : $to->copy()->subDays(6);
+        if ($to->gt(today())) {
+            $to = today();
+        }
+        if ($from->gt($to)) {
+            return response()->json(['message' => 'From date must be on or before To date.'], 422);
+        }
+        if ($from->diffInDays($to) > self::MAX_BRIDGE_SYNC_DAYS) {
+            return response()->json(['message' => 'Pick at most '.self::MAX_BRIDGE_SYNC_DAYS.' days per sync.'], 422);
+        }
+
+        $syncRequest = HikvisionSyncRequest::where('device_id', $device->id)
+            ->whereIn('status', ['pending', 'running'])
+            ->whereDate('from_date', $from)
+            ->whereDate('to_date', $to)
+            ->first()
+            ?? HikvisionSyncRequest::create([
+                'device_id' => $device->id,
+                'from_date' => $from->toDateString(),
+                'to_date' => $to->toDateString(),
+                'status' => 'pending',
+                'requested_by' => optional($request->user())->id,
+            ]);
+
+        $range = $from->toDateString() === $to->toDateString()
+            ? $from->toDateString()
+            : $from->toDateString().' to '.$to->toDateString();
+
+        return response()->json([
+            'message' => $device->agentOnline()
+                ? "Sync for {$range} sent to the office PC. It starts within about a minute."
+                : "Sync for {$range} is queued, but the office PC has not checked in recently. Make sure the fingerprint bridge PC is on — it will run as soon as it connects.",
+            'data' => [
+                'queued' => true,
+                'mode' => 'cloud-bridge',
+                'request' => $syncRequest,
+                'agent_online' => $device->agentOnline(),
+                'agent_last_seen_at' => $device->agent_last_seen_at,
+            ],
+        ], 202);
+    }
+
+    public function syncRequests(int $id)
+    {
+        $device = HikvisionDevice::findOrFail($id);
+        $requests = Schema::hasTable('hikvision_sync_requests')
+            ? $device->syncRequests()->latest('id')->limit(10)->get()
+            : collect();
+
+        return response()->json([
+            'data' => $requests,
+            'agent_online' => $device->agentOnline(),
+            'agent_last_seen_at' => $device->agent_last_seen_at,
+        ]);
+    }
+
+    /** Office bridge: heartbeat + queued date ranges to re-read from the device. */
+    public function agentSyncRequests(Request $request, string $token)
+    {
+        $device = HikvisionDevice::where('webhook_token', $token)->first();
+        if (!$device) {
+            return response()->json(['message' => 'Unknown device'], 404);
+        }
+        if (!$this->hikvisionSecretOk($request)) {
+            return response()->json(['message' => 'Unauthorized'], 401);
+        }
+        if (!Schema::hasTable('hikvision_sync_requests')) {
+            return response()->json(['data' => []]);
+        }
+
+        $device->forceFill(['agent_last_seen_at' => now()])->save();
+
+        HikvisionSyncRequest::where('device_id', $device->id)
+            ->where('status', 'running')
+            ->where('started_at', '<', now()->subHour())
+            ->update([
+                'status' => 'failed',
+                'message' => 'The office PC stopped before this sync finished. Click Sync Now again.',
+                'finished_at' => now(),
+            ]);
+
+        $pending = HikvisionSyncRequest::where('device_id', $device->id)
+            ->where('status', 'pending')
+            ->orderBy('id')
+            ->limit(3)
+            ->get(['id', 'from_date', 'to_date']);
+
+        return response()->json(['data' => $pending]);
+    }
+
+    public function agentSyncRequestUpdate(Request $request, string $token, int $requestId)
+    {
+        $device = HikvisionDevice::where('webhook_token', $token)->first();
+        if (!$device) {
+            return response()->json(['message' => 'Unknown device'], 404);
+        }
+        if (!$this->hikvisionSecretOk($request)) {
+            return response()->json(['message' => 'Unauthorized'], 401);
+        }
+
+        $validated = $request->validate([
+            'status' => 'required|in:running,done,failed',
+            'device_punches' => 'nullable|integer|min:0',
+            'imported' => 'nullable|integer|min:0',
+            'skipped' => 'nullable|integer|min:0',
+            'message' => 'nullable|string|max:2000',
+            'errors' => 'nullable|array|max:50',
+            'errors.*' => 'string|max:500',
+        ]);
+
+        $syncRequest = HikvisionSyncRequest::where('device_id', $device->id)->findOrFail($requestId);
+        $syncRequest->fill($validated);
+        if ($validated['status'] === 'running') {
+            $syncRequest->started_at = now();
+        } else {
+            $syncRequest->finished_at = now();
+        }
+        $syncRequest->save();
+
+        $device->forceFill(['agent_last_seen_at' => now()])->save();
+
+        return response()->json(['message' => 'OK']);
     }
 
     public function configureWebhook(int $id)
@@ -352,6 +493,8 @@ class HikvisionController extends Controller
                 : 'HR looks cloud/remote. Keep hikvision-bridge running on an office PC so fingerprints reach Punches URL.',
             'last_sync_at' => $device->last_sync_at,
             'last_event_at' => $device->last_event_at,
+            'agent_last_seen_at' => $device->agent_last_seen_at,
+            'agent_online' => $device->agentOnline(),
             'last_error' => $device->last_error,
         ];
     }

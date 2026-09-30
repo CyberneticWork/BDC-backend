@@ -310,6 +310,8 @@ Route::get('/attendance-template', [TimeCardController::class, 'downloadTemplate
 Route::post('/hikvision/webhook/{token}', [HikvisionController::class, 'webhook']);
 Route::post('/hikvision/punches/{token}', [HikvisionController::class, 'punches']);
 Route::get('/hikvision/punches/{token}', [HikvisionController::class, 'punchesPing']);
+Route::get('/hikvision/punches/{token}/sync-requests', [HikvisionController::class, 'agentSyncRequests']);
+Route::post('/hikvision/punches/{token}/sync-requests/{requestId}', [HikvisionController::class, 'agentSyncRequestUpdate'])->whereNumber('requestId');
 Route::get('/hikvision/cloud-base', [HikvisionController::class, 'cloudBase']);
 Route::get('/hikvision/setup-guide', [HikvisionController::class, 'setupGuide']);
 Route::get('/hikvision/devices', [HikvisionController::class, 'index']);
@@ -318,6 +320,7 @@ Route::put('/hikvision/devices/{id}', [HikvisionController::class, 'update']);
 Route::delete('/hikvision/devices/{id}', [HikvisionController::class, 'destroy']);
 Route::post('/hikvision/devices/{id}/test', [HikvisionController::class, 'testConnection']);
 Route::post('/hikvision/devices/{id}/sync', [HikvisionController::class, 'syncNow']);
+Route::get('/hikvision/devices/{id}/sync-requests', [HikvisionController::class, 'syncRequests']);
 Route::post('/hikvision/devices/{id}/configure-webhook', [HikvisionController::class, 'configureWebhook']);
 Route::get('/hikvision/devices/{id}/agent-config', [HikvisionController::class, 'agentConfig']);
 Route::get('/hikvision/devices/{id}/logs', [HikvisionController::class, 'eventLogs']);

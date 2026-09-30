@@ -676,10 +676,13 @@ function ymd(d) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-/** Day-by-day sync of [fromDay, toDay] (local dates). force = resend even if already posted. */
+/**
+ * Day-by-day sync of [fromDay, toDay] (local dates). force = resend even if already posted.
+ * Returns totals + server messages, or null when the device cannot be reached.
+ */
 async function syncDays(fromDay, toDay, label, force) {
   assertConfigured();
-  if (!(await deviceReady())) return false;
+  if (!(await deviceReady())) return null;
 
   const postedKeys = new Set(loadState().postedKeys || []);
   const totals = { raw: 0, sent: 0, imported: 0, skipped: 0 };
@@ -703,7 +706,66 @@ async function syncDays(fromDay, toDay, label, force) {
   if (errors.size) {
     console.log(`[bridge] ${label} server messages: ${Array.from(errors).slice(0, 10).join('; ')}`);
   }
-  return true;
+  return { ...totals, errors: Array.from(errors) };
+}
+
+/** HR app "Sync Now" (cloud mode) queues date ranges; this also tells HR the office PC is online. */
+function bridgeApiUrl(suffix) {
+  return CLOUD_PUNCHES_URL.replace(/(\/hikvision\/punches\/[^/?#&]+)/i, `$1${suffix}`);
+}
+
+async function cloudJson(method, suffix, payload) {
+  const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
+  if (SECRET) headers['X-Hikvision-Secret'] = SECRET;
+  return rawRequest(bridgeApiUrl(suffix), { method, headers }, payload ? JSON.stringify(payload) : null);
+}
+
+let queueUnsupportedWarned = false;
+
+async function runQueuedSyncs() {
+  if (!punchesToken(CLOUD_PUNCHES_URL)) return;
+  const res = await cloudJson('GET', '/sync-requests');
+  if (res.status < 200 || res.status >= 300) {
+    if (!queueUnsupportedWarned) {
+      console.log(`[bridge] HR app sync queue not available yet (HTTP ${res.status}) — update the HR API to enable "Sync Now" from the app.`);
+      queueUnsupportedWarned = true;
+    }
+    return;
+  }
+  queueUnsupportedWarned = false;
+
+  const jobs = Array.isArray(res.json?.data) ? res.json.data : [];
+  for (const job of jobs) {
+    const report = (payload) =>
+      cloudJson('POST', `/sync-requests/${job.id}`, payload).catch((e) =>
+        console.error(`[bridge] Could not report app sync #${job.id}:`, e.message || e),
+      );
+    try {
+      const fromDay = parseDay(String(job.from_date).slice(0, 10));
+      const toDay = parseDay(String(job.to_date).slice(0, 10));
+      console.log(`[bridge] HR app requested sync ${ymd(fromDay)} → ${ymd(toDay)} (request #${job.id})`);
+      await report({ status: 'running' });
+      const r = await syncDays(fromDay, toDay, `App sync #${job.id}`, true);
+      if (!r) {
+        await report({
+          status: 'failed',
+          message: `The office PC could not connect to the fingerprint device at ${DEVICE_IP}:${DEVICE_PORT}.`,
+        });
+        continue;
+      }
+      await report({
+        status: 'done',
+        device_punches: r.sent,
+        imported: r.imported,
+        skipped: r.skipped,
+        message: `Device punches ${r.sent}: ${r.imported} new, ${r.skipped} already in HR or rejected.`,
+        errors: r.errors.slice(0, 50).map((e) => String(e).slice(0, 500)),
+      });
+    } catch (e) {
+      console.error(`[bridge] App sync #${job.id} ERROR:`, e.message || e);
+      await report({ status: 'failed', message: String(e.message || e).slice(0, 2000) });
+    }
+  }
 }
 
 /** Lists every device user ID that punched in [fromDay, toDay] with name, punch count and days (nothing is sent to HR). */
@@ -817,9 +879,16 @@ async function main() {
       ),
     );
 
+  const queued = () =>
+    serial(() => runQueuedSyncs().catch((e) => console.error('[bridge] App sync queue ERROR:', e.message || e)));
+
   await run();
   if (once) return;
-  setInterval(run, POLL_SECONDS * 1000);
+  queued();
+  setInterval(() => {
+    run();
+    queued();
+  }, POLL_SECONDS * 1000);
   if (CATCHUP_DAYS > 0) {
     console.log(`[bridge] Catch-up: re-checking the last ${CATCHUP_DAYS} day(s) now and every ${CATCHUP_EVERY_HOURS}h`);
     catchUp();
