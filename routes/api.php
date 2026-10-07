@@ -351,9 +351,11 @@ Route::post('/salary/process/save', [SalaryProcessController::class, 'storeSalar
 Route::get('/assign/allowances', [AssignSalaryComponentController::class, 'listAllowances']);
 Route::post('/assign/allowances', [AssignSalaryComponentController::class, 'assignAllowance']);
 Route::delete('/assign/allowances/{id}', [AssignSalaryComponentController::class, 'destroyAllowance']);
+Route::put('/assign/allowances/{id}', [AssignSalaryComponentController::class, 'updateAllowanceAmount']);
 Route::get('/assign/deductions', [AssignSalaryComponentController::class, 'listDeductions']);
 Route::post('/assign/deductions', [AssignSalaryComponentController::class, 'assignDeduction']);
 Route::delete('/assign/deductions/{id}', [AssignSalaryComponentController::class, 'destroyDeduction']);
+Route::put('/assign/deductions/{id}', [AssignSalaryComponentController::class, 'updateDeductionAmount']);
 
 Route::post('/attendance/mark-absentees', [TimeCardController::class, 'markAbsentees']);
 Route::post('/attendance/recalculate', [TimeCardController::class, 'recalculateAttendance']);

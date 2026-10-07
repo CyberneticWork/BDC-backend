@@ -105,7 +105,8 @@ class AssignSalaryComponentController extends Controller
             return response()->json(['message' => $months['error']], 422);
         }
 
-        $amount = $request->value_type === 'variable'
+        // Fixed mode may override the master amount per employee.
+        $amount = $request->value_type === 'variable' || $request->filled('amount')
             ? (float) $request->amount
             : (float) ($allowance->amount ?? 0);
 
@@ -189,7 +190,8 @@ class AssignSalaryComponentController extends Controller
             return response()->json(['message' => $months['error']], 422);
         }
 
-        $amount = $request->value_type === 'variable'
+        // Fixed mode may override the master amount per employee.
+        $amount = $request->value_type === 'variable' || $request->filled('amount')
             ? (float) $request->amount
             : (float) ($deduction->amount ?? 0);
 
@@ -253,6 +255,22 @@ class AssignSalaryComponentController extends Controller
         $row = employee_deductions::findOrFail($id);
         $row->delete();
         return response()->json(['message' => 'Deduction assignment removed.']);
+    }
+
+    public function updateAllowanceAmount(Request $request, int $id)
+    {
+        $data = $request->validate(['amount' => 'required|numeric|min:0']);
+        $row = employee_allowances::findOrFail($id);
+        $row->update(['custom_amount' => (float) $data['amount']]);
+        return response()->json(['message' => 'Allowance amount updated.']);
+    }
+
+    public function updateDeductionAmount(Request $request, int $id)
+    {
+        $data = $request->validate(['amount' => 'required|numeric|min:0']);
+        $row = employee_deductions::findOrFail($id);
+        $row->update(['custom_amount' => (float) $data['amount']]);
+        return response()->json(['message' => 'Deduction amount updated.']);
     }
 
     private function resolveMonths(Request $request): array
