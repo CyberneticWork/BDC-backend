@@ -72,6 +72,7 @@ use App\Http\Controllers\EmployeeWiseBonusController;
 use App\Http\Controllers\AssignSalaryComponentController;
 use App\Http\Controllers\MonthlyLateDeductionController;
 use App\Http\Controllers\ExcessLateController;
+use App\Http\Controllers\PersonalOutController;
 use App\Models\EmployeeWiseAllowance;
 
 Route::middleware('auth.token')->get('/user', [\App\Http\Controllers\AclController::class, 'me']);
@@ -392,6 +393,13 @@ Route::post('monthly-late-deductions/apply', [MonthlyLateDeductionController::cl
 Route::get('monthly-late-deductions/employees/{employeeId}', [MonthlyLateDeductionController::class, 'employeeDetail']);
 Route::get('excess-late-reviews/preview', [ExcessLateController::class, 'preview']);
 Route::post('excess-late-reviews/decide', [ExcessLateController::class, 'decide']);
+
+// Personal out during work: ≤2h short leave, >2h half day, no balance → NoPay from monthly bonus
+Route::get('personal-out', [PersonalOutController::class, 'index']);
+Route::get('personal-out/employees', [PersonalOutController::class, 'employees']);
+Route::get('personal-out/preview', [PersonalOutController::class, 'preview']);
+Route::post('personal-out', [PersonalOutController::class, 'store']);
+Route::delete('personal-out/{id}', [PersonalOutController::class, 'destroy']);
 
 // Allowances import/export routes
 Route::get('/allowances/template/download', [AllowancesController::class, 'downloadTemplate']);

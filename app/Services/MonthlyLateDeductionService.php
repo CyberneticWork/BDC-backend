@@ -494,7 +494,7 @@ class MonthlyLateDeductionService
         return $lateDays;
     }
 
-    private function getLeaveBalances(int $employeeId, int $year): array
+    public function getLeaveBalances(int $employeeId, int $year): array
     {
         $employee = employee::with('organizationAssignment')->find($employeeId);
         $result = [

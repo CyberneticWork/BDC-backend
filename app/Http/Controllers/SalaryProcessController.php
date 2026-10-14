@@ -1232,6 +1232,7 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 COALESCE(SUM(CASE WHEN npr.type = 'EARLY_OUT' THEN COALESCE(npr.no_pay_count, 0) ELSE 0 END), 0) AS early_out_nopays,
                 COALESCE(SUM(CASE WHEN npr.type = 'LATE_IN' THEN COALESCE(npr.no_pay_count, 0) ELSE 0 END), 0) AS major_late_nopays,
                 COALESCE(SUM(CASE WHEN npr.type = 'LATE_MONTHLY' THEN COALESCE(npr.no_pay_count, 0) ELSE 0 END), 0) AS monthly_late_nopays,
+                COALESCE(SUM(CASE WHEN npr.type = 'PERSONAL_OUT' THEN COALESCE(npr.no_pay_count, 0) ELSE 0 END), 0) AS personal_out_nopays,
 
                 -- Employee-wise allowances (company/month assignments)
                 (
@@ -1322,6 +1323,8 @@ public function getEmployeesByMonthAndCompany(Request $request)
             LEFT JOIN contact_details cd ON e.id = cd.employee_id
             LEFT JOIN loans lo ON e.id = lo.employee_id AND lo.status = 'active'
             LEFT JOIN no_pay_records npr ON e.id = npr.employee_id AND LOWER(npr.status) = 'approved' AND npr.date BETWEEN ? AND ?
+                AND npr.deleted_at IS NULL
+                AND (oa.date_of_joining IS NULL OR npr.date >= oa.date_of_joining)
 
             WHERE e.is_active = '1'
             " . ContractEmployeeScope::sqlExclude('e') . "
@@ -1572,6 +1575,30 @@ public function getEmployeesByMonthAndCompany(Request $request)
             $leaveShortfallBasicDeduction = $leaveShortfallNoPay['basic_amount'];
             $leaveShortfallBonusDeduction = $leaveShortfallNoPay['bonus_amount'];
 
+            // Joined mid-month: calendar days before the joining date are NoPay (split basic + bonus)
+            $preHireDays = 0;
+            if (!empty($employeeData['date_of_joining'])) {
+                $joinDate = \Carbon\Carbon::parse($employeeData['date_of_joining'])->startOfDay();
+                $monthStart = \Carbon\Carbon::parse($startDate)->startOfDay();
+                $monthEnd = \Carbon\Carbon::parse($endDate)->startOfDay();
+                if ($joinDate->gt($monthStart) && $joinDate->lte($monthEnd)) {
+                    $preHireDays = (int) min($monthStart->diffInDays($joinDate), $nopayWorkingDays);
+                }
+            }
+            $preHireNoPay = $this->resolveLeaveShortfallNoPay(
+                $basicSalary,
+                $monthlyBonusTotal,
+                $preHireDays,
+                $nopayWorkingDays
+            );
+            $preHireBasicDeduction = $preHireNoPay['basic_amount'];
+            $preHireBonusDeduction = $preHireNoPay['bonus_amount'];
+
+            // Personal out without leave balance: (basic + bonus)/company_days × days — taken from monthly bonus
+            $personalOutNoPayDays = (float) ($employeeData['personal_out_nopays'] ?? 0);
+            $personalOutPerDay = ($basicSalary + $monthlyBonusTotal) / $nopayWorkingDays;
+            $personalOutDeduction = round($personalOutNoPayDays * $personalOutPerDay, 2);
+
             $policyOn = false;
             try {
                 if (Schema::hasColumn('companies', 'late_attendance_policy_enabled') && !empty($employeeData['company_id'])) {
@@ -1651,7 +1678,11 @@ public function getEmployeesByMonthAndCompany(Request $request)
             }
 
             // Combined NoPay taken from monthly bonus (leave shortfall bonus portion + late NoPay)
-            $bonusNopayTotal = round($leaveShortfallBonusDeduction + $majorLateDeduction + $lateGraceBonus, 2);
+            $bonusNopayTotal = round(
+                $leaveShortfallBonusDeduction + $majorLateDeduction + $lateGraceBonus
+                + $personalOutDeduction + $preHireBonusDeduction,
+                2
+            );
 
             $employeeData['allowances'] = $allowancesArr;
             $employeeData['deductions'] = $deductionsArr;
@@ -1696,7 +1727,8 @@ public function getEmployeesByMonthAndCompany(Request $request)
             $basicNoPayForEpf = (float) $fullDayNoPayDeduction
                 + (float) $leaveShortfallBasicDeduction
                 + (float) ($excessLate['basic_amount'] ?? 0)
-                + $lateGraceBasic;
+                + $lateGraceBasic
+                + $preHireBasicDeduction;
             $epfEtfBase = max(0, (float) $basicSalary - $basicNoPayForEpf);
             $epfEnabled = !empty($employeeData['enable_epf_etf']);
             $epfEmployeeDeduction = $epfEnabled ? round($epfEtfBase * 0.08, 2) : 0;
@@ -1731,7 +1763,8 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 + $leaveShortfallBasicDeduction
                 + $probationDeduction
                 + (float) ($excessLate['basic_amount'] ?? 0)
-                + $lateGraceBasic;
+                + $lateGraceBasic
+                + $preHireBasicDeduction;
             $bonusDeductionsTotal = $saturdayNoPayBonusDeduction
                 + $earlyOutNoPayDeduction
                 + $shortLeaveDeduction
@@ -1740,6 +1773,8 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 + $leaveShortfallBonusDeduction
                 + (float) ($excessLate['bonus_amount'] ?? 0)
                 + $lateGraceBonus
+                + $personalOutDeduction
+                + $preHireBonusDeduction
                 + $bonusFixedDeductions
                 + $sportsFundDeduction
                 + $staffFundDeduction;
@@ -1817,6 +1852,12 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 'bonus_nopay_total' => $bonusNopayTotal,
                 'bonus_nopay_from_leave_shortfall' => $leaveShortfallBonusDeduction,
                 'bonus_nopay_from_late' => round($majorLateDeduction + $lateGraceBonus, 2),
+                'personal_out_nopay_days' => round($personalOutNoPayDays, 2),
+                'personal_out_nopay_deduction' => $personalOutDeduction,
+                'pre_hire_nopay_days' => $preHireDays,
+                'pre_hire_nopay_basic' => $preHireBasicDeduction,
+                'pre_hire_nopay_bonus' => $preHireBonusDeduction,
+                'date_of_joining' => $employeeData['date_of_joining'] ?? null,
                 'epf_employee_deduction' => round($epfEmployeeDeduction, 2),
                 'epf_employer_contribution' => round($epfEmployerContribution, 2),
                 'etf_employer_contribution' => round($etfEmployerContribution, 2),
@@ -1883,6 +1924,7 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 $employeeData['major_late_nopays'],
                 $employeeData['monthly_late_nopays'],
                 $employeeData['leave_shortfall_nopays'],
+                $employeeData['personal_out_nopays'],
                 $employeeData['nopay_working_days']
             );
 

@@ -104,9 +104,16 @@ class ReportController extends Controller
             $earlyOutNoPay = (float)($breakdown['early_out_nopay_deduction'] ?? 0);
             $shortLeaveDed = (float)($breakdown['short_leave_deduction'] ?? 0);
             $majorLateDed = (float)($breakdown['major_late_deduction'] ?? 0);
+            $personalOutNoPay = (float)($breakdown['personal_out_nopay_deduction'] ?? 0);
+            $preHireBasicNoPay = (float)($breakdown['pre_hire_nopay_basic'] ?? 0);
+            $preHireBonusNoPay = (float)($breakdown['pre_hire_nopay_bonus'] ?? 0);
 
-            $basicNoPay = round($fullDayNoPay, 2);
-            $bonusNoPay = round($saturdayNoPay + $earlyOutNoPay + $shortLeaveDed + $halfDayNoPay + $majorLateDed, 2);
+            $basicNoPay = round($fullDayNoPay + $preHireBasicNoPay, 2);
+            $bonusNoPay = round(
+                $saturdayNoPay + $earlyOutNoPay + $shortLeaveDed + $halfDayNoPay + $majorLateDed
+                + $personalOutNoPay + $preHireBonusNoPay,
+                2
+            );
             $totalNoPayForReport = round($basicNoPay + $bonusNoPay, 2);
 
             $perDaySalary = (float)($breakdown['per_day_salary'] ?? 0);

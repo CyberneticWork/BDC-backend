@@ -41,6 +41,7 @@ return [
         ['key' => 'timeCardApproval', 'label' => 'Time Card Approval', 'group' => 'Attendance', 'actions' => ['view', 'approve']],
         ['key' => 'monthlyLateDeduction', 'label' => 'Monthly Late Deduction', 'group' => 'Attendance', 'actions' => ['view', 'edit']],
         ['key' => 'excessLateReview', 'label' => 'Late Over 30 Minutes', 'group' => 'Attendance', 'actions' => ['view', 'edit']],
+        ['key' => 'personalOut', 'label' => 'Personal Out', 'group' => 'Attendance', 'actions' => ['view', 'add', 'delete']],
         ['key' => 'leaveMaster', 'label' => 'Leave Form', 'group' => 'Leave', 'actions' => ['view', 'add', 'edit', 'delete']],
         ['key' => 'leaveApproval', 'label' => 'Leave Approval', 'group' => 'Leave', 'actions' => ['view', 'approve']],
         ['key' => 'supervisorLeaveApproval', 'label' => 'Supervisor Leave Approval', 'group' => 'Leave', 'actions' => ['view', 'approve'], 'pack' => 'leave_workflow'],
