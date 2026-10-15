@@ -84,9 +84,13 @@ class PersonalOutController extends Controller
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
-        $message = $entry->nopay_days > 0
-            ? "Saved. {$entry->leave_days} day(s) from leave, {$entry->nopay_days} day(s) NoPay from monthly bonus."
-            : "Saved. {$entry->deduct_days} day(s) deducted from leave.";
+        if ($entry->deduct_days <= 0) {
+            $message = 'Saved. Within the ' . PersonalOutService::FREE_MINUTES . '-minute allowance, no deduction.';
+        } elseif ($entry->nopay_days > 0) {
+            $message = "Saved. {$entry->leave_days} day(s) from leave, {$entry->nopay_days} day(s) NoPay from monthly bonus.";
+        } else {
+            $message = "Saved. {$entry->deduct_days} day(s) deducted from leave.";
+        }
 
         return response()->json(['message' => $message, 'data' => $entry], 201);
     }

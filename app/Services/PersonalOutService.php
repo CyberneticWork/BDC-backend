@@ -15,13 +15,14 @@ use Illuminate\Support\Facades\Schema;
 
 /**
  * Personal out during working hours:
- * up to 2 hours = short leave (0.25), more than 2 hours = half day (0.5).
+ * first 30 minutes free, then up to 2 hours = short leave (0.25), more than 2 hours = half day (0.5).
  * Taken from Casual, then Annual leave; any remainder is NoPay deducted from the monthly bonus.
  */
 class PersonalOutService
 {
     public const TYPE = 'PERSONAL_OUT';
     public const REASON_TAG = '[Personal Out]';
+    public const FREE_MINUTES = 30;
     public const SHORT_LEAVE_MAX_MINUTES = 120;
     public const SHORT_LEAVE_DAYS = 0.25;
     public const HALF_DAY = 0.5;
@@ -67,7 +68,20 @@ class PersonalOutService
 
     public function deductDaysFor(int $minutes): float
     {
+        if ($minutes <= self::FREE_MINUTES) {
+            return 0.0;
+        }
+
         return $minutes <= self::SHORT_LEAVE_MAX_MINUTES ? self::SHORT_LEAVE_DAYS : self::HALF_DAY;
+    }
+
+    public function deductLabel(float $deductDays): string
+    {
+        if ($deductDays <= 0) {
+            return 'Within ' . self::FREE_MINUTES . ' minutes - no deduction';
+        }
+
+        return $deductDays === self::SHORT_LEAVE_DAYS ? 'Short leave (0.25)' : 'Half day (0.5)';
     }
 
     public function preview(int $employeeId, string $date, ?string $outTime, ?string $inTime): array
@@ -98,7 +112,7 @@ class PersonalOutService
 
             $result['minutes'] = $minutes;
             $result['deduct_days'] = $deductDays;
-            $result['deduct_label'] = $deductDays === self::SHORT_LEAVE_DAYS ? 'Short leave (0.25)' : 'Half day (0.5)';
+            $result['deduct_label'] = $this->deductLabel($deductDays);
             $result['allocation'] = $allocation;
             $result['nopay_days'] = $nopayDays;
             $result['nopay_amount'] = round($nopayDays * $result['rate']['per_day'], 2);
