@@ -11,6 +11,10 @@ return Application::configure(basePath: dirname(__DIR__))
         api: __DIR__.'/../routes/api.php',
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
+        then: function () {
+            // ZKTeco ADMS: devices POST to /iclock/* (no /api prefix, no CSRF)
+            require __DIR__.'/../routes/iclock.php';
+        },
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
@@ -19,6 +23,12 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
         $middleware->prepend(\App\Http\Middleware\NormalizeIndexPhpPath::class);
         $middleware->trustProxies(at: '*');
+        $middleware->validateCsrfTokens(except: [
+            'iclock',
+            'iclock/*',
+            'index.php/iclock',
+            'index.php/iclock/*',
+        ]);
         $middleware->web(append: [
             \App\Http\Middleware\SecurityHeaders::class,
         ]);

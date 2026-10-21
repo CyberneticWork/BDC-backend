@@ -48,6 +48,10 @@ class RequireApiAuth
             'api/hikvision/webhook/*',
             'api/hikvision/punches/*',
             'api/hikvision/cloud-base',
+            'api/zkteco/punches/*',
+            'api/zkteco/iclock/*',
+            'iclock',
+            'iclock/*',
         ]);
     }
 

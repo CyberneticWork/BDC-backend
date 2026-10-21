@@ -73,6 +73,8 @@ use App\Http\Controllers\AssignSalaryComponentController;
 use App\Http\Controllers\MonthlyLateDeductionController;
 use App\Http\Controllers\ExcessLateController;
 use App\Http\Controllers\PersonalOutController;
+use App\Http\Controllers\ZktecoController;
+use App\Http\Controllers\ZktecoAdmsController;
 use App\Models\EmployeeWiseAllowance;
 
 Route::middleware('auth.token')->get('/user', [\App\Http\Controllers\AclController::class, 'me']);
@@ -326,6 +328,19 @@ Route::post('/hikvision/devices/{id}/configure-webhook', [HikvisionController::c
 Route::get('/hikvision/devices/{id}/agent-config', [HikvisionController::class, 'agentConfig']);
 Route::get('/hikvision/devices/{id}/logs', [HikvisionController::class, 'eventLogs']);
 Route::post('/attendance/import-hikvision-excel', [HikvisionController::class, 'importExcel']);
+
+// ZKTeco K40 Pro (ADMS push → same Time Card writer as Hikvision)
+Route::post('/zkteco/punches/{token}', [ZktecoController::class, 'punches']);
+Route::get('/zkteco/punches/{token}', [ZktecoController::class, 'punchesPing']);
+Route::get('/zkteco/setup-guide', [ZktecoController::class, 'setupGuide']);
+Route::get('/zkteco/devices', [ZktecoController::class, 'index']);
+Route::post('/zkteco/devices', [ZktecoController::class, 'store']);
+Route::put('/zkteco/devices/{id}', [ZktecoController::class, 'update']);
+Route::delete('/zkteco/devices/{id}', [ZktecoController::class, 'destroy']);
+Route::get('/zkteco/devices/{id}/logs', [ZktecoController::class, 'eventLogs']);
+// Mirror ADMS under /api for reverse proxies that only forward /api
+Route::match(['GET', 'POST'], '/zkteco/iclock/cdata', [ZktecoAdmsController::class, 'cdata']);
+Route::match(['GET', 'POST'], '/zkteco/iclock/getrequest', [ZktecoAdmsController::class, 'getRequest']);
 
 
 
