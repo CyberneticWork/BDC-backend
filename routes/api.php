@@ -338,6 +338,8 @@ Route::post('/zkteco/devices', [ZktecoController::class, 'store']);
 Route::put('/zkteco/devices/{id}', [ZktecoController::class, 'update']);
 Route::delete('/zkteco/devices/{id}', [ZktecoController::class, 'destroy']);
 Route::get('/zkteco/devices/{id}/logs', [ZktecoController::class, 'eventLogs']);
+Route::post('/zkteco/devices/{id}/test', [ZktecoController::class, 'testConnection']);
+Route::post('/zkteco/devices/{id}/sync', [ZktecoController::class, 'syncNow']);
 // Mirror ADMS under /api for reverse proxies that only forward /api
 Route::match(['GET', 'POST'], '/zkteco/iclock/cdata', [ZktecoAdmsController::class, 'cdata']);
 Route::match(['GET', 'POST'], '/zkteco/iclock/getrequest', [ZktecoAdmsController::class, 'getRequest']);

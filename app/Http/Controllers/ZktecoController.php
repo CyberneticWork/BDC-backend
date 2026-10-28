@@ -4,13 +4,19 @@ namespace App\Http\Controllers;
 
 use App\Models\ZktecoDevice;
 use App\Models\ZktecoEventLog;
+use App\Services\Zkteco\LiveUApiClient;
+use App\Services\Zkteco\LiveUAttendanceService;
 use App\Services\Zkteco\ZktecoAttendanceService;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 
 class ZktecoController extends Controller
 {
-    public function __construct(private ZktecoAttendanceService $attendance)
-    {
+    public function __construct(
+        private ZktecoAttendanceService $attendance,
+        private LiveUAttendanceService $liveUAttendance,
+        private LiveUApiClient $liveUClient,
+    ) {
     }
 
     public function index()
@@ -38,18 +44,37 @@ class ZktecoController extends Controller
             'company_id' => 'nullable|exists:companies,id',
             'is_active' => 'boolean',
             'adms_enabled' => 'boolean',
+            'connection_mode' => 'nullable|in:adms,liveu',
+            'api_key' => 'nullable|string|max:255',
         ]);
 
-        $device = ZktecoDevice::create([
-            ...$validated,
-            'model' => $validated['model'] ?? 'K40 Pro',
-            'port' => $validated['port'] ?? 4370,
+        $mode = $validated['connection_mode'] ?? 'adms';
+        if ($mode === 'liveu' && empty($validated['api_key'])) {
+            return response()->json(['message' => 'LiveU Branch API key (x-api-key) is required for SenseFP / LiveU mode.'], 422);
+        }
+
+        $device = new ZktecoDevice([
+            'name' => $validated['name'],
+            'model' => $validated['model'] ?? ($mode === 'liveu' ? 'SenseFP M2' : 'K40 Pro'),
+            'serial_number' => $validated['serial_number'],
+            'ip_address' => $validated['ip_address'] ?? null,
+            'port' => $validated['port'] ?? ($mode === 'liveu' ? 443 : 4370),
+            'company_id' => $validated['company_id'] ?? null,
             'is_active' => $validated['is_active'] ?? true,
-            'adms_enabled' => $validated['adms_enabled'] ?? true,
+            'adms_enabled' => $mode === 'adms' ? ($validated['adms_enabled'] ?? true) : false,
+            'connection_mode' => $mode,
         ]);
+        if (!empty($validated['api_key'])) {
+            $device->api_key = $validated['api_key'];
+        }
+        $device->save();
+
+        $message = $mode === 'liveu'
+            ? 'LiveU SenseFP device saved. Use Test then Sync Now to pull punches into Time Card.'
+            : 'ZKTeco device saved. Set the ADMS URL on the terminal to the Server URL shown below.';
 
         return response()->json([
-            'message' => 'ZKTeco device saved. Set the ADMS URL on the K40 Pro to the Server URL shown below.',
+            'message' => $message,
             'data' => $this->formatDevice($device->fresh('company')),
         ], 201);
     }
@@ -68,9 +93,15 @@ class ZktecoController extends Controller
             'company_id' => 'nullable|exists:companies,id',
             'is_active' => 'boolean',
             'adms_enabled' => 'boolean',
+            'connection_mode' => 'nullable|in:adms,liveu',
+            'api_key' => 'nullable|string|max:255',
         ]);
 
-        $device->fill($validated)->save();
+        $device->fill(collect($validated)->except('api_key')->all());
+        if (!empty($validated['api_key'])) {
+            $device->api_key = $validated['api_key'];
+        }
+        $device->save();
 
         return response()->json([
             'message' => 'Device updated',
@@ -84,6 +115,61 @@ class ZktecoController extends Controller
         ZktecoDevice::findOrFail($id)->delete();
 
         return response()->json(['message' => 'Device removed']);
+    }
+
+    public function testConnection(int $id)
+    {
+        ZktecoAttendanceService::ensureTables();
+        $device = ZktecoDevice::findOrFail($id);
+
+        if ($device->isLiveU()) {
+            $result = $this->liveUClient->testConnection($device);
+            if ($result['ok'] ?? false) {
+                $device->update(['last_error' => null, 'last_handshake_at' => now()]);
+            } else {
+                $device->update(['last_error' => $result['message'] ?? 'Test failed']);
+            }
+
+            return response()->json($result, ($result['ok'] ?? false) ? 200 : 422);
+        }
+
+        return response()->json([
+            'ok' => true,
+            'message' => 'ADMS mode: the device must push to '.$device->admsBaseUrl().'. Watch Last handshake after configuring Cloud Server on the terminal.',
+            'adms_url' => $device->admsBaseUrl(),
+        ]);
+    }
+
+    public function syncNow(int $id, Request $request)
+    {
+        ZktecoAttendanceService::ensureTables();
+        $device = ZktecoDevice::findOrFail($id);
+
+        if (!$device->isLiveU()) {
+            return response()->json([
+                'message' => 'Sync Now is for LiveU / SenseFP devices. ADMS devices push punches automatically when Cloud Server is set.',
+                'adms_url' => $device->admsBaseUrl(),
+            ], 422);
+        }
+
+        $validated = $request->validate([
+            'from_date' => 'nullable|date',
+            'to_date' => 'nullable|date',
+        ]);
+
+        $from = isset($validated['from_date'])
+            ? Carbon::parse($validated['from_date'])->startOfDay()
+            : now()->subDays(7)->startOfDay();
+        $to = isset($validated['to_date'])
+            ? Carbon::parse($validated['to_date'])->endOfDay()
+            : now();
+
+        $result = $this->liveUAttendance->syncDevice($device, $from, $to);
+
+        return response()->json([
+            'message' => $result['message'] ?? 'Sync completed',
+            'data' => $result,
+        ], ($result['ok'] ?? false) ? 200 : 422);
     }
 
     public function eventLogs(int $id, Request $request)
@@ -100,7 +186,6 @@ class ZktecoController extends Controller
         return response()->json(['data' => $logs]);
     }
 
-    /** Optional JSON punch push (office helper / test), token-auth like Hikvision. */
     public function punches(Request $request, string $token)
     {
         ZktecoAttendanceService::ensureTables();
@@ -132,6 +217,7 @@ class ZktecoController extends Controller
             'ok' => true,
             'device' => $device->name,
             'serial_number' => $device->serial_number,
+            'connection_mode' => $device->connection_mode,
             'adms_url' => $device->admsBaseUrl(),
         ]);
     }
@@ -145,23 +231,20 @@ class ZktecoController extends Controller
             'data' => [
                 'steps' => [
                     [
-                        'title' => 'Add the K40 Pro in Time Card',
-                        'detail' => 'Open ZKTeco panel → Add Device. Enter the device Serial Number (SN) exactly as shown on the terminal (Comm → Device Info). Device User ID must match Attendance Employee No.',
+                        'title' => 'SenseFP M2 (LiveU cloud) — recommended for Live U devices',
+                        'detail' => 'Add Device → Connection = LiveU / SenseFP M2. Enter Serial Number (e.g. FQQ2254700019), branch name, and Branch API key from Live U (x-api-key). Click Test, then Sync Now. LiveU memberId must = Attendance Employee No.',
                     ],
                     [
-                        'title' => 'Set Cloud / ADMS server on the device',
-                        'detail' => "On the K40 Pro: Menu → Comm. → Cloud Server / ADMS. Enable Domain Name or Server Address. Server URL: {$adms}  (no trailing slash). Port: 80 or 443 to match your HR site. Save and reboot if asked.",
+                        'title' => 'K40 Pro / ADMS push',
+                        'detail' => "Add Device → Connection = ADMS. Set Cloud Server on the terminal to {$adms}. Device pushes ATTLOG; no Sync Now needed.",
                     ],
                     [
-                        'title' => 'Confirm handshake',
-                        'detail' => 'After the device connects, Last handshake updates on the device card. Then scan a finger — a Time Card row appears automatically (IN/OUT toggle same as Hikvision).',
-                    ],
-                    [
-                        'title' => 'Firewall / APP_URL',
-                        'detail' => 'The device must reach the public HR URL (APP_URL). Local 127.0.0.1 will not work from the terminal. Open HTTPS/HTTP inbound on the server.',
+                        'title' => 'Employee IDs',
+                        'detail' => 'On the terminal / LiveU members, User ID / memberId must match HR Attendance Employee No (same as Hikvision).',
                     ],
                 ],
                 'adms_url_example' => $adms,
+                'liveu_base' => config('liveu.base_url'),
             ],
         ]);
     }
@@ -179,8 +262,11 @@ class ZktecoController extends Controller
             'company_name' => $d->company->name ?? null,
             'is_active' => $d->is_active,
             'adms_enabled' => $d->adms_enabled,
+            'connection_mode' => $d->connection_mode ?? 'adms',
+            'has_api_key' => !empty($d->api_key_encrypted),
             'adms_url' => $d->admsBaseUrl(),
             'punches_url' => $d->punchesUrl(),
+            'liveu_base' => config('liveu.base_url'),
             'last_att_stamp' => $d->last_att_stamp,
             'last_sync_at' => $d->last_sync_at,
             'last_event_at' => $d->last_event_at,

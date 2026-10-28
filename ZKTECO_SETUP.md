@@ -1,39 +1,50 @@
-# ZKTeco K40 Pro → Time Card (ADMS)
+# ZKTeco → Time Card
 
-Same end result as Hikvision: each fingerprint punch creates a row on **Time Card** (IN / Late Coming / OUT / Early OUT via the existing toggle rules).
+Two connection modes (same Time Card writer as Hikvision):
 
-## How it works
+| Device | Mode | How punches arrive |
+|--------|------|--------------------|
+| **SenseFP M2** (Live U) | `liveu` | HR pulls `GET /attendances` from LiveU cloud |
+| **K40 Pro** | `adms` | Device pushes ATTLOG to `/iclock/cdata` |
 
-1. Register the device in **Time Card → ZKTeco Fingerprint Device Sync (K40 Pro)** with the terminal **Serial Number (SN)**.
-2. On the K40 Pro, set **Cloud Server / ADMS** to the HR **ADMS URL** shown on the device card (ends with `/iclock`).
-3. The device POSTs attendance (ATTLOG) to `/iclock/cdata`. HR writes `time_cards` through the same `TimeCardController::attendance` path as Hikvision.
+## SenseFP M2 — LiveU Attendance API
 
-**Device User ID = Attendance Employee No** in HR (leading zeros are matched the same way as Hikvision).
+Reference from LiveU Attendance API v1.0:
 
-## Setup steps
+- **Base URL:** `https://attapi.liveucloud.com/api/v1`
+- **Auth header:** `x-api-key: <Branch API key>`
+- **Attendance:** `GET /attendances?from=YYYY-MM-DD&to=YYYY-MM-DD&access=Granted`
 
-1. Run migration (or let the API create tables on first use):
-   ```bash
-   php artisan migrate
-   ```
-2. Open **Time Card** → expand **ZKTeco Fingerprint Device Sync (K40 Pro)** → **Add Device**.
-3. Enter name + **Serial Number** from the terminal (Menu → Comm. / Device Info).
-4. Copy the **ADMS / Cloud Server URL**.
-5. On the K40 Pro:
-   - Menu → **Comm.** → **Cloud Server** / **ADMS**
-   - Enable domain name / cloud server
-   - Server address = the ADMS URL host path (e.g. `https://apispmhr.cyberneticde.site/iclock`)
-   - Port = `443` (HTTPS) or `80` (HTTP)
-   - Save / reboot if prompted
-6. Wait until the card shows **Online (handshake)**.
-7. Enroll fingers with User ID = Attendance Employee No, then scan — refresh Time Card.
+### Reference device (from Live U)
 
-## Requirements
+| Field | Value |
+|-------|--------|
+| Serial Number | `FQQ2254700019` |
+| Name | Test Beats Tech 2 |
+| Branch API key | *(paste in Time Card — store encrypted; do not commit)* |
 
-- `APP_URL` must be a URL the **device can reach** (public HTTPS for cloud HR).
-- Nginx already forwards `/iclock` via `try_files` → `index.php` (see `deploy/nginx-laravel.conf.example`).
-- Roster must exist for the punch date (same as other attendance).
+### Steps
 
-## Optional JSON push
+1. Time Card → **ZKTeco / LiveU Fingerprint Sync** → **Add Device**
+2. Connection = **LiveU cloud — SenseFP M2**
+3. Name = `Test Beats Tech 2`, SN = `FQQ2254700019`, paste Branch API key
+4. **Test** — must return Connected (401 means Live U has not activated that key yet)
+5. **Sync Now** — pick date range; punches become Time Card rows
+6. Scheduler: `php artisan liveu:sync-attendance` every `LIVEU_POLL_INTERVAL` minutes (default 5)
 
-`POST /api/zkteco/punches/{token}` with `{ "punches": [ { "empNo": "12", "date": "2026-04-07", "time": "08:30:00" } ] }` for tests or a future office helper.
+**LiveU `memberId` = HR Attendance Employee No**
+
+### Env (optional)
+
+```env
+LIVEU_API_BASE_URL=https://attapi.liveucloud.com/api/v1
+LIVEU_POLL_INTERVAL=5
+```
+
+## K40 Pro — ADMS push
+
+See previous ADMS section: register SN, set device Cloud Server to `{APP_HOST}/iclock`.
+
+```bash
+php artisan migrate   # or tables self-create on first API use
+```
