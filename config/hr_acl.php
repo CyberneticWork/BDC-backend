@@ -5,6 +5,8 @@ return [
         'weekly_off' => ['weeklyOffManagement'],
         'medical_claims' => ['medicalClaims'],
         'leave_workflow' => ['supervisorLeaveApproval'],
+        'fish_deduction' => ['fishDeduction'],
+        'stamp_duty_paye_holiday' => ['payeManagement', 'offDayHolidayManagement'],
     ],
     'any_pack_modules' => [
         'pendingPayments' => ['medical_claims', 'salary_advance'],
@@ -29,6 +31,9 @@ return [
         ['key' => 'createNewAllowance', 'label' => 'Allowance', 'group' => 'Payroll', 'actions' => ['view', 'add', 'edit', 'delete']],
         ['key' => 'createNewDeduction', 'label' => 'Deduction', 'group' => 'Payroll', 'actions' => ['view', 'add', 'edit', 'delete']],
         ['key' => 'createNewBonus', 'label' => 'Bonus', 'group' => 'Payroll', 'actions' => ['view', 'add', 'edit', 'delete']],
+        ['key' => 'fishDeduction', 'label' => 'Fish Deduction', 'group' => 'Payroll', 'actions' => ['view', 'add', 'edit', 'delete'], 'pack' => 'fish_deduction'],
+        ['key' => 'payeManagement', 'label' => 'PAYE Management', 'group' => 'Payroll', 'actions' => ['view', 'edit'], 'pack' => 'stamp_duty_paye_holiday'],
+        ['key' => 'offDayHolidayManagement', 'label' => 'Off-Day + Holiday', 'group' => 'Payroll', 'actions' => ['view', 'edit'], 'pack' => 'stamp_duty_paye_holiday'],
         ['key' => 'dinnerAllowance', 'label' => 'Dinner Allowance', 'group' => 'Payroll', 'actions' => ['view', 'edit', 'approve']],
         ['key' => 'viewLoans', 'label' => 'View Loans', 'group' => 'Payroll', 'actions' => ['view', 'edit', 'delete']],
         ['key' => 'employeeLoan', 'label' => 'Employee Wise Loan', 'group' => 'Payroll', 'actions' => ['view', 'add', 'edit', 'delete']],

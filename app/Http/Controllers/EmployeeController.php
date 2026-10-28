@@ -712,37 +712,63 @@ class EmployeeController extends Controller
             ]);
 
             // Create compensation record
-            compensation::create([
+            $resolveSetting = function (array $keys, $defaultIfNull = false) use ($compensation) {
+                foreach ($keys as $k) {
+                    if (array_key_exists($k, $compensation) && $compensation[$k] !== null && $compensation[$k] !== '') {
+                        return filter_var($compensation[$k], FILTER_VALIDATE_BOOLEAN);
+                    }
+                }
+                return $defaultIfNull;
+            };
+
+            $compPayload = [
                 'employee_id' => $employee->id,
-                'basic_salary' => $compensation['basicSalary'],
-                'increment_value' => $this->numberOrNull($compensation['incrementValue'] ?? null),
-                'increment_effected_date' => empty($organization['incrementEffectiveFrom']) ? null : $organization['incrementEffectiveFrom'],
-                'bank_name' => $compensation['bankName'] ?? null,
-                'branch_name' => $compensation['branchName'] ?? null,
-                'bank_code' => $compensation['bankCode'] ?? null,
-                'branch_code' => $compensation['branchCode'] ?? null,
-                'bank_account_no' => $compensation['bankAccountNo'] ?? null,
-                'account_holder_name' => $compensation['accountHolderName'] ?? null,
+                'basic_salary' => $compensation['basicSalary'] ?? $compensation['basic_salary'] ?? 0,
+                'increment_value' => $this->numberOrNull($compensation['incrementValue'] ?? $compensation['increment_value'] ?? null),
+                'increment_effected_date' => empty($organization['incrementEffectiveFrom'] ?? $compensation['incrementEffectiveFrom'] ?? null) ? null : ($organization['incrementEffectiveFrom'] ?? $compensation['incrementEffectiveFrom']),
+                'bank_name' => $compensation['bankName'] ?? $compensation['bank_name'] ?? null,
+                'branch_name' => $compensation['branchName'] ?? $compensation['branch_name'] ?? null,
+                'bank_code' => $compensation['bankCode'] ?? $compensation['bank_code'] ?? null,
+                'branch_code' => $compensation['branchCode'] ?? $compensation['branch_code'] ?? null,
+                'bank_account_no' => $compensation['bankAccountNo'] ?? $compensation['bank_account_no'] ?? null,
+                'account_holder_name' => $compensation['accountHolderName'] ?? $compensation['account_holder_name'] ?? null,
                 'comments' => $compensation['comments'] ?? null,
-                'secondary_emp' => (bool) ($compensation['secondaryEmp'] ?? false),
-                'primary_emp_basic' => (bool) ($compensation['primaryEmploymentBasic'] ?? false),
-                'enable_epf_etf' => (bool) ($compensation['enableEpfEtf'] ?? false),
-                'ot_active' => (bool) ($compensation['otActive'] ?? false),
-                'early_deduction' => (bool) ($compensation['earlyDeduction'] ?? false),
-                'increment_active' => (bool) ($compensation['incrementActive'] ?? false),
-                'active_nopay' => (bool) ($compensation['nopayActive'] ?? false),
-                'ot_morning' => (bool) ($compensation['morningOt'] ?? false),
-                'ot_evening' => (bool) ($compensation['eveningOt'] ?? false),
+                'secondary_emp' => $resolveSetting(['secondaryEmp', 'secondary_emp'], false),
+                'primary_emp_basic' => $resolveSetting(['primaryEmploymentBasic', 'primary_emp_basic'], false),
+                'enable_epf_etf' => $resolveSetting(['enableEpfEtf', 'enable_epf_etf'], false),
+                'ot_active' => $resolveSetting(['otActive', 'ot_active'], false),
+                'ot_active_special' => $resolveSetting(['otActiveSpecial', 'ot_active_special'], false),
+                'early_deduction' => $resolveSetting(['earlyDeduction', 'early_deduction'], false),
+                'increment_active' => $resolveSetting(['incrementActive', 'increment_active'], false),
+                'active_nopay' => $resolveSetting(['nopayActive', 'active_nopay', 'nopay_active'], false),
+                'ot_morning' => $resolveSetting(['morningOt', 'ot_morning'], false),
+                'ot_evening' => $resolveSetting(['eveningOt', 'ot_evening'], false),
+                'ot_morning_special' => $resolveSetting(['morningOtSpecial', 'ot_morning_special'], false),
+                'ot_evening_special' => $resolveSetting(['eveningOtSpecial', 'ot_evening_special'], false),
                 'ot_morning_rate' => $this->numberOrZero($compensation['ot_morning_rate'] ?? null),
                 'ot_night_rate' => $this->numberOrZero($compensation['ot_night_rate'] ?? null),
-                'br1' => (bool) ($compensation['budgetaryReliefAllowance2015'] ?? false),
-                'br2' => (bool) ($compensation['budgetaryReliefAllowance2016'] ?? false),
-                'stamp' => (bool) ($compensation['stamp'] ?? false),
+                'ot_morning_rate_special' => $this->numberOrZero($compensation['ot_morning_rate_special'] ?? null),
+                'ot_night_rate_special' => $this->numberOrZero($compensation['ot_night_rate_special'] ?? null),
+                'br1' => $resolveSetting(['budgetaryReliefAllowance2015', 'br1'], false),
+                'br2' => $resolveSetting(['budgetaryReliefAllowance2016', 'br2'], false),
+                'stamp' => $resolveSetting(['stamp'], false),
                 'employee_category' => $organization['employeeCategory'] ?? 'Non-Executive',
-                'monthly_bonus' => $this->numberOrZero($compensation['monthlyBonus'] ?? null),
-                'sports_fund_percentage' => $this->numberOrNull($compensation['sportsFundPercentage'] ?? null),
-                'staff_fund_amount' => $this->numberOrZero($compensation['staffFundAmount'] ?? null),
-            ]);
+                'monthly_bonus' => $this->numberOrZero($compensation['monthlyBonus'] ?? $compensation['monthly_bonus'] ?? null),
+                'sports_fund_percentage' => $this->numberOrNull($compensation['sportsFundPercentage'] ?? $compensation['sports_fund_percentage'] ?? null),
+                'staff_fund_amount' => $this->numberOrZero($compensation['staffFundAmount'] ?? $compensation['staff_fund_amount'] ?? null),
+            ];
+
+            if (\Illuminate\Support\Facades\Schema::hasColumn('compensation', 'paye_active')) {
+                $compPayload['paye_active'] = $resolveSetting(['payeActive', 'paye_active'], false);
+            }
+            if (\Illuminate\Support\Facades\Schema::hasColumn('compensation', 'holiday_processing')) {
+                $compPayload['holiday_processing'] = $resolveSetting(['holidayProcessing', 'holiday_processing'], false);
+            }
+            if (\Illuminate\Support\Facades\Schema::hasColumn('compensation', 'off_day_processing')) {
+                $compPayload['off_day_processing'] = $resolveSetting(['offDayProcessing', 'off_day_processing'], false);
+            }
+
+            compensation::create($compPayload);
 
             // Add default roster
             // $employee->rosters()->create([
@@ -1178,7 +1204,7 @@ class EmployeeController extends Controller
             ]);
 
             $compensationValidator = Validator::make($compensation, [
-                'basicSalary' => 'required|numeric',
+                'basicSalary' => 'sometimes|numeric',
                 'incrementValue' => 'nullable|numeric',
                 'incrementEffectiveFrom' => 'nullable|date',
                 'bankName' => 'nullable|string|max:100',
@@ -1188,20 +1214,31 @@ class EmployeeController extends Controller
                 'bankAccountNo' => 'nullable|string|max:50',
                 'accountHolderName' => 'nullable|string|max:150',
                 'comments' => 'nullable|string|max:255',
-                'secondaryEmp' => 'required|boolean',
-                'primaryEmploymentBasic' => 'required|boolean',
-                'enableEpfEtf' => 'required|boolean',
-                'otActive' => 'required|boolean',
-                'earlyDeduction' => 'required|boolean',
-                'incrementActive' => 'required|boolean',
-                'nopayActive' => 'required|boolean',
-                'morningOt' => 'required|boolean',
-                'eveningOt' => 'required|boolean',
+                'secondaryEmp' => 'sometimes|boolean',
+                'primaryEmploymentBasic' => 'sometimes|boolean',
+                'enableEpfEtf' => 'sometimes|boolean',
+                'otActive' => 'sometimes|boolean',
+                'otActiveSpecial' => 'sometimes|boolean',
+                'earlyDeduction' => 'sometimes|boolean',
+                'incrementActive' => 'sometimes|boolean',
+                'nopayActive' => 'sometimes|boolean',
+                'morningOt' => 'sometimes|boolean',
+                'eveningOt' => 'sometimes|boolean',
+                'morningOtSpecial' => 'sometimes|boolean',
+                'eveningOtSpecial' => 'sometimes|boolean',
                 'ot_morning_rate' => 'nullable|numeric',
                 'ot_night_rate' => 'nullable|numeric',
-                'budgetaryReliefAllowance2015' => 'required|boolean',
-                'budgetaryReliefAllowance2016' => 'required|boolean',
-                'stamp' => 'required|boolean',
+                'ot_morning_rate_special' => 'nullable|numeric',
+                'ot_night_rate_special' => 'nullable|numeric',
+                'budgetaryReliefAllowance2015' => 'sometimes|boolean',
+                'budgetaryReliefAllowance2016' => 'sometimes|boolean',
+                'stamp' => 'sometimes|boolean',
+                'payeActive' => 'sometimes|boolean',
+                'paye_active' => 'sometimes|boolean',
+                'holidayProcessing' => 'sometimes|boolean',
+                'holiday_processing' => 'sometimes|boolean',
+                'offDayProcessing' => 'sometimes|boolean',
+                'off_day_processing' => 'sometimes|boolean',
             ]);
 
             $organizationValidator = Validator::make($organization, [
@@ -1490,36 +1527,83 @@ class EmployeeController extends Controller
 
             // Update compensation record
             if ($employee->compensation) {
-                $employee->compensation()->update([
-                    'basic_salary' => $compensation['basicSalary'],
-                    'increment_value' => $this->numberOrNull($compensation['incrementValue'] ?? null),
-                    'increment_effected_date' => empty($compensation['incrementEffectiveFrom']) ? null : $compensation['incrementEffectiveFrom'],
-                    'bank_name' => $compensation['bankName'] ?? null,
-                    'branch_name' => $compensation['branchName'] ?? null,
-                    'bank_code' => $compensation['bankCode'] ?? null,
-                    'branch_code' => $compensation['branchCode'] ?? null,
-                    'bank_account_no' => $compensation['bankAccountNo'] ?? null,
-                    'account_holder_name' => $compensation['accountHolderName'] ?? null,
-                    'comments' => $compensation['comments'] ?? null,
-                    'secondary_emp' => (bool) ($compensation['secondaryEmp'] ?? false),
-                    'primary_emp_basic' => (bool) ($compensation['primaryEmploymentBasic'] ?? false),
-                    'enable_epf_etf' => (bool) ($compensation['enableEpfEtf'] ?? false),
-                    'ot_active' => (bool) ($compensation['otActive'] ?? false),
-                    'early_deduction' => (bool) ($compensation['earlyDeduction'] ?? false),
-                    'increment_active' => (bool) ($compensation['incrementActive'] ?? false),
-                    'active_nopay' => (bool) ($compensation['nopayActive'] ?? false),
-                    'ot_morning' => (bool) ($compensation['morningOt'] ?? false),
-                    'ot_evening' => (bool) ($compensation['eveningOt'] ?? false),
-                    'ot_morning_rate' => $this->numberOrZero($compensation['ot_morning_rate'] ?? null),
-                    'ot_night_rate' => $this->numberOrZero($compensation['ot_night_rate'] ?? null),
-                    'br1' => (bool) ($compensation['budgetaryReliefAllowance2015'] ?? false),
-                    'br2' => (bool) ($compensation['budgetaryReliefAllowance2016'] ?? false),
-                    'stamp' => (bool) ($compensation['stamp'] ?? false),
-                    'employee_category' => $organization['employeeCategory'] ?? 'Non-Executive',
-                    'monthly_bonus' => $this->numberOrZero($compensation['monthlyBonus'] ?? null),
-                    'sports_fund_percentage' => $this->numberOrNull($compensation['sportsFundPercentage'] ?? null),
-                    'staff_fund_amount' => $this->numberOrZero($compensation['staffFundAmount'] ?? null),
-                ]);
+                $compRecord = $employee->compensation;
+
+                $resolveSetting = function (array $keys, $existingVal, $defaultIfNull = false) use ($compensation) {
+                    foreach ($keys as $k) {
+                        if (array_key_exists($k, $compensation) && $compensation[$k] !== null && $compensation[$k] !== '') {
+                            return filter_var($compensation[$k], FILTER_VALIDATE_BOOLEAN);
+                        }
+                    }
+                    return $existingVal !== null ? (bool) $existingVal : $defaultIfNull;
+                };
+
+                $resolveValue = function (array $keys, $existingVal) use ($compensation) {
+                    foreach ($keys as $k) {
+                        if (array_key_exists($k, $compensation)) {
+                            return $compensation[$k];
+                        }
+                    }
+                    return $existingVal;
+                };
+
+                $compUpdate = [
+                    'basic_salary' => $resolveValue(['basicSalary', 'basic_salary'], $compRecord->basic_salary),
+                    'increment_value' => array_key_exists('incrementValue', $compensation) || array_key_exists('increment_value', $compensation)
+                        ? $this->numberOrNull($compensation['incrementValue'] ?? $compensation['increment_value'] ?? null)
+                        : $compRecord->increment_value,
+                    'increment_effected_date' => array_key_exists('incrementEffectiveFrom', $compensation) || array_key_exists('increment_effected_date', $compensation)
+                        ? (empty($compensation['incrementEffectiveFrom'] ?? $compensation['increment_effected_date']) ? null : ($compensation['incrementEffectiveFrom'] ?? $compensation['increment_effected_date']))
+                        : $compRecord->increment_effected_date,
+                    'bank_name' => $resolveValue(['bankName', 'bank_name'], $compRecord->bank_name),
+                    'branch_name' => $resolveValue(['branchName', 'branch_name'], $compRecord->branch_name),
+                    'bank_code' => $resolveValue(['bankCode', 'bank_code'], $compRecord->bank_code),
+                    'branch_code' => $resolveValue(['branchCode', 'branch_code'], $compRecord->branch_code),
+                    'bank_account_no' => $resolveValue(['bankAccountNo', 'bank_account_no'], $compRecord->bank_account_no),
+                    'account_holder_name' => $resolveValue(['accountHolderName', 'account_holder_name'], $compRecord->account_holder_name),
+                    'comments' => $resolveValue(['comments'], $compRecord->comments),
+                    'secondary_emp' => $resolveSetting(['secondaryEmp', 'secondary_emp'], $compRecord->secondary_emp, false),
+                    'primary_emp_basic' => $resolveSetting(['primaryEmploymentBasic', 'primary_emp_basic'], $compRecord->primary_emp_basic, false),
+                    'enable_epf_etf' => $resolveSetting(['enableEpfEtf', 'enable_epf_etf'], $compRecord->enable_epf_etf, true),
+                    'ot_active' => $resolveSetting(['otActive', 'ot_active'], $compRecord->ot_active, false),
+                    'ot_active_special' => $resolveSetting(['otActiveSpecial', 'ot_active_special'], $compRecord->ot_active_special, false),
+                    'early_deduction' => $resolveSetting(['earlyDeduction', 'early_deduction'], $compRecord->early_deduction, false),
+                    'increment_active' => $resolveSetting(['incrementActive', 'increment_active'], $compRecord->increment_active, false),
+                    'active_nopay' => $resolveSetting(['nopayActive', 'active_nopay', 'nopay_active'], $compRecord->active_nopay, false),
+                    'ot_morning' => $resolveSetting(['morningOt', 'ot_morning'], $compRecord->ot_morning, false),
+                    'ot_evening' => $resolveSetting(['eveningOt', 'ot_evening'], $compRecord->ot_evening, false),
+                    'ot_morning_special' => $resolveSetting(['morningOtSpecial', 'ot_morning_special'], $compRecord->ot_morning_special, false),
+                    'ot_evening_special' => $resolveSetting(['eveningOtSpecial', 'ot_evening_special'], $compRecord->ot_evening_special, false),
+                    'ot_morning_rate' => array_key_exists('ot_morning_rate', $compensation) ? $this->numberOrZero($compensation['ot_morning_rate']) : $compRecord->ot_morning_rate,
+                    'ot_night_rate' => array_key_exists('ot_night_rate', $compensation) ? $this->numberOrZero($compensation['ot_night_rate']) : $compRecord->ot_night_rate,
+                    'ot_morning_rate_special' => array_key_exists('ot_morning_rate_special', $compensation) ? $this->numberOrZero($compensation['ot_morning_rate_special']) : $compRecord->ot_morning_rate_special,
+                    'ot_night_rate_special' => array_key_exists('ot_night_rate_special', $compensation) ? $this->numberOrZero($compensation['ot_night_rate_special']) : $compRecord->ot_night_rate_special,
+                    'br1' => $resolveSetting(['budgetaryReliefAllowance2015', 'br1'], $compRecord->br1, false),
+                    'br2' => $resolveSetting(['budgetaryReliefAllowance2016', 'br2'], $compRecord->br2, false),
+                    'stamp' => $resolveSetting(['stamp'], $compRecord->stamp, false),
+                    'employee_category' => $organization['employeeCategory'] ?? $compRecord->employee_category ?? 'Non-Executive',
+                    'monthly_bonus' => array_key_exists('monthlyBonus', $compensation) || array_key_exists('monthly_bonus', $compensation)
+                        ? $this->numberOrZero($compensation['monthlyBonus'] ?? $compensation['monthly_bonus'] ?? null)
+                        : $compRecord->monthly_bonus,
+                    'sports_fund_percentage' => array_key_exists('sportsFundPercentage', $compensation) || array_key_exists('sports_fund_percentage', $compensation)
+                        ? $this->numberOrNull($compensation['sportsFundPercentage'] ?? $compensation['sports_fund_percentage'] ?? null)
+                        : $compRecord->sports_fund_percentage,
+                    'staff_fund_amount' => array_key_exists('staffFundAmount', $compensation) || array_key_exists('staff_fund_amount', $compensation)
+                        ? $this->numberOrZero($compensation['staffFundAmount'] ?? $compensation['staff_fund_amount'] ?? null)
+                        : $compRecord->staff_fund_amount,
+                ];
+
+                if (\Illuminate\Support\Facades\Schema::hasColumn('compensation', 'paye_active')) {
+                    $compUpdate['paye_active'] = $resolveSetting(['payeActive', 'paye_active'], $compRecord->paye_active, false);
+                }
+                if (\Illuminate\Support\Facades\Schema::hasColumn('compensation', 'holiday_processing')) {
+                    $compUpdate['holiday_processing'] = $resolveSetting(['holidayProcessing', 'holiday_processing'], $compRecord->holiday_processing, false);
+                }
+                if (\Illuminate\Support\Facades\Schema::hasColumn('compensation', 'off_day_processing')) {
+                    $compUpdate['off_day_processing'] = $resolveSetting(['offDayProcessing', 'off_day_processing'], $compRecord->off_day_processing ?? false, false);
+                }
+
+                $compRecord->update($compUpdate);
             }
 
             DB::commit();

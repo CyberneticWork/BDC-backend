@@ -24,6 +24,8 @@ use Carbon\Carbon;
 use App\Models\EmployeeBonus;
 use App\Models\SalaryProcessAudit;
 use App\Models\MonthlyLateDeductionItem;
+use App\Models\Holiday;
+use App\Models\PayeTaxTable;
 use App\Services\CompanyLocationService;
 use App\Services\CompanyProcessSettings;
 use App\Services\ContractEmployeeScope;
@@ -1158,6 +1160,16 @@ public function getEmployeesByMonthAndCompany(Request $request)
         $locationJoinSql = $hasLocations ? 'LEFT JOIN company_locations cl ON oa.location_id = cl.id' : '';
         $locationGroupSql = $hasLocations ? ', oa.location_id, cl.name' : '';
 
+        $hasPayeActiveCol = \Illuminate\Support\Facades\Schema::hasColumn('compensation', 'paye_active');
+        $hasHolidayProcessingCol = \Illuminate\Support\Facades\Schema::hasColumn('compensation', 'holiday_processing');
+        $hasOffDayProcessingCol = \Illuminate\Support\Facades\Schema::hasColumn('compensation', 'off_day_processing');
+        $payeSelectSql = $hasPayeActiveCol ? 'comp.paye_active,' : '1 AS paye_active,';
+        $holidaySelectSql = $hasHolidayProcessingCol ? 'comp.holiday_processing,' : '0 AS holiday_processing,';
+        $offDaySelectSql = $hasOffDayProcessingCol ? 'comp.off_day_processing,' : '0 AS off_day_processing,';
+        $payeGroupSql = $hasPayeActiveCol ? ', comp.paye_active' : '';
+        $holidayGroupSql = $hasHolidayProcessingCol ? ', comp.holiday_processing' : '';
+        $offDayGroupSql = $hasOffDayProcessingCol ? ', comp.off_day_processing' : '';
+
         $query = "
             SELECT
                 e.id,
@@ -1192,6 +1204,11 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 comp.br1,
                 comp.br2,
                 comp.stamp,
+                {$payeSelectSql}
+                {$holidaySelectSql}
+                {$offDaySelectSql}
+                comp.active_nopay,
+                oa.day_off,
                 comp.bank_name,
                 comp.branch_name,
                 comp.bank_account_no,
@@ -1375,7 +1392,7 @@ public function getEmployeesByMonthAndCompany(Request $request)
             $params[] = "%{$search}%";
         }
 
-        $query .= " GROUP BY e.id, e.attendance_employee_no, e.full_name, e.nic, c.name, d.name, sd.name, comp.basic_salary, comp.monthly_bonus, comp.sports_fund_percentage, comp.staff_fund_amount, c.default_sports_fund_percentage, c.nopay_working_days, comp.br1, comp.br2, comp.increment_active, comp.increment_value, comp.increment_effected_date, comp.ot_morning, comp.ot_evening, comp.enable_epf_etf, comp.stamp, comp.bank_name, comp.branch_name, comp.bank_account_no, c.id, oa.department_id, oa.probationary_period, oa.date_of_joining, e.epf, cd.permanent_address, cd.mobile_line, cd.emg_name, cd.emg_relationship, cd.emg_tel{$locationGroupSql}";
+        $query .= " GROUP BY e.id, e.attendance_employee_no, e.full_name, e.nic, c.name, d.name, sd.name, comp.basic_salary, comp.monthly_bonus, comp.sports_fund_percentage, comp.staff_fund_amount, c.default_sports_fund_percentage, c.nopay_working_days, comp.br1, comp.br2, comp.increment_active, comp.increment_value, comp.increment_effected_date, comp.ot_morning, comp.ot_evening, comp.enable_epf_etf, comp.stamp{$payeGroupSql}{$holidayGroupSql}{$offDayGroupSql}, comp.active_nopay, oa.day_off, comp.bank_name, comp.branch_name, comp.bank_account_no, c.id, oa.department_id, oa.probationary_period, oa.date_of_joining, e.epf, cd.permanent_address, cd.mobile_line, cd.emg_name, cd.emg_relationship, cd.emg_tel{$locationGroupSql}";
 
         $results = DB::select($query, $params);
         $data = [];
@@ -1430,7 +1447,9 @@ public function getEmployeesByMonthAndCompany(Request $request)
                 ];
             }
 
-            $stampValue = ((int)($result->stamp ?? 0) === 1) ? 25 : 0;
+            $empCompId = (int) ($employeeData['company_id'] ?? 0);
+            $isStampPayeHolidayOn = $empCompId > 0 && CompanyProcessSettings::usesStampDutyPayeHoliday($empCompId);
+            $stampValue = ($isStampPayeHolidayOn && (int)($result->stamp ?? 0) === 1) ? 25 : 0;
             $employeeData['stamp'] = $stampValue;
 
             $basicSalary = (float)($employeeData['basic_salary'] ?? 0);
@@ -1489,10 +1508,10 @@ public function getEmployeesByMonthAndCompany(Request $request)
             $majorLateNoPaysSql = (float)($employeeData['major_late_nopays'] ?? 0);
             $monthlyLateNoPays = (float)($employeeData['monthly_late_nopays'] ?? 0);
 
-            $fullDayNoPayDeduction = round($weekdayNoPays * $perDaySalary, 2);
-            $saturdayNoPayBonusDeduction = round($saturdayNoPays * $perDaySalary, 2);
-
-            $earlyOutNoPayDeduction = round($earlyOutNoPays * $perDaySalary, 2);
+            $isNopayActive = !empty($employeeData['active_nopay']);
+            $fullDayNoPayDeduction = $isNopayActive ? round($weekdayNoPays * $perDaySalary, 2) : 0.0;
+            $saturdayNoPayBonusDeduction = $isNopayActive ? round($saturdayNoPays * $perDaySalary, 2) : 0.0;
+            $earlyOutNoPayDeduction = $isNopayActive ? round($earlyOutNoPays * $perDaySalary, 2) : 0.0;
 
             // Late NoPay amount is computed after monthly bonus + company nopay_working_days below
             $majorLateDeduction = 0.0;
@@ -1703,8 +1722,18 @@ public function getEmployeesByMonthAndCompany(Request $request)
             foreach ($deductionsArr as $deduction) {
                 $cat = strtoupper($deduction['category'] ?? '');
                 $amount = (float) ($deduction['amount'] ?? 0);
+                $dName = strtoupper(trim((string)($deduction['name'] ?? '')));
+                $dId = (string)($deduction['id'] ?? '');
+
                 if (in_array($cat, ['EPF', 'ETF'], true)) {
                     $epfEtfDeductions += $amount;
+                } elseif (
+                    in_array($cat, ['TAX', 'STAMP', 'FISH'], true)
+                    || in_array($dName, ['PAYE', 'APIT', 'PAYE / APIT', 'STAMP', 'STAMP DUTY', 'FISH'], true)
+                    || in_array($dId, ['paye_deduction', 'stamp_deduction', 'fish_deduction'], true)
+                ) {
+                    // Handled specifically and separately in statutory and feature payroll steps
+                    continue;
                 } elseif (
                     !empty($deduction['is_advance'])
                     || SalaryAdvanceService::isNamedAdvanceDeduction($deduction['name'] ?? '')
@@ -1786,111 +1815,411 @@ public function getEmployeesByMonthAndCompany(Request $request)
             $basicDeductionsTotal += $salaryAdvanceBasic;
             $bonusDeductionsTotal += $salaryAdvanceBonus;
 
-            // Totals
-            $grossSalary = $basicGross + $bonusGross + $morning_ot_fees + $night_ot_fees + $holiday_ot_fees;
-            $totalDeductions = $basicDeductionsTotal + $bonusDeductionsTotal + $stampValue;
-            $netSalary = $grossSalary - $totalDeductions;
+            // Fish Deduction (Company-specific add-on for JC Foods Processing)
+            $fishDeductionTotal = 0.0;
+            $empCompId = (int) ($employeeData['company_id'] ?? 0);
+            if ($empCompId > 0 && CompanyProcessSettings::usesFishDeduction($empCompId)) {
+                $fishDeductionTotal = (float) \App\Models\FishDeduction::query()
+                    ->where('employee_id', (int) $employeeData['id'])
+                    ->where('salary_year', (int) $year)
+                    ->where('salary_month', (int) $month)
+                    ->where('status', '!=', 'Cancelled')
+                    ->sum('amount');
+            }
 
-            $employeeData['salary_breakdown'] = [
-                'basic_salary' => round($basicSalary, 2),
-                'br_allowance' => round($brAllowance, 2),
-                'monthly_bonus' => round($monthlyBonusTotal, 2),
-                'total_allowances' => round($totalAllowances, 2),
-                'total_bonuses' => round($totalBonuses, 2),
-                'total_dinner_allowance' => round($dinnerAllowanceValue, 2),
-                'per_day_salary' => round($perDaySalary, 3),
-                'ot_morning_fees' => round($morning_ot_fees, 2),
-                'ot_night_fees' => round($night_ot_fees, 2),
-                'holiday_ot_fees' => round($holiday_ot_fees, 2),
-                'ot_morning_hours' => round((float)$otRows->sum('morning_ot') + (float)$otRows->sum('morning_ot_special'), 2),
-                'ot_night_hours' => round((float)$otRows->sum('afternoon_ot') + (float)$otRows->sum('evening_ot_special'), 2),
-                'holiday_ot_hours' => round((float)$otRows->sum('holiday_ot_hours'), 2),
+            if ($fishDeductionTotal > 0) {
+                $bonusDeductionsTotal += $fishDeductionTotal;
+                $hasFishItem = false;
+                foreach ($deductionsArr as $ded) {
+                    if (strtoupper($ded['name'] ?? '') === 'FISH' || ($ded['id'] ?? '') === 'fish_deduction') {
+                        $hasFishItem = true;
+                        break;
+                    }
+                }
+                if (!$hasFishItem) {
+                    $deductionsArr[] = [
+                        'id' => 'fish_deduction',
+                        'name' => 'FISH',
+                        'amount' => round($fishDeductionTotal, 2),
+                        'category' => 'fish',
+                        'is_custom' => 1,
+                    ];
+                }
+                $employeeData['deductions'] = $deductionsArr;
+            }
 
-                'full_day_nopay_deduction' => round($fullDayNoPayDeduction, 2),
-                'saturday_nopay_deduction' => round($saturdayNoPayBonusDeduction, 2),
-                'early_out_nopay_deduction' => round($earlyOutNoPayDeduction, 2),
-                'short_leave_deduction' => round($shortLeaveDeduction, 2),
-                'half_day_deduction' => round($halfDayDeduction, 2),
-                // Leave-form shortfall NoPay: split basic + monthly bonus
-                'leave_shortfall_nopay_days' => $leaveShortfallNoPay['days'],
-                'leave_shortfall_nopay_basic_deduction' => $leaveShortfallBasicDeduction,
-                'leave_shortfall_nopay_bonus_deduction' => $leaveShortfallBonusDeduction,
-                'leave_shortfall_nopay_total' => $leaveShortfallNoPay['total_amount'],
-                'leave_shortfall_nopay_basic_per_day' => $leaveShortfallNoPay['basic_per_day'],
-                'leave_shortfall_nopay_bonus_per_day' => $leaveShortfallNoPay['bonus_per_day'],
-                'leave_shortfall_nopay_combined_per_day' => $leaveShortfallNoPay['combined_per_day'],
-                'nopay_working_days' => $leaveShortfallNoPay['divisor'],
-                // Late deduction NoPay: (basic + monthly bonus) / company_days × days — deducted from monthly bonus
-                'major_late_deduction' => round($majorLateDeduction, 2),
-                'monthly_late_nopay_deduction' => round($majorLateDeduction, 2),
-                'monthly_late_nopay_days' => $lateBonusNoPay['days'],
-                'late_nopay_deduct_from' => 'bonus',
-                'late_nopay_source' => $lateBonusNoPay['source'],
-                'late_nopay_rate_base' => $lateBonusNoPay['rate_base'] ?? 'basic_plus_bonus',
-                'late_nopay_per_day_from_bonus' => $lateBonusNoPay['per_day_from_bonus'],
-                'late_nopay_per_day_from_basic' => $lateBonusNoPay['per_day_from_basic'],
-                'late_nopay_per_day_from_total' => $lateBonusNoPay['per_day_from_total'] ?? $lateBonusNoPay['per_day_from_bonus'],
-                'excess_late_nopay_basic' => round((float) ($excessLate['basic_amount'] ?? 0), 2),
-                'excess_late_nopay_bonus' => round((float) ($excessLate['bonus_amount'] ?? 0), 2),
-                'excess_late_nopay_days' => $excessLate['days'] ?? 0,
-                'excess_late_minutes' => $excessLate['minutes'] ?? 0,
-                // Late grace rule (add-on): month excess over start + grace, 1 NoPay day per block
-                'late_grace_enabled' => (bool) $lateGrace,
-                'late_grace_nopay_days' => $lateGrace['days'] ?? 0,
-                'late_grace_excess_minutes' => $lateGrace['excess_minutes'] ?? 0,
-                'late_grace_late_days' => $lateGrace['late_days'] ?? 0,
-                'late_grace_nopay_amount' => round((float) ($lateGrace['amount'] ?? 0), 2),
-                'late_grace_nopay_basic' => round($lateGraceBasic, 2),
-                'late_grace_nopay_bonus' => round($lateGraceBonus, 2),
-                'late_grace_deduct_from' => $lateGrace['deduct_from'] ?? null,
-                'late_grace_start_time' => $lateGrace['config']['start_time'] ?? null,
-                'late_grace_grace_minutes' => $lateGrace['config']['grace_minutes'] ?? null,
-                'late_grace_block_minutes' => $lateGrace['config']['block_minutes'] ?? null,
-                'late_grace_days_per_block' => $lateGrace['config']['days_per_block'] ?? null,
-                'late_grace_detail' => $lateGrace['days_detail'] ?? [],
-                // Total NoPay amount deducted from monthly bonus
-                'bonus_nopay_total' => $bonusNopayTotal,
-                'bonus_nopay_from_leave_shortfall' => $leaveShortfallBonusDeduction,
-                'bonus_nopay_from_late' => round($majorLateDeduction + $lateGraceBonus, 2),
-                'personal_out_nopay_days' => round($personalOutNoPayDays, 2),
-                'personal_out_nopay_deduction' => $personalOutDeduction,
-                'pre_hire_nopay_days' => $preHireDays,
-                'pre_hire_nopay_basic' => $preHireBasicDeduction,
-                'pre_hire_nopay_bonus' => $preHireBonusDeduction,
-                'date_of_joining' => $employeeData['date_of_joining'] ?? null,
-                'epf_employee_deduction' => round($epfEmployeeDeduction, 2),
-                'epf_employer_contribution' => round($epfEmployerContribution, 2),
-                'etf_employer_contribution' => round($etfEmployerContribution, 2),
-                'epf_etf_base' => round($epfEtfBase, 2),
-                'epf_basic_nopay' => round($basicNoPayForEpf, 2),
-                'epf_etf_fixed_deductions' => round($epfEtfDeductions, 2),
-                'sports_fund_deduction' => $sportsFundDeduction,
-                'staff_fund_deduction' => $staffFundDeduction,
-                'probation_deduction' => round($probationDeduction, 2),
-                'stamp_duty' => $stampValue,
+            $isJayseaProcess = $empCompId > 0 && CompanyProcessSettings::usesJayseaFoodSalaryProcess($empCompId);
+            $isStampPayeHolidayOn = $empCompId > 0 && CompanyProcessSettings::usesStampDutyPayeHoliday($empCompId);
 
-                'loan_principal' => round($loanPrincipal, 2),
-                'loan_interest' => round($loanInterest, 2),
-                'loan_deduct_from' => $loanDeductFrom,
-                'loan_installment_deduct_from' => strtolower((string) ($employeeData['loan_installment_deduct_from'] ?? $loanDeductFrom)),
-                'loan_interest_deduct_from' => strtolower((string) ($employeeData['loan_interest_deduct_from'] ?? $loanDeductFrom)),
-                'loan_basic_principal' => round($loanBasicPrincipal, 2),
-                'loan_basic_interest' => round($loanBasicInterest, 2),
-                'loan_bonus_principal' => round($loanBonusPrincipal, 2),
-                'loan_bonus_interest' => round($loanBonusInterest, 2),
+            if ($isJayseaProcess) {
+                // =========================================================================
+                // Feature 2: Jaysea Food Salary Process Workflow
+                // =========================================================================
+                $rawBasic = (float)($result->basic_salary ?? 0);
+                $rawIncrement = (!empty($employeeData['increment_active']) && !empty($employeeData['increment_effected_date']) && strtotime($employeeData['increment_effected_date']) <= strtotime($endDate))
+                    ? (float)($employeeData['increment_value'] ?? 0)
+                    : 0.0;
+                $rawIncrement += $brAllowance;
 
-                'salary_advance_basic' => round($salaryAdvanceBasic, 2),
-                'salary_advance_bonus' => round($salaryAdvanceBonus, 2),
-                'salary_advance' => round($salaryAdvanceBasic + $salaryAdvanceBonus, 2),
+                $divisor = (float)($employeeData['nopay_working_days'] ?? 30);
+                if ($divisor < 1) $divisor = 30.0;
+                $dailyRate = round($rawBasic / $divisor, 2);
 
-                'basic_deductions_total' => round($basicDeductionsTotal, 2),
-                'bonus_deductions_total' => round($bonusDeductionsTotal, 2),
-                'total_fixed_deductions' => round($bonusFixedDeductions + $epfEtfDeductions, 2),
+                // Off-Day and Holiday calculation using actual attendance
+                $configuredDayOff = trim((string)($employeeData['day_off'] ?? ''));
+                $offDayProcessingActive = $isStampPayeHolidayOn && !empty($employeeData['off_day_processing']);
+                $holidayProcessingActive = $isStampPayeHolidayOn && !empty($employeeData['holiday_processing']);
 
-                'net_salary' => round($netSalary, 2),
-                'gross_salary' => round($grossSalary, 2),
-                'total_deductions' => round($totalDeductions, 2),
-            ];
+                $holidayDates = [];
+                if (\Illuminate\Support\Facades\Schema::hasTable('holidays') && \Illuminate\Support\Facades\Schema::hasColumn('holidays', 'date')) {
+                    $holidayDates = Holiday::query()
+                        ->whereNull('deleted_at')
+                        ->whereBetween('date', [$startDate, $endDate])
+                        ->pluck('date')
+                        ->map(fn($d) => \Carbon\Carbon::parse($d)->toDateString())
+                        ->all();
+                }
+                $leaveCalDates = DB::table('leave_calendars')
+                    ->where(function ($q) use ($empCompId) {
+                        $q->where('company_id', $empCompId)
+                          ->orWhereNull('company_id');
+                    })
+                    ->whereNull('deleted_at')
+                    ->where(function ($q) use ($startDate, $endDate) {
+                        $q->where('start_date', '<=', $endDate)
+                          ->where('end_date', '>=', $startDate);
+                    })
+                    ->get();
+                foreach ($leaveCalDates as $cal) {
+                    $cur = \Carbon\Carbon::parse($cal->start_date);
+                    $cEnd = \Carbon\Carbon::parse($cal->end_date ?? $cal->start_date);
+                    while ($cur->lte($cEnd)) {
+                        $holidayDates[] = $cur->toDateString();
+                        $cur->addDay();
+                    }
+                }
+                $holidayDates = array_values(array_unique($holidayDates));
+
+                $workedDates = DB::table('time_cards')
+                    ->where('employee_id', $employeeData['id'])
+                    ->whereBetween('date', [$startDate, $endDate])
+                    ->whereNull('deleted_at')
+                    ->whereNotIn(DB::raw('LOWER(status)'), ['absent', 'rejected', 'leave'])
+                    ->pluck('date')
+                    ->map(fn($d) => \Carbon\Carbon::parse($d)->toDateString())
+                    ->unique()
+                    ->values()
+                    ->all();
+
+                $workedOffDays = [];
+                $workedHolidays = [];
+                $mCur = \Carbon\Carbon::parse($startDate);
+                $mEnd = \Carbon\Carbon::parse($endDate);
+                while ($mCur->lte($mEnd)) {
+                    $dStr = $mCur->toDateString();
+                    $dayName = $mCur->format('l');
+                    $isOff = $configuredDayOff !== '' && strcasecmp($configuredDayOff, 'none') !== 0 && strcasecmp($dayName, $configuredDayOff) === 0;
+                    $isHol = in_array($dStr, $holidayDates, true);
+                    $didWork = in_array($dStr, $workedDates, true);
+
+                    if ($didWork) {
+                        if ($isHol && $holidayProcessingActive) {
+                            $workedHolidays[] = $dStr;
+                        } elseif ($isOff && $offDayProcessingActive) {
+                            $workedOffDays[] = $dStr;
+                        } elseif ($isHol && !$holidayProcessingActive && $isOff && $offDayProcessingActive) {
+                            $workedOffDays[] = $dStr;
+                        }
+                    }
+                    $mCur->addDay();
+                }
+
+                $offDayCount = $offDayProcessingActive ? count($workedOffDays) : 0;
+                $holidayCount = $holidayProcessingActive ? count($workedHolidays) : 0;
+                $offDayAmount = round($dailyRate * $offDayCount, 2);
+                $holidayAmount = round($dailyRate * $holidayCount, 2);
+
+                $activeNopay = !empty($employeeData['active_nopay']);
+                $noPayCount = 0.0;
+                $noPayAmount = 0.0;
+                if ($activeNopay) {
+                    $noPayCount = (float) DB::table('no_pay_records')
+                        ->where('employee_id', $employeeData['id'])
+                        ->whereBetween('date', [$startDate, $endDate])
+                        ->whereNull('deleted_at')
+                        ->whereIn('status', ['Approved', 'Pending'])
+                        ->sum('no_pay_count');
+                    $noPayAmount = round($dailyRate * $noPayCount, 2);
+                }
+
+                // Step 1: Calculate Gross Salary (Total For EPF)
+                $grossSalary = max(0, round($rawBasic + $holidayAmount + $offDayAmount + $rawIncrement - $noPayAmount, 2));
+
+                // Step 2: Calculate EPF and ETF using calculated Gross Salary as contribution basis
+                $epfEtfBase = $grossSalary;
+                $epfEnabled = !empty($employeeData['enable_epf_etf']);
+                $epfEmployeeDeduction = $epfEnabled ? round($grossSalary * 0.08, 2) : 0.0;
+                $epfEmployerContribution = $epfEnabled ? round($grossSalary * 0.12, 2) : 0.0;
+                $etfEmployerContribution = $epfEnabled ? round($grossSalary * 0.03, 2) : 0.0;
+
+                // Step 3: Apply Deductions and Allowances
+                $payeAmount = 0.0;
+                $payeSettingActive = $isStampPayeHolidayOn && !empty($employeeData['paye_active']);
+                if ($payeSettingActive) {
+                    $payeCalc = PayeTaxTable::calculatePaye($grossSalary, $startDate);
+                    $payeAmount = (float) ($payeCalc['paye_amount'] ?? 0);
+                }
+                $stampDutyConfig = CompanyProcessSettings::stampDutyAmount($empCompId);
+                $stampActive = $isStampPayeHolidayOn && !empty($employeeData['stamp']);
+                $stampValue = $stampActive ? $stampDutyConfig : 0.0;
+
+                // Ensure clean deductionsArr without duplicate PAYE / Stamp entries
+                $deductionsArr = array_values(array_filter($deductionsArr, function ($ded) {
+                    $uName = strtoupper(trim((string)($ded['name'] ?? '')));
+                    $uId = (string)($ded['id'] ?? '');
+                    $uCat = strtoupper((string)($ded['category'] ?? ''));
+                    if (in_array($uName, ['PAYE', 'APIT', 'PAYE / APIT', 'STAMP', 'STAMP DUTY'], true)) return false;
+                    if (in_array($uId, ['paye_deduction', 'stamp_deduction'], true)) return false;
+                    if (in_array($uCat, ['TAX', 'STAMP'], true)) return false;
+                    return true;
+                }));
+
+                if ($payeAmount > 0) {
+                    $deductionsArr[] = [
+                        'id' => 'paye_deduction',
+                        'name' => 'PAYE / APIT',
+                        'amount' => round($payeAmount, 2),
+                        'category' => 'tax',
+                        'is_custom' => 1,
+                    ];
+                }
+
+                if ($stampValue > 0) {
+                    $deductionsArr[] = [
+                        'id' => 'stamp_deduction',
+                        'name' => 'Stamp Duty',
+                        'amount' => round($stampValue, 2),
+                        'category' => 'stamp',
+                        'is_custom' => 1,
+                    ];
+                }
+                $employeeData['deductions'] = $deductionsArr;
+
+                $salaryAdvanceTotal = round($salaryAdvanceBasic + $salaryAdvanceBonus, 2);
+                $loanTotal = round($loanBasicPrincipal + $loanBasicInterest + $loanBonusPrincipal + $loanBonusInterest, 2);
+                $totalDeductions = round(
+                    $epfEmployeeDeduction
+                    + $payeAmount
+                    + $stampValue
+                    + $salaryAdvanceTotal
+                    + $fishDeductionTotal
+                    + $loanTotal
+                    + $bonusFixedDeductions
+                    + $epfEtfDeductions,
+                    2
+                );
+
+                $otherAllowancesTotal = array_reduce($allowancesArr, fn($c, $i) => $c + (float)($i['amount'] ?? 0), 0);
+                $totalEarnings = round($grossSalary + $otherAllowancesTotal, 2);
+
+                // Step 4: Calculate Net Salary
+                $netSalary = max(0, round($totalEarnings - $totalDeductions, 2));
+
+                $employeeData['salary_breakdown'] = [
+                    'is_jaysea_process' => true,
+                    'basic_salary' => round($rawBasic, 2),
+                    'raw_basic' => round($rawBasic, 2),
+                    'increment_amount' => round($rawIncrement, 2),
+                    'br_allowance' => round($brAllowance, 2),
+                    'holiday_count' => $holidayCount,
+                    'holiday_amount' => $holidayAmount,
+                    'holiday_ot_fees' => $holidayAmount,
+                    'off_day_count' => $offDayCount,
+                    'off_day_amount' => $offDayAmount,
+                    'daily_rate' => $dailyRate,
+                    'per_day_salary' => $dailyRate,
+                    'divisor' => (int) $divisor,
+                    'nopay_working_days' => (int) $divisor,
+                    'nopay_days' => $noPayCount,
+                    'nopay_amount' => $noPayAmount,
+                    'full_day_nopay_deduction' => $noPayAmount,
+                    'gross_salary' => round($grossSalary, 2),
+                    'total_for_epf' => round($grossSalary, 2),
+                    'epf_etf_base' => round($grossSalary, 2),
+                    'epf_employee_deduction' => $epfEmployeeDeduction,
+                    'epf_employer_contribution' => $epfEmployerContribution,
+                    'etf_employer_contribution' => $etfEmployerContribution,
+                    'paye_amount' => round($payeAmount, 2),
+                    'paye_deduction' => round($payeAmount, 2),
+                    'paye_setting_active' => $payeSettingActive,
+                    'stamp_duty' => $stampValue,
+                    'fish_deduction' => round($fishDeductionTotal, 2),
+                    'salary_advance' => $salaryAdvanceTotal,
+                    'salary_advance_basic' => round($salaryAdvanceBasic, 2),
+                    'salary_advance_bonus' => round($salaryAdvanceBonus, 2),
+                    'loan_principal' => round($loanBasicPrincipal + $loanBonusPrincipal, 2),
+                    'loan_interest' => round($loanBasicInterest + $loanBonusInterest, 2),
+                    'total_fixed_deductions' => round($bonusFixedDeductions + $epfEtfDeductions, 2),
+                    'total_allowances' => round($otherAllowancesTotal, 2),
+                    'total_earnings' => round($totalEarnings, 2),
+                    'total_deductions' => round($totalDeductions, 2),
+                    'net_salary' => round($netSalary, 2),
+                    'bank_amount' => round($netSalary, 2),
+                    'cash_amount' => 0.0,
+                ];
+            } else {
+                // =========================================================================
+                // Standard SPM / Cybernetic Payroll Workflow
+                // =========================================================================
+                $payeAmount = 0.0;
+                $payeSettingActive = $isStampPayeHolidayOn && !empty($employeeData['paye_active']);
+                if ($payeSettingActive) {
+                    $payeCalc = PayeTaxTable::calculatePaye($basicGross, $startDate);
+                    $payeAmount = (float) ($payeCalc['paye_amount'] ?? 0);
+                }
+                $stampDutyConfig = CompanyProcessSettings::stampDutyAmount($empCompId);
+                $stampActive = $isStampPayeHolidayOn && !empty($employeeData['stamp']);
+                $stampValue = $stampActive ? $stampDutyConfig : 0.0;
+
+                // Clean deductionsArr without duplicate PAYE / Stamp entries
+                $deductionsArr = array_values(array_filter($deductionsArr, function ($ded) {
+                    $uName = strtoupper(trim((string)($ded['name'] ?? '')));
+                    $uId = (string)($ded['id'] ?? '');
+                    $uCat = strtoupper((string)($ded['category'] ?? ''));
+                    if (in_array($uName, ['PAYE', 'APIT', 'PAYE / APIT', 'STAMP', 'STAMP DUTY'], true)) return false;
+                    if (in_array($uId, ['paye_deduction', 'stamp_deduction'], true)) return false;
+                    if (in_array($uCat, ['TAX', 'STAMP'], true)) return false;
+                    return true;
+                }));
+
+                if ($payeAmount > 0) {
+                    $deductionsArr[] = [
+                        'id' => 'paye_deduction',
+                        'name' => 'PAYE / APIT',
+                        'amount' => round($payeAmount, 2),
+                        'category' => 'tax',
+                        'is_custom' => 1,
+                    ];
+                }
+
+                if ($stampValue > 0) {
+                    $deductionsArr[] = [
+                        'id' => 'stamp_deduction',
+                        'name' => 'Stamp Duty',
+                        'amount' => round($stampValue, 2),
+                        'category' => 'stamp',
+                        'is_custom' => 1,
+                    ];
+                }
+                $employeeData['deductions'] = $deductionsArr;
+
+                $grossSalary = $basicGross + $bonusGross + $morning_ot_fees + $night_ot_fees + $holiday_ot_fees;
+                $totalDeductions = $basicDeductionsTotal + $bonusDeductionsTotal + $stampValue + $payeAmount;
+                $netSalary = $grossSalary - $totalDeductions;
+
+                $employeeData['salary_breakdown'] = [
+                    'is_jaysea_process' => false,
+                    'basic_salary' => round($basicSalary, 2),
+                    'br_allowance' => round($brAllowance, 2),
+                    'monthly_bonus' => round($monthlyBonusTotal, 2),
+                    'total_allowances' => round($totalAllowances, 2),
+                    'total_bonuses' => round($totalBonuses, 2),
+                    'total_dinner_allowance' => round($dinnerAllowanceValue, 2),
+                    'per_day_salary' => round($perDaySalary, 3),
+                    'ot_morning_fees' => round($morning_ot_fees, 2),
+                    'ot_night_fees' => round($night_ot_fees, 2),
+                    'holiday_ot_fees' => round($holiday_ot_fees, 2),
+                    'ot_morning_hours' => round((float)$otRows->sum('morning_ot') + (float)$otRows->sum('morning_ot_special'), 2),
+                    'ot_night_hours' => round((float)$otRows->sum('afternoon_ot') + (float)$otRows->sum('evening_ot_special'), 2),
+                    'holiday_ot_hours' => round((float)$otRows->sum('holiday_ot_hours'), 2),
+
+                    'full_day_nopay_deduction' => round($fullDayNoPayDeduction, 2),
+                    'saturday_nopay_deduction' => round($saturdayNoPayBonusDeduction, 2),
+                    'early_out_nopay_deduction' => round($earlyOutNoPayDeduction, 2),
+                    'short_leave_deduction' => round($shortLeaveDeduction, 2),
+                    'half_day_deduction' => round($halfDayDeduction, 2),
+                    'leave_shortfall_nopay_days' => $leaveShortfallNoPay['days'],
+                    'leave_shortfall_nopay_basic_deduction' => $leaveShortfallBasicDeduction,
+                    'leave_shortfall_nopay_bonus_deduction' => $leaveShortfallBonusDeduction,
+                    'leave_shortfall_nopay_total' => $leaveShortfallNoPay['total_amount'],
+                    'leave_shortfall_nopay_basic_per_day' => $leaveShortfallNoPay['basic_per_day'],
+                    'leave_shortfall_nopay_bonus_per_day' => $leaveShortfallNoPay['bonus_per_day'],
+                    'leave_shortfall_nopay_combined_per_day' => $leaveShortfallNoPay['combined_per_day'],
+                    'nopay_working_days' => $leaveShortfallNoPay['divisor'],
+                    'major_late_deduction' => round($majorLateDeduction, 2),
+                    'monthly_late_nopay_deduction' => round($majorLateDeduction, 2),
+                    'monthly_late_nopay_days' => $lateBonusNoPay['days'],
+                    'late_nopay_deduct_from' => 'bonus',
+                    'late_nopay_source' => $lateBonusNoPay['source'],
+                    'late_nopay_rate_base' => $lateBonusNoPay['rate_base'] ?? 'basic_plus_bonus',
+                    'late_nopay_per_day_from_bonus' => $lateBonusNoPay['per_day_from_bonus'],
+                    'late_nopay_per_day_from_basic' => $lateBonusNoPay['per_day_from_basic'],
+                    'late_nopay_per_day_from_total' => $lateBonusNoPay['per_day_from_total'] ?? $lateBonusNoPay['per_day_from_bonus'],
+                    'excess_late_nopay_basic' => round((float) ($excessLate['basic_amount'] ?? 0), 2),
+                    'excess_late_nopay_bonus' => round((float) ($excessLate['bonus_amount'] ?? 0), 2),
+                    'excess_late_nopay_days' => $excessLate['days'] ?? 0,
+                    'excess_late_minutes' => $excessLate['minutes'] ?? 0,
+                    'late_grace_enabled' => (bool) $lateGrace,
+                    'late_grace_nopay_days' => $lateGrace['days'] ?? 0,
+                    'late_grace_excess_minutes' => $lateGrace['excess_minutes'] ?? 0,
+                    'late_grace_late_days' => $lateGrace['late_days'] ?? 0,
+                    'late_grace_nopay_amount' => round((float) ($lateGrace['amount'] ?? 0), 2),
+                    'late_grace_nopay_basic' => round($lateGraceBasic, 2),
+                    'late_grace_nopay_bonus' => round($lateGraceBonus, 2),
+                    'late_grace_deduct_from' => $lateGrace['deduct_from'] ?? null,
+                    'late_grace_start_time' => $lateGrace['config']['start_time'] ?? null,
+                    'late_grace_grace_minutes' => $lateGrace['config']['grace_minutes'] ?? null,
+                    'late_grace_block_minutes' => $lateGrace['config']['block_minutes'] ?? null,
+                    'late_grace_days_per_block' => $lateGrace['config']['days_per_block'] ?? null,
+                    'late_grace_detail' => $lateGrace['days_detail'] ?? [],
+                    'bonus_nopay_total' => $bonusNopayTotal,
+                    'bonus_nopay_from_leave_shortfall' => $leaveShortfallBonusDeduction,
+                    'bonus_nopay_from_late' => round($majorLateDeduction + $lateGraceBonus, 2),
+                    'personal_out_nopay_days' => round($personalOutNoPayDays, 2),
+                    'personal_out_nopay_deduction' => $personalOutDeduction,
+                    'pre_hire_nopay_days' => $preHireDays,
+                    'pre_hire_nopay_basic' => $preHireBasicDeduction,
+                    'pre_hire_nopay_bonus' => $preHireBonusDeduction,
+                    'date_of_joining' => $employeeData['date_of_joining'] ?? null,
+                    'epf_employee_deduction' => round($epfEmployeeDeduction, 2),
+                    'epf_employer_contribution' => round($epfEmployerContribution, 2),
+                    'etf_employer_contribution' => round($etfEmployerContribution, 2),
+                    'epf_etf_base' => round($epfEtfBase, 2),
+                    'epf_basic_nopay' => round($basicNoPayForEpf, 2),
+                    'epf_etf_fixed_deductions' => round($epfEtfDeductions, 2),
+                    'sports_fund_deduction' => $sportsFundDeduction,
+                    'staff_fund_deduction' => $staffFundDeduction,
+                    'probation_deduction' => round($probationDeduction, 2),
+                    'stamp_duty' => $stampValue,
+                    'paye_amount' => round($payeAmount, 2),
+                    'paye_deduction' => round($payeAmount, 2),
+                    'paye_setting_active' => $payeSettingActive,
+
+                    'loan_principal' => round($loanPrincipal, 2),
+                    'loan_interest' => round($loanInterest, 2),
+                    'loan_deduct_from' => $loanDeductFrom,
+                    'loan_installment_deduct_from' => strtolower((string) ($employeeData['loan_installment_deduct_from'] ?? $loanDeductFrom)),
+                    'loan_interest_deduct_from' => strtolower((string) ($employeeData['loan_interest_deduct_from'] ?? $loanDeductFrom)),
+                    'loan_basic_principal' => round($loanBasicPrincipal, 2),
+                    'loan_basic_interest' => round($loanBasicInterest, 2),
+                    'loan_bonus_principal' => round($loanBonusPrincipal, 2),
+                    'loan_bonus_interest' => round($loanBonusInterest, 2),
+
+                    'salary_advance_basic' => round($salaryAdvanceBasic, 2),
+                    'salary_advance_bonus' => round($salaryAdvanceBonus, 2),
+                    'salary_advance' => round($salaryAdvanceBasic + $salaryAdvanceBonus, 2),
+
+                    'fish_deduction' => round($fishDeductionTotal, 2),
+
+                    'basic_deductions_total' => round($basicDeductionsTotal, 2),
+                    'bonus_deductions_total' => round($bonusDeductionsTotal, 2),
+                    'total_fixed_deductions' => round($bonusFixedDeductions + $epfEtfDeductions, 2),
+
+                    'net_salary' => round($netSalary, 2),
+                    'gross_salary' => round($grossSalary, 2),
+                    'total_deductions' => round($totalDeductions, 2),
+                ];
+            }
 
             // Payload cleanup: Remove intermediate database layer attributes
             unset(

@@ -22,7 +22,7 @@ class NopayController extends Controller
     }
     public function index(Request $request)
     {
-        $query = NoPayRecord::with(['employee', 'processedBy'])
+        $query = NoPayRecord::with(['employee.compensation', 'employee.organizationAssignment.company', 'processedBy'])
             ->orderBy('date', 'desc')
             ->orderBy('id', 'desc');
 
@@ -51,11 +51,15 @@ class NopayController extends Controller
                 $q->where('company_id', $request->company_id);
             });
         }
+        // Only include employees with No-Pay enabled in Employment Settings
+        $query->whereHas('employee.compensation', function ($q) {
+            $q->where('active_nopay', true);
+        });
 
-        // Exclude NoPay before joining date â€” those days do not need to be filled
+        // Exclude NoPay before joining date — those days do not need to be filled
         $this->applyJoiningDateFilter($query);
 
-        // Search Filter (à¶¯à·à¶±à·Š Employee ID, Name à·ƒà·„ NIC à·€à¶½à·’à¶±à·Š à·ƒà¶»à·Šà¶ à·Š à¶šà·… à·„à·à¶š)
+        // Search Filter (Employee ID, Name and NIC)
         if ($request->filled('search')) {
             $search = $request->search;
             $query->where(function ($mainQuery) use ($search) {
@@ -72,16 +76,14 @@ class NopayController extends Controller
             $records = $query->paginate((int) $request->per_page);
 
             $records->getCollection()->transform(function ($record) {
-                $record->display_value = $this->getDisplayValue($record);
-                return $record;
+                return $this->enrichNoPayRecord($record);
             });
 
             return response()->json($records);
         }
 
         $records = $query->get()->map(function ($record) {
-            $record->display_value = $this->getDisplayValue($record);
-            return $record;
+            return $this->enrichNoPayRecord($record);
         });
 
         return response()->json($records);
@@ -109,6 +111,15 @@ class NopayController extends Controller
         $joinCheck = $this->assertDateOnOrAfterJoining((int) $request->employee_id, $request->date);
         if ($joinCheck !== null) {
             return response()->json($joinCheck, 422);
+        }
+
+        // Verify that No-Pay is active for this employee in Employment Settings
+        $comp = \App\Models\compensation::where('employee_id', $request->employee_id)->first();
+        if ($comp && !$comp->active_nopay) {
+            return response()->json([
+                'message' => 'Cannot add NoPay: No-Pay is disabled for this employee in Employment Settings.',
+                'employee_id' => ['No-Pay is disabled for this employee in Employment Settings.']
+            ], 422);
         }
 
         $record = NoPayRecord::create([
@@ -227,7 +238,10 @@ class NopayController extends Controller
         $date = $request->date;
         $status = $request->status ?? 'Pending';
 
-        $employeesQuery = employee::where('is_active', '1');
+        $employeesQuery = employee::where('is_active', '1')
+            ->whereHas('compensation', function ($q) {
+                $q->where('active_nopay', true);
+            });
 
         if ($request->filled('company_id')) {
             $companyId = $request->company_id;
@@ -377,7 +391,10 @@ class NopayController extends Controller
         $allSkipped = [];
 
         for ($date = $startDate->copy(); $date->lte($endDate); $date->addDay()) {
-            $employeesQuery = employee::where('is_active', '1');
+            $employeesQuery = employee::where('is_active', '1')
+                ->whereHas('compensation', function ($q) {
+                    $q->where('active_nopay', true);
+                });
 
             if ($request->filled('company_id')) {
                 $companyId = $request->company_id;
@@ -498,6 +515,11 @@ class NopayController extends Controller
                     });
             });
         }
+
+        // Only include employees with No-Pay enabled in Employment Settings
+        $query->whereHas('employee.compensation', function ($q) {
+            $q->where('active_nopay', true);
+        });
 
         // Exclude before-joining dates from stats (no need to fill)
         $this->applyJoiningDateFilter($query);
@@ -1053,6 +1075,31 @@ class NopayController extends Controller
                         ->orWhereRaw('DATE(organization_assignments.date_of_joining) <= DATE(no_pay_records.date)');
                 });
         });
+    }
+
+    protected function enrichNoPayRecord($record)
+    {
+        $record->display_value = $this->getDisplayValue($record);
+        $emp = $record->employee;
+        $comp = $emp?->compensation;
+        $basicSalary = (float) ($comp?->basic_salary ?? 0);
+        $activeNopay = $comp ? (bool) ($comp->active_nopay ?? false) : false;
+        $company = $emp?->organizationAssignment?->company;
+        $divisor = (float) ($company?->nopay_working_days ?? 30);
+        if ($divisor < 1) {
+            $divisor = 30.0;
+        }
+        $dailyRate = $divisor > 0 ? round($basicSalary / $divisor, 2) : 0.0;
+        $count = (float) ($record->no_pay_count ?? 1.0);
+        $deductionAmount = $activeNopay ? round($dailyRate * $count, 2) : 0.0;
+
+        $record->basic_salary = round($basicSalary, 2);
+        $record->daily_rate = $dailyRate;
+        $record->no_pay_amount = $deductionAmount;
+        $record->active_nopay = $activeNopay;
+        $record->nopay_divisor = (int) $divisor;
+
+        return $record;
     }
 }
 
@@ -1982,13 +2029,54 @@ class NopayController extends Controller
             return (float) $record->no_pay_count;
         });
 
+        $totalAmount = $records->sum(function ($record) {
+            $comp = $record->employee?->compensation;
+            if ($comp && !(bool) ($comp->active_nopay ?? false)) {
+                return 0.0;
+            }
+            $basic = (float) ($comp?->basic_salary ?? 0);
+            $div = (float) ($record->employee?->organizationAssignment?->company?->nopay_working_days ?? 30);
+            if ($div < 1) {
+                $div = 30.0;
+            }
+            $rate = $div > 0 ? $basic / $div : 0.0;
+            $count = (float) ($record->no_pay_count ?? 1.0);
+            return round($rate * $count, 2);
+        });
+
         $affectedEmployees = $records->pluck('employee_id')->unique()->count();
 
         return response()->json([
             'total_records' => $totalRecords,
             'total_days' => $totalDays,
+            'total_amount' => round($totalAmount, 2),
             'affected_employees' => $affectedEmployees
         ]);
+    }
+
+    protected function enrichNoPayRecord($record)
+    {
+        $record->display_value = $this->getDisplayValue($record);
+        $emp = $record->employee;
+        $comp = $emp?->compensation;
+        $basicSalary = (float) ($comp?->basic_salary ?? 0);
+        $activeNopay = $comp ? (bool) ($comp->active_nopay ?? false) : false;
+        $company = $emp?->organizationAssignment?->company;
+        $divisor = (float) ($company?->nopay_working_days ?? 30);
+        if ($divisor < 1) {
+            $divisor = 30.0;
+        }
+        $dailyRate = $divisor > 0 ? round($basicSalary / $divisor, 2) : 0.0;
+        $count = (float) ($record->no_pay_count ?? 1.0);
+        $deductionAmount = $activeNopay ? round($dailyRate * $count, 2) : 0.0;
+
+        $record->basic_salary = round($basicSalary, 2);
+        $record->daily_rate = $dailyRate;
+        $record->no_pay_amount = $deductionAmount;
+        $record->active_nopay = $activeNopay;
+        $record->nopay_divisor = (int) $divisor;
+
+        return $record;
     }
 
     // =================================================================

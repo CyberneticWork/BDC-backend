@@ -46,6 +46,33 @@ class compensation extends Model
         'br1',
         'br2',
         'stamp',
+        'paye_active',
+        'holiday_processing',
+        'off_day_processing',
+    ];
+
+    protected $casts = [
+        'enable_epf_etf' => 'boolean',
+        'ot_active' => 'boolean',
+        'ot_active_special' => 'boolean',
+        'early_deduction' => 'boolean',
+        'increment_active' => 'boolean',
+        'active_nopay' => 'boolean',
+        'secondary_emp' => 'boolean',
+        'primary_emp_basic' => 'boolean',
+        'stamp' => 'boolean',
+        'paye_active' => 'boolean',
+        'holiday_processing' => 'boolean',
+        'off_day_processing' => 'boolean',
+        'basic_salary' => 'decimal:2',
+        'monthly_bonus' => 'decimal:2',
+    ];
+
+    protected $attributes = [
+        'paye_active' => false,
+        'stamp' => false,
+        'holiday_processing' => false,
+        'off_day_processing' => false,
     ];
 
     protected $appends = [

@@ -73,6 +73,9 @@ use App\Http\Controllers\AssignSalaryComponentController;
 use App\Http\Controllers\MonthlyLateDeductionController;
 use App\Http\Controllers\ExcessLateController;
 use App\Http\Controllers\PersonalOutController;
+use App\Http\Controllers\FishDeductionController;
+use App\Http\Controllers\PayeManagementController;
+use App\Http\Controllers\OffDayHolidayManagementController;
 use App\Http\Controllers\ZktecoController;
 use App\Http\Controllers\ZktecoAdmsController;
 use App\Models\EmployeeWiseAllowance;
@@ -161,6 +164,14 @@ Route::get('/deductions/{id}', [DeductionController::class, 'show']);
 
 Route::get('/leave-masters/{employeeId}/counts', [LeaveMasterController::class, 'getLeaveRecordCountsByEmployee']);
 Route::apiResource('deductions', DeductionController::class);
+Route::get('/fish-deductions/summary', [FishDeductionController::class, 'monthlySummary']);
+Route::apiResource('fish-deductions', FishDeductionController::class);
+
+Route::get('/paye-management', [PayeManagementController::class, 'index']);
+Route::get('/paye-management/tax-tables', [PayeManagementController::class, 'taxTables']);
+Route::post('/paye-management/tax-tables', [PayeManagementController::class, 'saveTaxTable']);
+
+Route::get('/off-day-holiday-management', [OffDayHolidayManagementController::class, 'index']);
 Route::apiResource('leave-calendars', LeaveCalenderController::class);
 Route::get('/public/branding', [CompanyController::class, 'publicBranding']);
 Route::get('/public/company-logo/{id}', [CompanyController::class, 'publicLogo']);

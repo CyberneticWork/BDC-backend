@@ -142,6 +142,30 @@ class CompanyProcessSettings
                 'available' => true,
             ],
             [
+                'key' => 'fish_deduction',
+                'label' => 'Fish deduction management',
+                'group' => 'Deductions & benefits',
+                'summary' => 'Off = hide Fish Deduction module. On = HR can record fish purchases/deductions for employees and deduct total FISH from monthly salary slips.',
+                'affects' => ['deductions', 'salary'],
+                'available' => true,
+            ],
+            [
+                'key' => 'stamp_duty_paye_holiday',
+                'label' => 'Stamp Duty, PAYE, No-Pay and Off-Day + Holiday Processing',
+                'group' => 'Payroll & statutory',
+                'summary' => 'Off = hide PAYE, Holiday and Off-Day modules. On = enable employee settings for Stamp Duty, PAYE/APIT, Holiday Processing, separate PAYE Management, and Off-Day + Holiday Management pages.',
+                'affects' => ['salary', 'deductions', 'paye', 'off_day_holiday', 'nopay'],
+                'available' => true,
+            ],
+            [
+                'key' => 'jaysea_food_salary_process',
+                'label' => 'Jaysea Food Salary Process',
+                'group' => 'Payroll & statutory',
+                'summary' => 'Off = standard salary calculation. On = Jaysea Food salary sequence: Gross = Basic + Holiday + Off-Day + Increment - No-Pay; EPF/ETF basis = Gross Salary (EPF 8%, Employer EPF 12%, ETF 3%); Net = Gross - EPF 8% - PAYE - Stamp Duty - other deductions + allowances.',
+                'affects' => ['salary', 'epf', 'etf', 'payslip'],
+                'available' => true,
+            ],
+            [
                 'key' => 'holiday_calendar',
                 'label' => 'Holiday calendar pack',
                 'group' => 'Coming soon',
@@ -435,6 +459,43 @@ class CompanyProcessSettings
     public static function usesContractAsPermanent($source): bool
     {
         return self::packEnabled($source, 'contract_as_permanent');
+    }
+
+    public static function usesFishDeduction($source): bool
+    {
+        return self::packEnabled($source, 'fish_deduction');
+    }
+
+    public static function usesStampDutyPayeHoliday($source): bool
+    {
+        return self::packEnabled($source, 'stamp_duty_paye_holiday');
+    }
+
+    public static function stampDutyAmount($source): float
+    {
+        $company = self::companyOf($source);
+        $cfg = is_array($company?->process_config) ? $company->process_config : [];
+
+        // 1. Pack-specific config: stamp_duty_paye_holiday.stamp_duty_amount or amount
+        if (isset($cfg['stamp_duty_paye_holiday']['stamp_duty_amount']) && is_numeric($cfg['stamp_duty_paye_holiday']['stamp_duty_amount'])) {
+            return (float) $cfg['stamp_duty_paye_holiday']['stamp_duty_amount'];
+        }
+        if (isset($cfg['stamp_duty_paye_holiday']['amount']) && is_numeric($cfg['stamp_duty_paye_holiday']['amount'])) {
+            return (float) $cfg['stamp_duty_paye_holiday']['amount'];
+        }
+
+        // 2. Company process_config top-level: stamp_duty_amount
+        if (isset($cfg['stamp_duty_amount']) && is_numeric($cfg['stamp_duty_amount'])) {
+            return (float) $cfg['stamp_duty_amount'];
+        }
+
+        // 3. Fallback to statutory receipt stamp duty (Rs. 25.00)
+        return 25.0;
+    }
+
+    public static function usesJayseaFoodSalaryProcess($source): bool
+    {
+        return self::packEnabled($source, 'jaysea_food_salary_process');
     }
 
     public static function packConfig($source, string $key): array

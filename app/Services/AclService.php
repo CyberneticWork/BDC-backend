@@ -45,6 +45,9 @@ class AclService
             'medical_leave' => CompanyProcessSettings::usesMedicalLeave($company),
             'salary_advance' => CompanyProcessSettings::usesSalaryAdvancePack($company),
             'hr_company_create' => CompanyProcessSettings::usesHrCompanyCreate($company),
+            'fish_deduction' => CompanyProcessSettings::usesFishDeduction($company),
+            'stamp_duty_paye_holiday' => CompanyProcessSettings::usesStampDutyPayeHoliday($company),
+            'jaysea_food_salary_process' => CompanyProcessSettings::usesJayseaFoodSalaryProcess($company),
         ];
     }
 
