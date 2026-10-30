@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Str;
 
 class ZktecoDevice extends Model
@@ -18,6 +19,8 @@ class ZktecoDevice extends Model
         'company_id',
         'is_active',
         'adms_enabled',
+        'connection_mode',
+        'api_key_encrypted',
         'webhook_token',
         'last_att_stamp',
         'last_op_stamp',
@@ -35,6 +38,10 @@ class ZktecoDevice extends Model
         'last_handshake_at' => 'datetime',
     ];
 
+    protected $hidden = [
+        'api_key_encrypted',
+    ];
+
     protected static function booted(): void
     {
         static::creating(function (self $device) {
@@ -42,7 +49,10 @@ class ZktecoDevice extends Model
                 $device->webhook_token = Str::random(48);
             }
             if (empty($device->model)) {
-                $device->model = 'K40 Pro';
+                $device->model = ($device->connection_mode ?? '') === 'liveu' ? 'SenseFP M2' : 'K40 Pro';
+            }
+            if (empty($device->connection_mode)) {
+                $device->connection_mode = 'adms';
             }
         });
     }
@@ -57,6 +67,30 @@ class ZktecoDevice extends Model
         return $this->hasMany(ZktecoEventLog::class, 'device_id');
     }
 
+    public function setApiKeyAttribute(?string $key): void
+    {
+        if ($key !== null && $key !== '') {
+            $this->attributes['api_key_encrypted'] = Crypt::encryptString($key);
+        }
+    }
+
+    public function getApiKeyAttribute(): ?string
+    {
+        if (empty($this->api_key_encrypted)) {
+            return null;
+        }
+        try {
+            return Crypt::decryptString($this->api_key_encrypted);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    public function isLiveU(): bool
+    {
+        return ($this->connection_mode ?? 'adms') === 'liveu';
+    }
+
     public static function publicApiBase(): string
     {
         return HikvisionDevice::publicApiBase();
@@ -67,14 +101,9 @@ class ZktecoDevice extends Model
         return HikvisionDevice::frontControllerUrl($apiPath);
     }
 
-    /**
-     * ADMS server URL to enter on the K40 Pro (device appends /cdata, /getrequest).
-     * Prefer a clean host path the device can reach.
-     */
     public function admsBaseUrl(): string
     {
         $base = rtrim(self::publicApiBase(), '/');
-        // Prefer /iclock under the public API origin (devices expect .../iclock)
         if (preg_match('#/index\.php$#i', $base)) {
             $origin = preg_replace('#/index\.php$#i', '', $base);
 
@@ -87,10 +116,5 @@ class ZktecoDevice extends Model
     public function punchesUrl(): string
     {
         return self::frontControllerUrl('/api/zkteco/punches/'.$this->webhook_token);
-    }
-
-    public function setupUrl(): string
-    {
-        return self::frontControllerUrl('/api/zkteco/setup-guide');
     }
 }

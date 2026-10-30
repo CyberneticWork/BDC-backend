@@ -33,6 +33,8 @@ class ZktecoAttendanceService
                 $table->foreignId('company_id')->nullable()->constrained('companies')->nullOnDelete();
                 $table->boolean('is_active')->default(true);
                 $table->boolean('adms_enabled')->default(true);
+                $table->string('connection_mode', 20)->default('adms');
+                $table->text('api_key_encrypted')->nullable();
                 $table->string('webhook_token', 64)->unique();
                 $table->string('last_att_stamp', 40)->nullable();
                 $table->string('last_op_stamp', 40)->nullable();
@@ -44,11 +46,24 @@ class ZktecoAttendanceService
             });
         }
 
+        // LiveU / SenseFP M2 columns (self-heal on older installs)
+        if (!Schema::hasColumn('zkteco_devices', 'connection_mode')) {
+            Schema::table('zkteco_devices', function (Blueprint $table) {
+                $table->string('connection_mode', 20)->default('adms')->after('adms_enabled');
+            });
+        }
+        if (!Schema::hasColumn('zkteco_devices', 'api_key_encrypted')) {
+            Schema::table('zkteco_devices', function (Blueprint $table) {
+                $table->text('api_key_encrypted')->nullable()->after('connection_mode');
+            });
+        }
+
         if (!Schema::hasTable('zkteco_event_logs')) {
             Schema::create('zkteco_event_logs', function (Blueprint $table) {
                 $table->id();
                 $table->foreignId('device_id')->constrained('zkteco_devices')->cascadeOnDelete();
                 $table->unsignedBigInteger('serial_no')->nullable();
+                $table->string('external_id', 64)->nullable()->index();
                 $table->string('employee_no')->nullable();
                 $table->timestamp('event_time');
                 $table->string('source', 20);
@@ -59,6 +74,10 @@ class ZktecoAttendanceService
 
                 $table->index(['device_id', 'serial_no', 'event_time']);
                 $table->index(['device_id', 'event_time']);
+            });
+        } elseif (!Schema::hasColumn('zkteco_event_logs', 'external_id')) {
+            Schema::table('zkteco_event_logs', function (Blueprint $table) {
+                $table->string('external_id', 64)->nullable()->after('serial_no')->index();
             });
         }
     }
@@ -160,6 +179,16 @@ class ZktecoAttendanceService
             ? $parsed['event_at']
             : Carbon::parse($parsed['event_at']);
 
+        if (!empty($parsed['external_id'])) {
+            $dupExt = ZktecoEventLog::where('device_id', $device->id)
+                ->where('external_id', $parsed['external_id'])
+                ->where('status', '!=', 'error')
+                ->exists();
+            if ($dupExt) {
+                return ['status' => 'duplicate', 'message' => 'LiveU event already processed'];
+            }
+        }
+
         if (!empty($parsed['serial_no'])) {
             $dup = ZktecoEventLog::where('device_id', $device->id)
                 ->where('serial_no', $parsed['serial_no'])
@@ -194,11 +223,14 @@ class ZktecoAttendanceService
             $statusCode = $response->getStatusCode();
             $payload = json_decode($response->getContent(), true);
 
+            $externalId = $parsed['external_id'] ?? null;
+
             if ($statusCode === 201) {
                 $timeCardId = $payload['data']['id'] ?? null;
                 ZktecoEventLog::create([
                     'device_id' => $device->id,
                     'serial_no' => $parsed['serial_no'],
+                    'external_id' => $externalId,
                     'employee_no' => $parsed['employee_no'],
                     'event_time' => $eventAt,
                     'source' => $source,
@@ -215,6 +247,7 @@ class ZktecoAttendanceService
                 ZktecoEventLog::create([
                     'device_id' => $device->id,
                     'serial_no' => $parsed['serial_no'],
+                    'external_id' => $externalId,
                     'employee_no' => $parsed['employee_no'],
                     'event_time' => $eventAt,
                     'source' => $source,
@@ -229,6 +262,7 @@ class ZktecoAttendanceService
             ZktecoEventLog::create([
                 'device_id' => $device->id,
                 'serial_no' => $parsed['serial_no'],
+                'external_id' => $externalId,
                 'employee_no' => $parsed['employee_no'],
                 'event_time' => $eventAt,
                 'source' => $source,

@@ -10,6 +10,7 @@ class ZktecoEventLog extends Model
     protected $fillable = [
         'device_id',
         'serial_no',
+        'external_id',
         'employee_no',
         'event_time',
         'source',
