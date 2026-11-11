@@ -168,10 +168,26 @@ class CompanyProcessSettings
             [
                 'key' => 'holiday_calendar',
                 'label' => 'Holiday calendar pack',
-                'group' => 'Coming soon',
-                'summary' => 'Per-company public holiday and OT holiday mapping.',
-                'affects' => ['ot', 'nopay', 'salary'],
-                'available' => false,
+                'group' => 'Attendance',
+                'summary' => 'On = Leave Calendar holidays are paid automatically (NoPay skipped; no leave request needed). Work on a holiday still posts Holiday OT.',
+                'affects' => ['ot', 'nopay', 'salary', 'leave_calendar'],
+                'available' => true,
+            ],
+            [
+                'key' => 'biometric_map',
+                'label' => 'Biometric device map',
+                'group' => 'Attendance',
+                'summary' => 'On = only the fingerprint / LiveU / Hikvision clocks you pick below appear on this company Time Card (branch-wise LiveU keys stay per device).',
+                'affects' => ['time_card', 'zkteco', 'hikvision'],
+                'available' => true,
+            ],
+            [
+                'key' => 'approval_chain',
+                'label' => 'Employee → Admin → Super Admin approvals',
+                'group' => 'Approvals',
+                'summary' => 'On = leave, salary advance and similar requests need Admin then Super Admin (after the employee submits).',
+                'affects' => ['leave', 'salary_advance', 'loan'],
+                'available' => true,
             ],
         ];
     }
@@ -378,6 +394,22 @@ class CompanyProcessSettings
     public static function usesLeaveWorkflow($source): bool
     {
         return self::packEnabled($source, 'leave_workflow');
+    }
+
+    /** Employee → Admin → Super Admin for leave / advances / loans. */
+    public static function usesApprovalChain($source): bool
+    {
+        return self::packEnabled($source, 'approval_chain');
+    }
+
+    public static function usesHolidayCalendar($source): bool
+    {
+        return self::packEnabled($source, 'holiday_calendar');
+    }
+
+    public static function usesBiometricMap($source): bool
+    {
+        return self::packEnabled($source, 'biometric_map');
     }
 
     public static function usesWeeklyOff($source): bool

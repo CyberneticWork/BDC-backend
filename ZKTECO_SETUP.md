@@ -41,9 +41,21 @@ LIVEU_API_BASE_URL=https://attapi.liveucloud.com/api/v1
 LIVEU_POLL_INTERVAL=5
 ```
 
-## K40 Pro — ADMS push
+## K40 Pro — ADMS push (same LAN)
 
-See previous ADMS section: register SN, set device Cloud Server to `{APP_HOST}/iclock`.
+The K40 Pro **pushes** punches to HR. HR does **not** read the device memory when you click Recent punches.
+
+1. Register device in Time Card (Connection = ADMS), enter SN + IP `192.168.1.25`.
+2. On this PC, `APP_URL` / `ZKTECO_LAN_HOST` must be the **LAN IP** (e.g. `192.168.1.147`), not `127.0.0.1`.
+3. Run API so the device can reach it: `php artisan serve --host=0.0.0.0 --port=8000`
+4. Copy **ADMS URL** from the device card, e.g. `http://192.168.1.147:8000/iclock`
+5. On K40 Pro: **Comm. → Cloud Server / ADMS** → paste that URL → save → reboot
+6. When **Last handshake** updates, scan a finger — Time Card gets a row
+
+```env
+APP_URL=http://192.168.1.147:8000
+ZKTECO_LAN_HOST=192.168.1.147
+```
 
 ```bash
 php artisan migrate   # or tables self-create on first API use

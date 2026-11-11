@@ -2,8 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\HikvisionDevice;
+use App\Models\ZktecoDevice;
 use App\Services\CyberneticAdminAuth;
+use App\Services\Zkteco\ZktecoAttendanceService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Validator;
 
 class CyberneticAdminController extends Controller
@@ -78,6 +82,60 @@ class CyberneticAdminController extends Controller
             'attendance_process_options' => [
                 \App\Services\CompanyProcessSettings::SPM_STANDARD,
                 \App\Services\CompanyProcessSettings::SHIFT_ROSTER,
+            ],
+        ]);
+    }
+
+    /**
+     * All fingerprint clocks for Cybernetic Admin biometric map (assign to a company).
+     */
+    public function biometricDevices()
+    {
+        ZktecoAttendanceService::ensureTables();
+
+        $zkteco = ZktecoDevice::query()
+            ->with(['company:id,name', 'location:id,name'])
+            ->orderBy('name')
+            ->get()
+            ->map(fn (ZktecoDevice $d) => [
+                'id' => $d->id,
+                'type' => 'zkteco',
+                'name' => $d->name,
+                'model' => $d->model,
+                'serial_number' => $d->serial_number,
+                'connection_mode' => $d->connection_mode ?? 'adms',
+                'company_id' => $d->company_id,
+                'company_name' => $d->company->name ?? null,
+                'location_id' => $d->location_id,
+                'location_name' => $d->location->name ?? null,
+                'is_active' => (bool) $d->is_active,
+            ]);
+
+        $hikvision = collect();
+        if (Schema::hasTable('hikvision_devices')) {
+            $hikvision = HikvisionDevice::query()
+                ->with('company:id,name')
+                ->orderBy('name')
+                ->get()
+                ->map(fn (HikvisionDevice $d) => [
+                    'id' => $d->id,
+                    'type' => 'hikvision',
+                    'name' => $d->name,
+                    'model' => $d->model,
+                    'serial_number' => $d->serial_number,
+                    'connection_mode' => 'hikvision',
+                    'company_id' => $d->company_id,
+                    'company_name' => $d->company->name ?? null,
+                    'location_id' => null,
+                    'location_name' => null,
+                    'is_active' => (bool) $d->is_active,
+                ]);
+        }
+
+        return response()->json([
+            'data' => [
+                'zkteco' => $zkteco,
+                'hikvision' => $hikvision,
             ],
         ]);
     }

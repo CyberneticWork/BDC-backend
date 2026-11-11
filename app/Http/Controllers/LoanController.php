@@ -474,11 +474,14 @@ class LoanController extends Controller
         if ($request->user()?->role === 'employee') {
             return response()->json(['message' => 'Forbidden'], 403);
         }
-        $q = loans::with('employee:id,full_name,name_with_initials,attendance_employee_no')
-            ->orderByDesc('id');
+        $q = loans::with([
+            'employee:id,full_name,name_with_initials,attendance_employee_no,organization_assignment_id',
+            'employee.organizationAssignment',
+        ])->orderByDesc('id');
         if ($status = $request->query('status')) {
             $q->where('status', $status);
         }
+        \App\Support\OrgLocationFilter::applyEmployeeOrg($q, $request);
 
         return response()->json(['items' => $q->limit(300)->get()]);
     }
@@ -496,14 +499,35 @@ class LoanController extends Controller
             'installment_deduct_from' => 'nullable|in:basic,bonus',
         ]);
 
-        $loan = loans::findOrFail($id);
-        if (strtolower((string) $loan->status) !== 'pending') {
+        $loan = loans::with('employee.organizationAssignment')->findOrFail($id);
+        $status = strtolower((string) $loan->status);
+        $chain = \App\Services\CompanyProcessSettings::usesApprovalChain($loan->employee);
+        $isSuper = app(\App\Services\SuperAdminAuth::class)->isSuperAdmin($request->user());
+        $action = strtolower($validated['action']);
+
+        if ($status === 'pending') {
+            if ($action === 'reject') {
+                $loan->status = 'rejected';
+            } elseif ($chain && !$isSuper) {
+                $loan->status = 'admin_approved';
+            } else {
+                // fall through to existing approve → active logic below
+                $loan->status = 'pending_final';
+            }
+        } elseif ($status === 'admin_approved' && $chain) {
+            if (!$isSuper) {
+                return response()->json(['message' => 'Final loan approval requires Super Admin.'], 422);
+            }
+            if ($action === 'reject') {
+                $loan->status = 'rejected';
+            } else {
+                $loan->status = 'pending_final';
+            }
+        } else {
             return response()->json(['message' => 'This loan request has already been reviewed.'], 422);
         }
 
-        $action = strtolower($validated['action']);
-        if ($action === 'reject') {
-            $loan->status = 'rejected';
+        if ($loan->status === 'rejected') {
             if (Schema::hasColumn('loans', 'notes')) {
                 $loan->notes = $validated['notes'] ?? null;
             }
@@ -522,6 +546,28 @@ class LoanController extends Controller
             return response()->json(['message' => 'Loan request rejected', 'data' => $loan->fresh('employee')]);
         }
 
+        if ($loan->status === 'admin_approved') {
+            if (Schema::hasColumn('loans', 'notes')) {
+                $loan->notes = $validated['notes'] ?? null;
+            }
+            if (Schema::hasColumn('loans', 'processed_by')) {
+                $loan->processed_by = $request->user()->id;
+            }
+            if (Schema::hasColumn('loans', 'processed_at')) {
+                $loan->processed_at = now();
+            }
+            $loan->save();
+            LeaveNotificationService::notifyEmployee(
+                (int) $loan->employee_id,
+                'Loan approved by Admin',
+                'Your loan was approved by Admin and is waiting for Super Admin.',
+                ['type' => 'loan', 'loan_id' => $loan->id]
+            );
+
+            return response()->json(['message' => 'Loan approved by Admin — waiting for Super Admin', 'data' => $loan->fresh('employee')]);
+        }
+
+        // pending_final (or direct approve) → activate
         $amount = (float) $loan->loan_amount;
         $installment = (float) ($validated['installment_amount'] ?? $loan->installment_amount);
         $startFrom = $this->firstOfMonth($validated['start_from'] ?? (string) $loan->start_from);

@@ -116,6 +116,7 @@ class AttendanceReportController extends Controller
         $search = $request->input('search');
         $company_id = $request->input('company_id');
         $department_id = $request->input('department_id');
+        $location_id = $request->input('location_id');
         
         // 
         $holiday_worked = $request->boolean('holiday_worked');
@@ -128,13 +129,16 @@ class AttendanceReportController extends Controller
         // 1. Company, Department සහ Search වලට ගැලපෙන සේවකයින්ගේ ID සෙවීම
         $employeeQuery = employee::query()->excludeContract();
 
-        if ($company_id || $department_id) {
-            $employeeQuery->whereHas('organizationAssignment', function ($q) use ($company_id, $department_id) {
+        if ($company_id || $department_id || $location_id) {
+            $employeeQuery->whereHas('organizationAssignment', function ($q) use ($company_id, $department_id, $location_id) {
                 if ($company_id) {
                     $q->where('company_id', $company_id);
                 }
                 if ($department_id) {
                     $q->where('department_id', $department_id);
+                }
+                if ($location_id) {
+                    $q->where('location_id', $location_id);
                 }
             });
         }
@@ -365,6 +369,7 @@ class AttendanceReportController extends Controller
         $search = $request->input('search');
         $company_id = $request->input('company_id');
         $department_id = $request->input('department_id');
+        $location_id = $request->input('location_id');
         $employee_category = $request->input('employee_category');
         $holiday_worked = $request->boolean('holiday_worked');
 
@@ -378,13 +383,16 @@ class AttendanceReportController extends Controller
 
         $employeeQuery = employee::query()->excludeContract();
 
-        if ($company_id || $department_id) {
-            $employeeQuery->whereHas('organizationAssignment', function ($q) use ($company_id, $department_id) {
+        if ($company_id || $department_id || $location_id) {
+            $employeeQuery->whereHas('organizationAssignment', function ($q) use ($company_id, $department_id, $location_id) {
                 if ($company_id) {
                     $q->where('company_id', $company_id);
                 }
                 if ($department_id) {
                     $q->where('department_id', $department_id);
+                }
+                if ($location_id) {
+                    $q->where('location_id', $location_id);
                 }
             });
         }
@@ -472,6 +480,7 @@ class AttendanceReportController extends Controller
         $search = $request->input('search');
         $company_id = $request->input('company_id');
         $department_id = $request->input('department_id');
+        $location_id = $request->input('location_id');
         $employee_category = $request->input('employee_category');
         
         // වඩාත් නිවැරදිව boolean අගය ලබා ගැනීම
@@ -498,13 +507,16 @@ class AttendanceReportController extends Controller
         // 1. Company, Department සහ Search වලට ගැලපෙන සේවකයින්ගේ ID සෙවීම
         $employeeQuery = employee::query()->excludeContract();
 
-        if ($company_id || $department_id) {
-            $employeeQuery->whereHas('organizationAssignment', function ($q) use ($company_id, $department_id) {
+        if ($company_id || $department_id || $location_id) {
+            $employeeQuery->whereHas('organizationAssignment', function ($q) use ($company_id, $department_id, $location_id) {
                 if ($company_id) {
                     $q->where('company_id', $company_id);
                 }
                 if ($department_id) {
                     $q->where('department_id', $department_id);
+                }
+                if ($location_id) {
+                    $q->where('location_id', $location_id);
                 }
             });
         }

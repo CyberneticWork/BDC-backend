@@ -88,6 +88,8 @@ Route::get('/cybernetic-admin/me', [CyberneticAdminController::class, 'me'])
     ->middleware('cybernetic');
 Route::get('/cybernetic-admin/process-catalog', [CyberneticAdminController::class, 'processCatalog'])
     ->middleware('cybernetic');
+Route::get('/cybernetic-admin/biometric-devices', [CyberneticAdminController::class, 'biometricDevices'])
+    ->middleware('cybernetic');
 Route::post('/cybernetic-admin/logout', [CyberneticAdminController::class, 'logout'])
     ->middleware('cybernetic');
 Route::middleware('auth.token')->match(['get', 'post'], '/logout', function (Request $request) {

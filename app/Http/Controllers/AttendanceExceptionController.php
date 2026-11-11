@@ -23,6 +23,7 @@ class AttendanceExceptionController extends Controller
             'to_date' => 'nullable|date|after_or_equal:from_date',
             'company_id' => 'nullable|exists:companies,id',
             'department_id' => 'nullable|exists:departments,id',
+            'location_id' => 'nullable|integer',
             'status' => 'nullable|in:Late Coming,Early OUT',
             'approval_status' => 'nullable|in:Pending,Approved,Rejected,Active',
             'search' => 'nullable|string|max:100',
@@ -47,7 +48,7 @@ class AttendanceExceptionController extends Controller
             $query->whereDate('date', '<=', $validated['to_date']);
         }
 
-        if (!empty($validated['company_id']) || !empty($validated['department_id']) || !empty($validated['search'])) {
+        if (!empty($validated['company_id']) || !empty($validated['department_id']) || !empty($validated['location_id']) || !empty($validated['search'])) {
             $query->whereHas('employee', function ($q) use ($validated) {
                 if (!empty($validated['search'])) {
                     $s = $validated['search'];
@@ -57,13 +58,16 @@ class AttendanceExceptionController extends Controller
                             ->orWhere('nic', 'like', "%{$s}%");
                     });
                 }
-                if (!empty($validated['company_id']) || !empty($validated['department_id'])) {
+                if (!empty($validated['company_id']) || !empty($validated['department_id']) || !empty($validated['location_id'])) {
                     $q->whereHas('organizationAssignment', function ($oa) use ($validated) {
                         if (!empty($validated['company_id'])) {
                             $oa->where('company_id', $validated['company_id']);
                         }
                         if (!empty($validated['department_id'])) {
                             $oa->where('department_id', $validated['department_id']);
+                        }
+                        if (!empty($validated['location_id'])) {
+                            $oa->where('location_id', $validated['location_id']);
                         }
                     });
                 }

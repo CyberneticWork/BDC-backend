@@ -489,6 +489,8 @@ class LeaveMasterController extends Controller
         $oldStatus = $leaveMaster->status;
         $newStatus = $request->status;
         $usesLeaveWorkflow = CompanyProcessSettings::usesLeaveWorkflow($leaveMaster->employee);
+        $usesApprovalChain = CompanyProcessSettings::usesApprovalChain($leaveMaster->employee);
+        $isSuperAdmin = app(\App\Services\SuperAdminAuth::class)->isSuperAdmin($request->user());
 
         if ($oldStatus === 'Pending_Covering' && $newStatus !== 'Rejected') {
             return response()->json([
@@ -497,7 +499,32 @@ class LeaveMasterController extends Controller
         }
 
         if ($usesLeaveWorkflow && $oldStatus === 'Pending_Supervisor' && $newStatus === 'Pending') {
-            $newStatus = 'Approved';
+            // With approval chain, supervisor/admin lands on HR_Approved; Super Admin does final Approved.
+            $newStatus = $usesApprovalChain ? 'HR_Approved' : 'Approved';
+        }
+
+        if ($usesApprovalChain && $newStatus !== 'Rejected') {
+            if ($newStatus === 'Approved' && !$isSuperAdmin) {
+                return response()->json([
+                    'message' => 'Final leave approval requires Super Admin. Admin can set status to HR_Approved.',
+                ], 422);
+            }
+            if ($newStatus === 'Approved' && $oldStatus !== 'HR_Approved' && $oldStatus !== 'Approved') {
+                // Super Admin may finalize only after Admin (HR_Approved), unless already approved.
+                if ($oldStatus === 'Pending' || $oldStatus === 'Pending_Supervisor') {
+                    // Allow Super Admin to do both steps in one go from Pending.
+                    if (!$isSuperAdmin) {
+                        return response()->json([
+                            'message' => 'Admin must approve to HR_Approved before Super Admin final approval.',
+                        ], 422);
+                    }
+                }
+            }
+            if ($newStatus === 'HR_Approved' && $isSuperAdmin === false && !in_array($oldStatus, ['Pending', 'Pending_Supervisor', 'HR_Approved'], true)) {
+                return response()->json([
+                    'message' => 'Invalid leave status transition for Admin approval.',
+                ], 422);
+            }
         }
 
         $wasApproved = in_array($oldStatus, ['Approved', 'HR_Approved'], true);
@@ -617,25 +644,31 @@ class LeaveMasterController extends Controller
         return response()->json($leaves);
     }
 
-    public function getPendingLeaveRecords()
+    public function getPendingLeaveRecords(Request $request)
     {
         // අනිත් ඔක්කොම අය දාපුවා සහ Supervisor Approve කරපුවා පෙන්වන එක (Leave Approval පේජ් එකට)
-        $pendingLeaves = leave_master::with(['employee', 'coveringEmployee'])->where('status', 'Pending')->get();
-        return response()->json($pendingLeaves);
+        $q = leave_master::with(['employee.organizationAssignment', 'coveringEmployee'])->where('status', 'Pending');
+        \App\Support\OrgLocationFilter::applyEmployeeOrg($q, $request);
+
+        return response()->json($q->get());
     }
 
     // =========================================================================
 
-    public function getApprovedLeaveRecords()
+    public function getApprovedLeaveRecords(Request $request)
     {
-        $approvedLeaves = leave_master::with(['employee', 'coveringEmployee'])->where('status', 'Approved')->get();
-        return response()->json($approvedLeaves);
+        $q = leave_master::with(['employee.organizationAssignment', 'coveringEmployee'])->where('status', 'Approved');
+        \App\Support\OrgLocationFilter::applyEmployeeOrg($q, $request);
+
+        return response()->json($q->get());
     }
 
     public function getHRApprovedLeaveRecords()
     {
-        $hrApprovedLeaves = leave_master::with(['employee', 'coveringEmployee'])->where('status', 'HR_Approved')->get();
-        return response()->json($hrApprovedLeaves);
+        $q = leave_master::with(['employee.organizationAssignment', 'coveringEmployee'])->where('status', 'HR_Approved');
+        \App\Support\OrgLocationFilter::applyEmployeeOrg($q, request());
+
+        return response()->json($q->get());
     }
 
     public function getRejectedLeaveRecords()

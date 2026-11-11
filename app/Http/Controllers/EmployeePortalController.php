@@ -570,6 +570,7 @@ class EmployeePortalController extends Controller
         if ($status = $request->query('status')) {
             $q->where('status', strtoupper($status));
         }
+        \App\Support\OrgLocationFilter::applyEmployeeOrg($q, $request);
 
         $items = $q->limit(200)->get()->map(function (SalaryAdvanceRequest $row) {
             $emp = $row->employee;
@@ -680,11 +681,25 @@ class EmployeePortalController extends Controller
 
         $row = SalaryAdvanceRequest::findOrFail($id);
         $row->load('employee.organizationAssignment');
-        if ($row->status !== 'PENDING') {
+        $chain = CompanyProcessSettings::usesApprovalChain($row->employee);
+        $isSuper = app(\App\Services\SuperAdminAuth::class)->isSuperAdmin($user);
+        $status = strtoupper((string) $row->status);
+
+        if ($status === 'PENDING') {
+            if ($request->action === 'APPROVE') {
+                $row->status = ($chain && !$isSuper) ? 'ADMIN_APPROVED' : 'APPROVED';
+            } else {
+                $row->status = 'REJECTED';
+            }
+        } elseif ($status === 'ADMIN_APPROVED' && $chain) {
+            if (!$isSuper) {
+                return response()->json(['message' => 'Final salary advance approval requires Super Admin.'], 422);
+            }
+            $row->status = $request->action === 'APPROVE' ? 'APPROVED' : 'REJECTED';
+        } else {
             return response()->json(['message' => 'This request has already been reviewed.'], 422);
         }
 
-        $row->status = $request->action === 'APPROVE' ? 'APPROVED' : 'REJECTED';
         $row->review_note = $request->note;
         $row->reviewed_by = $user->id;
         $row->reviewed_at = now();
@@ -697,12 +712,20 @@ class EmployeePortalController extends Controller
             if ($row->status === 'APPROVED') {
                 PendingPaymentService::record($row->employee, 'salary_advance', $row->id, (float) $row->amount);
             }
+            $title = match ($row->status) {
+                'ADMIN_APPROVED' => 'Salary advance approved by Admin',
+                'APPROVED' => 'Salary advance approved',
+                default => 'Salary advance rejected',
+            };
+            $body = match ($row->status) {
+                'ADMIN_APPROVED' => 'Your salary advance was approved by Admin and is waiting for Super Admin.',
+                'APPROVED' => 'Your salary advance was approved and sent to Pending Payments.',
+                default => 'Your salary advance request was rejected.',
+            };
             LeaveNotificationService::notifyEmployee(
                 $row->employee_id,
-                $row->status === 'APPROVED' ? 'Salary advance approved' : 'Salary advance rejected',
-                $row->status === 'APPROVED'
-                    ? 'Your salary advance was approved and sent to Pending Payments.'
-                    : 'Your salary advance request was rejected.',
+                $title,
+                $body,
                 ['type' => 'salary_advance', 'id' => $row->id, 'status' => $row->status]
             );
         }

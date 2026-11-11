@@ -376,6 +376,7 @@ class RosterController extends Controller
             'company_id' => 'nullable|exists:companies,id',
             'department_id' => 'nullable|exists:departments,id',
             'sub_department_id' => 'nullable|exists:sub_departments,id',
+            'location_id' => 'nullable|integer',
             'employee_id' => 'nullable|string', 
             'roster_id' => 'nullable|string', 
         ]);
@@ -411,6 +412,13 @@ class RosterController extends Controller
 
         if ($request->filled('department_id')) {
             $query->where('department_id', $request->department_id);
+        }
+
+        if ($request->filled('location_id')) {
+            $locId = (int) $request->location_id;
+            $query->whereHas('employee.organizationAssignment', function ($q) use ($locId) {
+                $q->where('location_id', $locId);
+            });
         }
 
         if ($request->filled('employee_id')) {

@@ -2,8 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\company;
+use App\Models\CompanyLocation;
 use App\Models\ZktecoDevice;
 use App\Models\ZktecoEventLog;
+use App\Services\BiometricDeviceVisibility;
+use App\Services\CompanyLocationService;
 use App\Services\Zkteco\LiveUApiClient;
 use App\Services\Zkteco\LiveUAttendanceService;
 use App\Services\Zkteco\ZktecoAttendanceService;
@@ -16,24 +20,41 @@ class ZktecoController extends Controller
         private ZktecoAttendanceService $attendance,
         private LiveUAttendanceService $liveUAttendance,
         private LiveUApiClient $liveUClient,
+        private BiometricDeviceVisibility $deviceVisibility,
     ) {
     }
 
-    public function index()
+    public function index(Request $request)
     {
         ZktecoAttendanceService::ensureTables();
+        app(CompanyLocationService::class)->ensureSchema();
 
-        $devices = ZktecoDevice::with('company:id,name')
+        $devices = ZktecoDevice::with(['company:id,name', 'location:id,name,company_id'])
             ->orderBy('name')
-            ->get()
-            ->map(fn (ZktecoDevice $d) => $this->formatDevice($d));
+            ->get();
 
-        return response()->json(['data' => $devices]);
+        if ($request->filled('company_id')) {
+            $company = company::find((int) $request->query('company_id'));
+            if ($company) {
+                $devices = $this->deviceVisibility->filterZktecoDevices($devices, [$company]);
+            } else {
+                $devices = $devices->where('company_id', (int) $request->query('company_id'))->values();
+            }
+        }
+        if ($request->filled('location_id')) {
+            $locId = (int) $request->query('location_id');
+            $devices = $devices->where('location_id', $locId)->values();
+        }
+
+        return response()->json([
+            'data' => $devices->map(fn (ZktecoDevice $d) => $this->formatDevice($d))->values(),
+        ]);
     }
 
     public function store(Request $request)
     {
         ZktecoAttendanceService::ensureTables();
+        app(CompanyLocationService::class)->ensureSchema();
 
         $validated = $request->validate([
             'name' => 'required|string|max:120',
@@ -42,6 +63,7 @@ class ZktecoController extends Controller
             'ip_address' => 'nullable|ip',
             'port' => 'nullable|integer|min:1|max:65535',
             'company_id' => 'nullable|exists:companies,id',
+            'location_id' => 'nullable|integer',
             'is_active' => 'boolean',
             'adms_enabled' => 'boolean',
             'connection_mode' => 'nullable|in:adms,liveu',
@@ -52,6 +74,14 @@ class ZktecoController extends Controller
         if ($mode === 'liveu' && empty($validated['api_key'])) {
             return response()->json(['message' => 'LiveU Branch API key (x-api-key) is required for SenseFP / LiveU mode.'], 422);
         }
+        if ($mode === 'liveu' && empty($validated['company_id'])) {
+            return response()->json(['message' => 'Select a company for LiveU / SenseFP branch setup.'], 422);
+        }
+
+        $locationId = $this->validatedLocationId(
+            $validated['location_id'] ?? null,
+            $validated['company_id'] ?? null
+        );
 
         $device = new ZktecoDevice([
             'name' => $validated['name'],
@@ -60,6 +90,7 @@ class ZktecoController extends Controller
             'ip_address' => $validated['ip_address'] ?? null,
             'port' => $validated['port'] ?? ($mode === 'liveu' ? 443 : 4370),
             'company_id' => $validated['company_id'] ?? null,
+            'location_id' => $locationId,
             'is_active' => $validated['is_active'] ?? true,
             'adms_enabled' => $mode === 'adms' ? ($validated['adms_enabled'] ?? true) : false,
             'connection_mode' => $mode,
@@ -70,18 +101,19 @@ class ZktecoController extends Controller
         $device->save();
 
         $message = $mode === 'liveu'
-            ? 'LiveU SenseFP device saved. Use Test then Sync Now to pull punches into Time Card.'
+            ? 'LiveU SenseFP branch device saved. Use Test then Sync Now to pull punches into Time Card.'
             : 'ZKTeco device saved. Set the ADMS URL on the terminal to the Server URL shown below.';
 
         return response()->json([
             'message' => $message,
-            'data' => $this->formatDevice($device->fresh('company')),
+            'data' => $this->formatDevice($device->fresh(['company', 'location'])),
         ], 201);
     }
 
     public function update(Request $request, int $id)
     {
         ZktecoAttendanceService::ensureTables();
+        app(CompanyLocationService::class)->ensureSchema();
         $device = ZktecoDevice::findOrFail($id);
 
         $validated = $request->validate([
@@ -91,11 +123,22 @@ class ZktecoController extends Controller
             'ip_address' => 'nullable|ip',
             'port' => 'nullable|integer|min:1|max:65535',
             'company_id' => 'nullable|exists:companies,id',
+            'location_id' => 'nullable|integer',
             'is_active' => 'boolean',
             'adms_enabled' => 'boolean',
             'connection_mode' => 'nullable|in:adms,liveu',
             'api_key' => 'nullable|string|max:255',
         ]);
+
+        if (array_key_exists('location_id', $validated) || array_key_exists('company_id', $validated)) {
+            $companyId = array_key_exists('company_id', $validated)
+                ? $validated['company_id']
+                : $device->company_id;
+            $validated['location_id'] = $this->validatedLocationId(
+                array_key_exists('location_id', $validated) ? $validated['location_id'] : $device->location_id,
+                $companyId
+            );
+        }
 
         $device->fill(collect($validated)->except('api_key')->all());
         if (!empty($validated['api_key'])) {
@@ -105,8 +148,26 @@ class ZktecoController extends Controller
 
         return response()->json([
             'message' => 'Device updated',
-            'data' => $this->formatDevice($device->fresh('company')),
+            'data' => $this->formatDevice($device->fresh(['company', 'location'])),
         ]);
+    }
+
+    private function validatedLocationId(mixed $locationId, mixed $companyId): ?int
+    {
+        if ($locationId === null || $locationId === '' || (int) $locationId <= 0) {
+            return null;
+        }
+        $loc = CompanyLocation::find((int) $locationId);
+        if (!$loc) {
+            return null;
+        }
+        if ($companyId && (int) $loc->company_id !== (int) $companyId) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'location_id' => ['Branch / location must belong to the selected company.'],
+            ]);
+        }
+
+        return (int) $loc->id;
     }
 
     public function destroy(int $id)
@@ -133,10 +194,20 @@ class ZktecoController extends Controller
             return response()->json($result, ($result['ok'] ?? false) ? 200 : 422);
         }
 
+        $adms = $device->admsBaseUrl();
+        $reachableHint = '';
+        if (preg_match('#127\.0\.0\.1|localhost#i', $adms)) {
+            $reachableHint = ' WARNING: ADMS URL still points at localhost — the K40 Pro cannot reach it. Set ZKTECO_LAN_HOST (or APP_URL) to this PC LAN IP (e.g. 192.168.1.147) and put that URL on the device.';
+        }
+
         return response()->json([
             'ok' => true,
-            'message' => 'ADMS mode: the device must push to '.$device->admsBaseUrl().'. Watch Last handshake after configuring Cloud Server on the terminal.',
-            'adms_url' => $device->admsBaseUrl(),
+            'message' => 'ADMS mode: on the K40 Pro set Comm → Cloud Server / ADMS to '.$adms
+                .' then reboot the device. After handshake, scan a finger — punches appear on Time Card.'
+                .$reachableHint,
+            'adms_url' => $adms,
+            'device_ip' => $device->ip_address,
+            'lan_host' => config('zkteco.lan_host') ?: ZktecoDevice::detectLanHost(),
         ]);
     }
 
@@ -146,9 +217,19 @@ class ZktecoController extends Controller
         $device = ZktecoDevice::findOrFail($id);
 
         if (!$device->isLiveU()) {
+            // ADMS devices push; Sync Now only re-explains setup (no LAN pull if UDP 4370 closed).
             return response()->json([
-                'message' => 'Sync Now is for LiveU / SenseFP devices. ADMS devices push punches automatically when Cloud Server is set.',
+                'message' => 'K40 Pro ADMS does not pull from the device IP. Existing punches on the terminal are uploaded only after Cloud Server points at HR. '
+                    .'Set the device ADMS URL to '.$device->admsBaseUrl()
+                    .' (same LAN as 192.168.1.x), wait for Last handshake, then scan once. '
+                    .'"Recent punches" shows imported HR logs — empty means no ADMS push yet.',
                 'adms_url' => $device->admsBaseUrl(),
+                'data' => [
+                    'ok' => false,
+                    'mode' => 'adms',
+                    'imported' => 0,
+                    'skipped' => 0,
+                ],
             ], 422);
         }
 
@@ -260,6 +341,8 @@ class ZktecoController extends Controller
             'port' => $d->port,
             'company_id' => $d->company_id,
             'company_name' => $d->company->name ?? null,
+            'location_id' => $d->location_id,
+            'location_name' => $d->location->name ?? null,
             'is_active' => $d->is_active,
             'adms_enabled' => $d->adms_enabled,
             'connection_mode' => $d->connection_mode ?? 'adms',

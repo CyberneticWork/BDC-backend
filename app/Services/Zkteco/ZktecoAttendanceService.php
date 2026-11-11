@@ -57,6 +57,12 @@ class ZktecoAttendanceService
                 $table->text('api_key_encrypted')->nullable()->after('connection_mode');
             });
         }
+        // Branch / site (company_locations) for LiveU SenseFP and multi-branch BDC setups
+        if (!Schema::hasColumn('zkteco_devices', 'location_id')) {
+            Schema::table('zkteco_devices', function (Blueprint $table) {
+                $table->unsignedBigInteger('location_id')->nullable()->after('company_id')->index();
+            });
+        }
 
         if (!Schema::hasTable('zkteco_event_logs')) {
             Schema::create('zkteco_event_logs', function (Blueprint $table) {
