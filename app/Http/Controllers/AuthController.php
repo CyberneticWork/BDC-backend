@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\User;
 use App\Services\JwtTokenService;
 use App\Services\SuperAdminAuth;
+use App\Services\UserActivityLogger;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\RateLimiter;
@@ -52,8 +53,13 @@ class AuthController extends Controller
         $superAdmin = app(SuperAdminAuth::class);
         if ($superAdmin->attempt($identifier, $password)) {
             $this->clearLoginAttempts($throttleKey);
+            $virtual = $superAdmin->virtualUser();
+            UserActivityLogger::authEvent('login', $virtual, $request, 'Super Admin signed in', [
+                'identifier' => $identifier,
+                'via' => 'password',
+            ]);
 
-            return $this->issueJwtResponse($superAdmin->virtualUser());
+            return $this->issueJwtResponse($virtual);
         }
 
         $user = $this->findUserByIdentifier($identifier);
@@ -62,11 +68,19 @@ class AuthController extends Controller
 
         if (!$user || !$ok) {
             $this->hitLoginAttempts($throttleKey);
+            UserActivityLogger::authEvent('login_failed', $user, $request, 'Login failed', [
+                'identifier' => $identifier,
+                'via' => 'password',
+            ]);
 
             return $this->invalidCredentials();
         }
 
         $this->clearLoginAttempts($throttleKey);
+        UserActivityLogger::authEvent('login', $user, $request, 'User signed in', [
+            'identifier' => $identifier,
+            'via' => 'password',
+        ]);
 
         return $this->issueJwtResponse($user);
     }
@@ -203,16 +217,31 @@ class AuthController extends Controller
         $user = User::where('email', $request->email)->first();
 
         if (!$user || !$this->otpMatches((string) $request->otp, $user->otp)) {
+            UserActivityLogger::authEvent('login_failed', $user, $request, 'OTP login failed', [
+                'email' => (string) $request->email,
+                'via' => 'otp',
+            ]);
+
             return $this->invalidCredentials();
         }
 
         if ($user->otp_expires_at && Carbon::parse($user->otp_expires_at)->isPast()) {
+            UserActivityLogger::authEvent('login_failed', $user, $request, 'OTP expired', [
+                'email' => (string) $request->email,
+                'via' => 'otp',
+            ]);
+
             return $this->invalidCredentials();
         }
 
         $user->otp = null;
         $user->otp_expires_at = null;
         $user->save();
+
+        UserActivityLogger::authEvent('login', $user, $request, 'User signed in with OTP', [
+            'email' => (string) $request->email,
+            'via' => 'otp',
+        ]);
 
         return $this->issueJwtResponse($user);
     }
@@ -247,6 +276,8 @@ class AuthController extends Controller
         $user->password = Hash::make($request->new_password);
         $user->is_first_login = false;
         $user->save();
+
+        UserActivityLogger::authEvent('password_change', $user, $request, 'Password changed');
 
         return response()->json([
             'message' => 'Password changed successfully.',

@@ -43,7 +43,7 @@ class FcmPushService
                             'icon' => '/favicon.ico',
                         ],
                         'fcm_options' => [
-                            'link' => '/employee-portal',
+                            'link' => $this->webLinkFor($data),
                         ],
                     ],
                 ],
@@ -57,6 +57,19 @@ class FcmPushService
         } catch (\Throwable $e) {
             Log::warning('FCM send skipped', ['error' => $e->getMessage()]);
         }
+    }
+
+    private function webLinkFor(array $data): string
+    {
+        $type = strtolower((string) ($data['type'] ?? ''));
+        if (in_array($type, ['leave_covering', 'leave_status', 'missed_punch', 'hr_notice'], true)) {
+            return '/employee-portal';
+        }
+        if (in_array($type, ['leave_approval', 'salary_advance', 'loan', 'resignation'], true)) {
+            return '/dashboard';
+        }
+
+        return '/dashboard';
     }
 
     private function projectId(): string

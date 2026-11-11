@@ -469,6 +469,8 @@ Route::put('/time-cards/{id}/approval', [TimeCardApprovalController::class, 'upd
 Route::post('/time-cards/bulk-approval', [TimeCardApprovalController::class, 'bulkUpdateStatus']);
 Route::get('/reports/time-cards/audit', [TimeCardApprovalController::class, 'audit']);
 Route::get('/reports/time-cards/deleted', [TimeCardApprovalController::class, 'deleted']);
+Route::get('/reports/activity-log', [App\Http\Controllers\ActivityLogReportController::class, 'index']);
+Route::get('/reports/activity-log/filters', [App\Http\Controllers\ActivityLogReportController::class, 'filters']);
 
 // Within-shift hours & Extra hours reports
 Route::get('/reports/shift-hours', [ShiftHoursReportController::class, 'index']);

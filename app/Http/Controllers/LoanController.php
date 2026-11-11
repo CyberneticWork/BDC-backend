@@ -9,9 +9,6 @@ use App\Services\LoanReportService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Schema;
-use App\Models\Notification;
-use App\Models\User;
-use App\Services\FcmPushService;
 use App\Services\LeaveNotificationService;
 
 class LoanController extends Controller
@@ -563,6 +560,11 @@ class LoanController extends Controller
                 'Your loan was approved by Admin and is waiting for Super Admin.',
                 ['type' => 'loan', 'loan_id' => $loan->id]
             );
+            try {
+                \App\Services\ApprovalPushService::loanAwaitingSuperAdmin($loan->employee, $loan->id, $loan->loan_amount);
+            } catch (\Throwable $e) {
+                // approver push optional
+            }
 
             return response()->json(['message' => 'Loan approved by Admin — waiting for Super Admin', 'data' => $loan->fresh('employee')]);
         }
@@ -682,38 +684,7 @@ class LoanController extends Controller
 
     private function notifyHrLoanRequest(employee $employee, loans $loan): void
     {
-        $name = $employee->full_name ?: $employee->name_with_initials ?: 'Employee';
-        $title = 'Loan request';
-        $body = "{$name} requested a loan of {$loan->loan_amount}. Review it in Loan approval.";
-        try {
-            $hrIds = User::whereIn('role', ['hr', 'admin'])->pluck('id')->all();
-        } catch (\Throwable $e) {
-            $hrIds = [];
-        }
-        foreach ($hrIds as $userId) {
-            try {
-                if (Schema::hasTable('notifications')) {
-                    Notification::create([
-                        'user_id' => $userId,
-                        'type' => 'loan',
-                        'title' => $title,
-                        'message' => $body,
-                        'data' => ['loan_id' => $loan->id],
-                        'is_read' => false,
-                    ]);
-                }
-            } catch (\Throwable $e) {
-                // skip this HR user
-            }
-        }
-        try {
-            app(FcmPushService::class)->sendToUsers($hrIds, $title, $body, [
-                'type' => 'loan',
-                'loan_id' => (string) $loan->id,
-            ]);
-        } catch (\Throwable $e) {
-            // push is optional
-        }
+        \App\Services\ApprovalPushService::loanSubmitted($employee, $loan->id, $loan->loan_amount);
     }
 }
 

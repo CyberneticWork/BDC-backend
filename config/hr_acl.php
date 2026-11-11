@@ -71,6 +71,7 @@ return [
         ['key' => 'dailyOtHoursReport', 'label' => 'Daily OT Hours', 'group' => 'Reports', 'actions' => ['view']],
         ['key' => 'timeCardAuditReport', 'label' => 'Time Card Audit Report', 'group' => 'Reports', 'actions' => ['view']],
         ['key' => 'deletedTimeCardReport', 'label' => 'Deleted Time Card Report', 'group' => 'Reports', 'actions' => ['view']],
+        ['key' => 'userActivityAuditReport', 'label' => 'User Activity Audit Report', 'group' => 'Reports', 'actions' => ['view']],
         ['key' => 'allowancesReport', 'label' => 'Allowances Report', 'group' => 'Reports', 'actions' => ['view']],
         ['key' => 'employeePortal', 'label' => 'Employee Portal', 'group' => 'Employee', 'actions' => ['view']],
         ['key' => 'myProfile', 'label' => 'My Profile', 'group' => 'Employee', 'actions' => ['view']],

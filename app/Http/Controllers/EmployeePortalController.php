@@ -553,6 +553,12 @@ class EmployeePortalController extends Controller
         // Employee portal never chooses basic vs bonus.
         $row = SalaryAdvanceRequest::create($attrs);
 
+        try {
+            \App\Services\ApprovalPushService::advanceSubmitted($emp, $row->id, $row->amount);
+        } catch (\Throwable $e) {
+            // approver push optional
+        }
+
         return response()->json(['message' => 'Advance request submitted', 'data' => $row], 201);
     }
 
@@ -728,6 +734,14 @@ class EmployeePortalController extends Controller
                 $body,
                 ['type' => 'salary_advance', 'id' => $row->id, 'status' => $row->status]
             );
+        }
+
+        if ($row->status === 'ADMIN_APPROVED') {
+            try {
+                \App\Services\ApprovalPushService::advanceAwaitingSuperAdmin($row->employee, $row->id, $row->amount);
+            } catch (\Throwable $e) {
+                // approver push optional
+            }
         }
 
         return response()->json(['message' => 'Advance request updated', 'data' => $row]);

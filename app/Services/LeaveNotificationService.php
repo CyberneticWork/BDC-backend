@@ -17,7 +17,7 @@ class LeaveNotificationService
             return;
         }
 
-        $userIds = User::where('employee_id', $employeeId)->pluck('id');
+        $userIds = User::where('employee_id', $employeeId)->pluck('id')->map(fn ($id) => (int) $id)->all();
         foreach ($userIds as $userId) {
             Notification::create([
                 'user_id' => $userId,
@@ -27,6 +27,12 @@ class LeaveNotificationService
                 'data' => $data,
                 'is_read' => false,
             ]);
+        }
+
+        try {
+            app(FcmPushService::class)->sendToUsers($userIds, $title, $message, array_map('strval', $data));
+        } catch (\Throwable $e) {
+            // push optional
         }
     }
 
@@ -41,6 +47,12 @@ class LeaveNotificationService
                 "{$name} asked you to cover leave from {$leave->leave_from} to {$leave->leave_to}.",
                 ['leave_id' => $leave->id, 'type' => 'leave_covering']
             );
+        }
+
+        try {
+            ApprovalPushService::leaveSubmitted($leave);
+        } catch (\Throwable $e) {
+            // approver push optional
         }
     }
 
@@ -68,6 +80,12 @@ class LeaveNotificationService
             'status' => $status,
             'type' => 'leave_status',
         ]);
+
+        try {
+            ApprovalPushService::leaveStatusNeedsNextApprover($leave, $status);
+        } catch (\Throwable $e) {
+            // approver push optional
+        }
     }
 
     public static function smsNotConfigured(employee $employee, string $text): void

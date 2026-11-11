@@ -189,6 +189,14 @@ class CompanyProcessSettings
                 'affects' => ['leave', 'salary_advance', 'loan'],
                 'available' => true,
             ],
+            [
+                'key' => 'ui_search',
+                'label' => 'UI quick search',
+                'group' => 'Navigation',
+                'summary' => 'On = staff can type a screen name (e.g. roster) in the top search box and jump straight to that page.',
+                'affects' => ['dashboard'],
+                'available' => true,
+            ],
         ];
     }
 
@@ -410,6 +418,11 @@ class CompanyProcessSettings
     public static function usesBiometricMap($source): bool
     {
         return self::packEnabled($source, 'biometric_map');
+    }
+
+    public static function usesUiSearch($source): bool
+    {
+        return self::packEnabled($source, 'ui_search');
     }
 
     public static function usesWeeklyOff($source): bool

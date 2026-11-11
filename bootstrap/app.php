@@ -37,6 +37,9 @@ return Application::configure(basePath: dirname(__DIR__))
             \App\Http\Middleware\SecurityHeaders::class,
             \App\Http\Middleware\RequireApiAuth::class,
         ]);
+        $middleware->api(append: [
+            \App\Http\Middleware\LogUserActivity::class,
+        ]);
         // Do not use throttleApi() here: it uses the cache store. If CACHE_STORE=database
         // and the cache table is missing, every API route including login returns 500.
     })
