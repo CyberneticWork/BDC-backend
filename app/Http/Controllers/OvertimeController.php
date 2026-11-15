@@ -133,12 +133,50 @@ class OvertimeController extends Controller
     public function approve(Request $request, $id)
     {
         $request->validate([
-            'status' => 'required|in:approved,rejected,pending',
+            'status' => 'required|in:approved,rejected,pending,admin_approved',
         ]);
 
-        $overtime = over_time::whereNull('deleted_at')->findOrFail($id);
-        $overtime->status = $request->status;
+        $overtime = over_time::with('employee.organizationAssignment')->whereNull('deleted_at')->findOrFail($id);
+        $current = (string) ($overtime->status ?: 'pending');
+        $requested = (string) $request->status;
+        $chain = \App\Services\ApprovalChainService::enabledForEmployee($overtime->employee);
+        $statuses = [
+            'pending' => 'pending',
+            'intermediate' => 'admin_approved',
+            'final' => 'approved',
+            'rejected' => 'rejected',
+        ];
+
+        if ($requested === 'pending') {
+            $overtime->status = 'pending';
+            $overtime->save();
+            if ($chain) {
+                \App\Services\ApprovalPushService::overtimeSubmitted($overtime->employee, $overtime->id);
+            }
+
+            return response()->json([
+                'message' => 'Overtime status updated successfully',
+                'data' => $overtime,
+            ]);
+        }
+
+        $result = \App\Services\ApprovalChainService::resolveApproveTransition(
+            $request->user(),
+            $chain,
+            $current,
+            $requested,
+            $statuses
+        );
+        if (!$result['ok']) {
+            return response()->json(['message' => $result['message'] ?? 'Not allowed'], 403);
+        }
+
+        $overtime->status = $result['status'];
         $overtime->save();
+
+        if ($chain && $result['status'] === 'admin_approved') {
+            \App\Services\ApprovalPushService::overtimeAwaitingSuperAdmin($overtime->employee, $overtime->id);
+        }
 
         return response()->json([
             'message' => 'Overtime status updated successfully',

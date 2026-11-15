@@ -193,4 +193,64 @@ class ApprovalPushService
             ['type' => 'loan', 'loan_id' => (string) $loanId, 'status' => 'admin_approved']
         );
     }
+
+    public static function overtimeSubmitted(?employee $employee, $otId): void
+    {
+        $name = self::employeeLabel($employee);
+        self::notifyAdmins(
+            'Overtime approval needed',
+            "{$name} has overtime waiting for Admin approval.",
+            ['type' => 'overtime', 'id' => (string) $otId, 'status' => 'pending']
+        );
+    }
+
+    public static function overtimeAwaitingSuperAdmin(?employee $employee, $otId): void
+    {
+        $name = self::employeeLabel($employee);
+        self::notifySuperAdmins(
+            'Overtime needs Super Admin',
+            "{$name}'s overtime was Admin-approved. Final approval needed.",
+            ['type' => 'overtime', 'id' => (string) $otId, 'status' => 'admin_approved']
+        );
+    }
+
+    public static function timeCardAwaitingAdmin(?employee $employee, $timeCardId): void
+    {
+        $name = self::employeeLabel($employee);
+        self::notifyAdmins(
+            'Time card approval needed',
+            "{$name} has a time card waiting for Admin approval.",
+            ['type' => 'time_card_approval', 'id' => (string) $timeCardId, 'status' => 'Pending']
+        );
+    }
+
+    public static function timeCardAwaitingSuperAdmin(?employee $employee, $timeCardId): void
+    {
+        $name = self::employeeLabel($employee);
+        self::notifySuperAdmins(
+            'Time card needs Super Admin',
+            "{$name}'s time card was Admin-approved. Final approval needed.",
+            ['type' => 'time_card_approval', 'id' => (string) $timeCardId, 'status' => 'HR_Approved']
+        );
+    }
+
+    public static function medicalSubmitted(?employee $employee, $claimId, $amount): void
+    {
+        $name = self::employeeLabel($employee);
+        self::notifyAdmins(
+            'Medical claim approval needed',
+            "{$name} submitted a medical claim of {$amount}.",
+            ['type' => 'medical_claim', 'id' => (string) $claimId, 'status' => 'PENDING']
+        );
+    }
+
+    public static function medicalAwaitingSuperAdmin(?employee $employee, $claimId, $amount): void
+    {
+        $name = self::employeeLabel($employee);
+        self::notifySuperAdmins(
+            'Medical claim needs Super Admin',
+            "{$name}'s medical claim of {$amount} was Admin-approved. Final approval needed.",
+            ['type' => 'medical_claim', 'id' => (string) $claimId, 'status' => 'ADMIN_APPROVED']
+        );
+    }
 }

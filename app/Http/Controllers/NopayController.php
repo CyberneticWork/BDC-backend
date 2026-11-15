@@ -946,46 +946,7 @@ class NopayController extends Controller
 
     protected function checkCompanyHoliday($employee, $date): bool
     {
-        $orgAssignment = $employee->organizationAssignment;
-        if (!$orgAssignment) {
-            return false;
-        }
-
-        $companyHoliday = leaveCalendar::where('company_id', $orgAssignment->company_id)
-            ->where(function ($query) use ($date) {
-                $query->where(function ($q) use ($date) {
-                    $q->whereNull('end_date')->whereDate('start_date', $date);
-                })->orWhere(function ($q) use ($date) {
-                    $q->whereNotNull('end_date')
-                      ->whereDate('start_date', '<=', $date)
-                      ->whereDate('end_date', '>=', $date);
-                });
-            })
-            ->exists();
-
-        if ($companyHoliday) {
-            return true;
-        }
-
-        if ($orgAssignment->department_id) {
-            $deptHoliday = leaveCalendar::where('department_id', $orgAssignment->department_id)
-                ->where(function ($query) use ($date) {
-                    $query->where(function ($q) use ($date) {
-                        $q->whereNull('end_date')->whereDate('start_date', $date);
-                    })->orWhere(function ($q) use ($date) {
-                        $q->whereNotNull('end_date')
-                          ->whereDate('start_date', '<=', $date)
-                          ->whereDate('end_date', '>=', $date);
-                    });
-                })
-                ->exists();
-
-            if ($deptHoliday) {
-                return true;
-            }
-        }
-
-        return false;
+        return \App\Services\LeaveCalendarHolidayService::isHolidayForEmployee($employee, (string) $date);
     }
 
     protected function getDisplayValue($record): string
@@ -1941,46 +1902,7 @@ class NopayController extends Controller
 
     protected function checkCompanyHoliday($employee, $date): bool
     {
-        $orgAssignment = $employee->organizationAssignment;
-        if (!$orgAssignment) {
-            return false;
-        }
-
-        $companyHoliday = leaveCalendar::where('company_id', $orgAssignment->company_id)
-            ->where(function ($query) use ($date) {
-                $query->where(function ($q) use ($date) {
-                    $q->whereNull('end_date')->whereDate('start_date', $date);
-                })->orWhere(function ($q) use ($date) {
-                    $q->whereNotNull('end_date')
-                      ->whereDate('start_date', '<=', $date)
-                      ->whereDate('end_date', '>=', $date);
-                });
-            })
-            ->exists();
-
-        if ($companyHoliday) {
-            return true;
-        }
-
-        if ($orgAssignment->department_id) {
-            $deptHoliday = leaveCalendar::where('department_id', $orgAssignment->department_id)
-                ->where(function ($query) use ($date) {
-                    $query->where(function ($q) use ($date) {
-                        $q->whereNull('end_date')->whereDate('start_date', $date);
-                    })->orWhere(function ($q) use ($date) {
-                        $q->whereNotNull('end_date')
-                          ->whereDate('start_date', '<=', $date)
-                          ->whereDate('end_date', '>=', $date);
-                    });
-                })
-                ->exists();
-
-            if ($deptHoliday) {
-                return true;
-            }
-        }
-
-        return false;
+        return \App\Services\LeaveCalendarHolidayService::isHolidayForEmployee($employee, (string) $date);
     }
 
     public function getNoPayStats(Request $request)

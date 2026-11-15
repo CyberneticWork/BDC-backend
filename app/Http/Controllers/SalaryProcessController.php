@@ -612,11 +612,12 @@ public function getEmployeesByMonthAndCompany(Request $request)
             $loanPrincipal = $loanResolved['principal'];
             $loanInterest = $loanResolved['interest'];
 
-            // Working Days
-            $companyLeavesCount = DB::table('leave_calendars')->where('company_id', $company_id ?? 0)
-                ->where(function ($q) use ($startDate, $endDate) {
-                    $q->whereBetween('start_date', [$startDate, $endDate])->orWhereBetween('end_date', [$startDate, $endDate]);
-                })->count();
+            // Working Days (Leave Calendar holidays shrink the month only when holiday_calendar pack is ON)
+            $companyLeavesCount = \App\Services\LeaveCalendarHolidayService::holidayCountInRange(
+                $company_id ? (int) $company_id : null,
+                $startDate,
+                $endDate
+            );
 
             $workingDaysInMonth = max(1, $totalDaysInMonth - $companyLeavesCount);
             $perDaySalary = $basicSalary / $workingDaysInMonth;
@@ -1492,11 +1493,12 @@ public function getEmployeesByMonthAndCompany(Request $request)
             $loanBonusPrincipal = $loanSplit['bonus_principal'];
             $loanBonusInterest = $loanSplit['bonus_interest'];
 
-            // Working Days & No Pay Deductions
-            $companyLeavesCount = DB::table('leave_calendars')->where('company_id', $company_id ?? 0)
-                ->where(function ($q) use ($startDate, $endDate) {
-                    $q->whereBetween('start_date', [$startDate, $endDate])->orWhereBetween('end_date', [$startDate, $endDate]);
-                })->count();
+            // Working Days & No Pay Deductions (holiday pack gates Leave Calendar shrink)
+            $companyLeavesCount = \App\Services\LeaveCalendarHolidayService::holidayCountInRange(
+                $company_id ? (int) $company_id : null,
+                $startDate,
+                $endDate
+            );
 
             $workingDaysInMonth = max(1, $totalDaysInMonth - $companyLeavesCount);
             $perDaySalary = $basicSalary / $workingDaysInMonth;

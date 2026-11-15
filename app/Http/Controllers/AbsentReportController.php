@@ -222,26 +222,11 @@ class AbsentReportController extends Controller
 
     private function isHolidayForRosterRow($companyId, $departmentId, string $date): bool
     {
-        $companyHoliday = false;
-        $departmentHoliday = false;
-
-        if ($companyId) {
-            $companyHoliday = leaveCalendar::where('company_id', $companyId)
-                ->whereDate('start_date', '<=', $date)
-                ->where(function ($query) use ($date) {
-                    $query->whereNull('end_date')->orWhereDate('end_date', '>=', $date);
-                })->exists();
-        }
-
-        if ($departmentId) {
-            $departmentHoliday = leaveCalendar::where('department_id', $departmentId)
-                ->whereDate('start_date', '<=', $date)
-                ->where(function ($query) use ($date) {
-                    $query->whereNull('end_date')->orWhereDate('end_date', '>=', $date);
-                })->exists();
-        }
-
-        return $companyHoliday || $departmentHoliday;
+        return \App\Services\LeaveCalendarHolidayService::isHoliday(
+            $companyId ? (int) $companyId : null,
+            $departmentId ? (int) $departmentId : null,
+            $date
+        );
     }
 }
 

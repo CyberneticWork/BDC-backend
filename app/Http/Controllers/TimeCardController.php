@@ -172,6 +172,18 @@ class TimeCardController extends Controller
 
         $fingerprintClock = now();
 
+        $chain = \App\Services\ApprovalChainService::enabledForEmployee($employee);
+        $approvalStatus = \App\Services\ApprovalChainService::initialStatusForRequester(
+            $request->user(),
+            $chain,
+            [
+                'pending' => 'Pending',
+                'intermediate' => 'HR_Approved',
+                'final' => 'Active',
+                'rejected' => 'Rejected',
+            ]
+        );
+
         $payload = [
             'employee_id' => $employee->id,
             'time' => $storeTime,
@@ -179,7 +191,7 @@ class TimeCardController extends Controller
             'working_hours' => $working_hours,
             'entry' => $entryType,
             'status' => $status,
-            'approval_status' => 'Pending',
+            'approval_status' => $approvalStatus,
             'fingerprint_clock' => $fingerprintClock,
             'actual_date' => $actual_date,
         ];
@@ -199,6 +211,12 @@ class TimeCardController extends Controller
 
         $timeCard = time_card::create($payload);
         TimeCardAuditService::log($timeCard, 'created', $request->input('reason'), null, TimeCardAuditService::snapshot($timeCard), $source);
+
+        if ($chain && $approvalStatus === 'Pending') {
+            \App\Services\ApprovalPushService::timeCardAwaitingAdmin($employee, $timeCard->id);
+        } elseif ($chain && $approvalStatus === 'HR_Approved') {
+            \App\Services\ApprovalPushService::timeCardAwaitingSuperAdmin($employee, $timeCard->id);
+        }
 
         if (in_array($status, ['OUT', 'Early OUT']) && $pairedInCard) {
             $referenceDate = $actual_date ?? $pairedInCard->date;
@@ -1004,24 +1022,7 @@ class TimeCardController extends Controller
 
     private function isHoliday(employee $employee, string $date): bool
     {
-        $org = $employee->organizationAssignment;
-        if (!$org) return false;
-
-        return \App\Models\leaveCalendar::where('company_id', $org->company_id)
-            ->where(function ($query) use ($org) {
-                $query->whereNull('department_id');
-                if (!empty($org->department_id)) {
-                    $query->orWhere('department_id', $org->department_id);
-                }
-            })
-            ->where(function ($query) use ($date) {
-                $query->where(function ($q) use ($date) {
-                    $q->whereNull('end_date')->whereDate('start_date', $date);
-                })->orWhere(function ($q) use ($date) {
-                    $q->whereNotNull('end_date')->whereDate('start_date', '<=', $date)->whereDate('end_date', '>=', $date);
-                });
-            })
-            ->exists();
+        return \App\Services\LeaveCalendarHolidayService::isHolidayForEmployee($employee, $date);
     }
 
     public function importExcel(Request $request)

@@ -75,6 +75,18 @@ class MedicalClaimController extends Controller
             $billName = $file->getClientOriginalName();
         }
 
+        $chain = \App\Services\ApprovalChainService::enabledForEmployee($emp);
+        $initial = \App\Services\ApprovalChainService::initialStatusForRequester(
+            $request->user(),
+            $chain,
+            [
+                'pending' => 'PENDING',
+                'intermediate' => 'ADMIN_APPROVED',
+                'final' => 'APPROVED',
+                'rejected' => 'REJECTED',
+            ]
+        );
+
         $row = MedicalClaim::create([
             'employee_id' => $emp->id,
             'year' => (int) now()->year,
@@ -82,9 +94,21 @@ class MedicalClaimController extends Controller
             'description' => $request->description,
             'bill_path' => $path,
             'bill_name' => $billName,
-            'status' => 'PENDING',
+            'status' => $initial,
             'created_by' => $request->user()->id,
         ]);
+
+        if ($chain) {
+            if ($initial === 'PENDING') {
+                \App\Services\ApprovalPushService::medicalSubmitted($emp, $row->id, $amount);
+            } elseif ($initial === 'ADMIN_APPROVED') {
+                \App\Services\ApprovalPushService::medicalAwaitingSuperAdmin($emp, $row->id, $amount);
+            } elseif ($initial === 'APPROVED') {
+                PendingPaymentService::record($emp, 'medical_claim', $row->id, (float) $amount);
+            }
+        } else {
+            \App\Services\ApprovalPushService::medicalSubmitted($emp, $row->id, $amount);
+        }
 
         return response()->json(['message' => 'Medical claim submitted', 'data' => $row], 201);
     }
@@ -115,7 +139,8 @@ class MedicalClaimController extends Controller
         }
         $row = MedicalClaim::with('employee.organizationAssignment')->findOrFail($id);
         $this->denyIfOff($row->employee);
-        if ($row->status !== 'PENDING') {
+        $current = strtoupper((string) $row->status);
+        if (!in_array($current, ['PENDING', 'ADMIN_APPROVED'], true)) {
             return response()->json(['message' => 'This claim has already been reviewed.'], 422);
         }
         if ($request->action === 'APPROVE') {
@@ -125,24 +150,48 @@ class MedicalClaimController extends Controller
                 return response()->json(['message' => 'Claim exceeds remaining medical quota.'], 422);
             }
         }
-        $row->status = $request->action === 'APPROVE' ? 'APPROVED' : 'REJECTED';
+
+        $chain = \App\Services\ApprovalChainService::enabledForEmployee($row->employee);
+        $result = \App\Services\ApprovalChainService::resolveApproveTransition(
+            $request->user(),
+            $chain,
+            $current,
+            $request->action === 'APPROVE' ? 'APPROVED' : 'REJECTED',
+            [
+                'pending' => 'PENDING',
+                'intermediate' => 'ADMIN_APPROVED',
+                'final' => 'APPROVED',
+                'rejected' => 'REJECTED',
+            ]
+        );
+        if (!$result['ok']) {
+            return response()->json(['message' => $result['message'] ?? 'Not allowed'], 403);
+        }
+
+        $row->status = $result['status'];
         $row->review_note = $request->note;
         $row->reviewed_by = $request->user()->id;
         $row->reviewed_at = now();
         $row->save();
 
+        if ($row->status === 'ADMIN_APPROVED') {
+            \App\Services\ApprovalPushService::medicalAwaitingSuperAdmin($row->employee, $row->id, $row->amount);
+        }
+
         if ($row->status === 'APPROVED') {
             PendingPaymentService::record($row->employee, 'medical_claim', $row->id, (float) $row->amount);
         }
 
-        LeaveNotificationService::notifyEmployee(
-            $row->employee_id,
-            $row->status === 'APPROVED' ? 'Medical claim approved' : 'Medical claim rejected',
-            $row->status === 'APPROVED'
-                ? 'Your medical claim was approved and sent to Pending Payments.'
-                : 'Your medical claim was rejected.',
-            ['type' => 'medical_claim', 'id' => $row->id, 'status' => $row->status]
-        );
+        if (in_array($row->status, ['APPROVED', 'REJECTED'], true)) {
+            LeaveNotificationService::notifyEmployee(
+                $row->employee_id,
+                $row->status === 'APPROVED' ? 'Medical claim approved' : 'Medical claim rejected',
+                $row->status === 'APPROVED'
+                    ? 'Your medical claim was approved and sent to Pending Payments.'
+                    : 'Your medical claim was rejected.',
+                ['type' => 'medical_claim', 'id' => $row->id, 'status' => $row->status]
+            );
+        }
 
         return response()->json(['message' => 'Medical claim updated', 'data' => $row]);
     }

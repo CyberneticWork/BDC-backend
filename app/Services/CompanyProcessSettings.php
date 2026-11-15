@@ -169,8 +169,8 @@ class CompanyProcessSettings
                 'key' => 'holiday_calendar',
                 'label' => 'Holiday calendar pack',
                 'group' => 'Attendance',
-                'summary' => 'On = Leave Calendar holidays are paid automatically (NoPay skipped; no leave request needed). Work on a holiday still posts Holiday OT.',
-                'affects' => ['ot', 'nopay', 'salary', 'leave_calendar'],
+                'summary' => 'On = Leave Calendar holidays are paid (NoPay skipped; no leave request needed) and shrink salary working days; work on a holiday still posts Holiday OT. Off = calendar holidays are not auto-treated as paid.',
+                'affects' => ['ot', 'nopay', 'salary', 'leave_calendar', 'absent'],
                 'available' => true,
             ],
             [
@@ -185,8 +185,8 @@ class CompanyProcessSettings
                 'key' => 'approval_chain',
                 'label' => 'Employee → Admin → Super Admin approvals',
                 'group' => 'Approvals',
-                'summary' => 'On = leave, salary advance and similar requests need Admin then Super Admin (after the employee submits).',
-                'affects' => ['leave', 'salary_advance', 'loan'],
+                'summary' => 'On = leave, salary advance, loan, overtime, time card and medical claims need Admin then Super Admin. If an Admin applies, only Super Admin authorizes. Each step sends a mobile/PC push to the next approver.',
+                'affects' => ['leave', 'salary_advance', 'loan', 'overtime', 'time_card', 'medical_claims'],
                 'available' => true,
             ],
             [

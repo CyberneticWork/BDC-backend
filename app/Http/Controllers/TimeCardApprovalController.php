@@ -18,7 +18,7 @@ class TimeCardApprovalController extends Controller
             'to_date' => 'nullable|date|after_or_equal:from_date',
             'company_id' => 'nullable|exists:companies,id',
             'department_id' => 'nullable|exists:departments,id',
-            'approval_status' => 'nullable|in:Pending,Active,Approved,Rejected',
+            'approval_status' => 'nullable|in:Pending,Active,Approved,Rejected,HR_Approved',
             'search' => 'nullable|string|max:100',
         ]);
 
@@ -26,6 +26,9 @@ class TimeCardApprovalController extends Controller
             ->whereNull('deleted_at');
 
         $approval = $validated['approval_status'] ?? 'Pending';
+        if ($approval === 'Approved') {
+            $approval = 'Active';
+        }
         $query->where('approval_status', $approval);
 
         if (Schema::hasColumn('time_cards', 'entry_source')) {
@@ -52,19 +55,53 @@ class TimeCardApprovalController extends Controller
     public function updateStatus(Request $request, $id)
     {
         $validated = $request->validate([
-            'approval_status' => 'required|in:Approved,Rejected,Pending,Active',
+            'approval_status' => 'required|in:Approved,Rejected,Pending,Active,HR_Approved',
             'reason' => 'nullable|string|max:500',
         ]);
 
-        $card = time_card::whereNull('deleted_at')->findOrFail($id);
+        $card = time_card::with('employee.organizationAssignment')->whereNull('deleted_at')->findOrFail($id);
         $old = TimeCardAuditService::snapshot($card);
+        $current = (string) ($card->approval_status ?: 'Pending');
+        $requested = (string) $validated['approval_status'];
+        $chain = \App\Services\ApprovalChainService::enabledForEmployee($card->employee);
+        $statuses = [
+            'pending' => 'Pending',
+            'intermediate' => 'HR_Approved',
+            'final' => 'Active',
+            'rejected' => 'Rejected',
+        ];
 
-        $status = $validated['approval_status'] === 'Approved' ? 'Active' : $validated['approval_status'];
+        if ($requested === 'Pending') {
+            $card->approval_status = 'Pending';
+            $card->save();
+            TimeCardAuditService::log($card, 'updated', $validated['reason'] ?? null, $old, TimeCardAuditService::snapshot($card), $card->entry_source ?? 'manual');
+            if ($chain) {
+                \App\Services\ApprovalPushService::timeCardAwaitingAdmin($card->employee, $card->id);
+            }
+            return response()->json(['message' => 'Approval status updated', 'data' => $card]);
+        }
+
+        $result = \App\Services\ApprovalChainService::resolveApproveTransition(
+            $request->user(),
+            $chain,
+            $current,
+            $requested === 'Approved' ? 'Active' : $requested,
+            $statuses
+        );
+        if (!$result['ok']) {
+            return response()->json(['message' => $result['message'] ?? 'Not allowed'], 403);
+        }
+
+        $status = $result['status'];
         $card->approval_status = $status;
         $card->save();
 
         $action = $status === 'Rejected' ? 'rejected' : ($status === 'Pending' ? 'updated' : 'approved');
         TimeCardAuditService::log($card, $action, $validated['reason'] ?? null, $old, TimeCardAuditService::snapshot($card), $card->entry_source ?? 'manual');
+
+        if ($chain && $status === 'HR_Approved') {
+            \App\Services\ApprovalPushService::timeCardAwaitingSuperAdmin($card->employee, $card->id);
+        }
 
         return response()->json([
             'message' => 'Approval status updated',
@@ -77,24 +114,56 @@ class TimeCardApprovalController extends Controller
         $validated = $request->validate([
             'ids' => 'required|array|min:1',
             'ids.*' => 'integer|exists:time_cards,id',
-            'approval_status' => 'required|in:Approved,Rejected,Pending,Active',
+            'approval_status' => 'required|in:Approved,Rejected,Pending,Active,HR_Approved',
             'reason' => 'nullable|string|max:500',
         ]);
 
-        $status = $validated['approval_status'] === 'Approved' ? 'Active' : $validated['approval_status'];
-        $action = $status === 'Rejected' ? 'rejected' : ($status === 'Pending' ? 'updated' : 'approved');
-
-        $cards = time_card::whereIn('id', $validated['ids'])->whereNull('deleted_at')->get();
+        $cards = time_card::with('employee.organizationAssignment')
+            ->whereIn('id', $validated['ids'])
+            ->whereNull('deleted_at')
+            ->get();
+        $updated = 0;
         foreach ($cards as $card) {
             $old = TimeCardAuditService::snapshot($card);
+            $current = (string) ($card->approval_status ?: 'Pending');
+            $requested = (string) $validated['approval_status'];
+            $chain = \App\Services\ApprovalChainService::enabledForEmployee($card->employee);
+            $statuses = [
+                'pending' => 'Pending',
+                'intermediate' => 'HR_Approved',
+                'final' => 'Active',
+                'rejected' => 'Rejected',
+            ];
+
+            if ($requested === 'Pending') {
+                $status = 'Pending';
+            } else {
+                $result = \App\Services\ApprovalChainService::resolveApproveTransition(
+                    $request->user(),
+                    $chain,
+                    $current,
+                    $requested === 'Approved' ? 'Active' : $requested,
+                    $statuses
+                );
+                if (!$result['ok']) {
+                    continue;
+                }
+                $status = $result['status'];
+            }
+
             $card->approval_status = $status;
             $card->save();
+            $action = $status === 'Rejected' ? 'rejected' : ($status === 'Pending' ? 'updated' : 'approved');
             TimeCardAuditService::log($card, $action, $validated['reason'] ?? null, $old, TimeCardAuditService::snapshot($card), $card->entry_source ?? 'manual');
+            if ($chain && $status === 'HR_Approved') {
+                \App\Services\ApprovalPushService::timeCardAwaitingSuperAdmin($card->employee, $card->id);
+            }
+            $updated++;
         }
 
         return response()->json([
-            'message' => 'Updated ' . $cards->count() . ' record(s)',
-            'updated' => $cards->count(),
+            'message' => 'Updated ' . $updated . ' record(s)',
+            'updated' => $updated,
         ]);
     }
 
